@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// NewSqsMessage returns a new [SqsMessage] with a given set of required parameters.
 func NewSqsMessage(priority float64, message Message, messageDeduplicationID, messageGroupID, sequenceNumber Optional[string]) *SqsMessage {
 	sqsm := &SqsMessage{
 		Created:                float64(time.Now().UTC().Unix()),
