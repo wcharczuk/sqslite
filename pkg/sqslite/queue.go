@@ -20,5 +20,5 @@ type Queue struct {
 	Attributes        map[string]string
 
 	storageMu sync.Mutex
-	storage   map[uuid.UUID]Message
+	storage   map[uuid.UUID]*SqsMessage
 }
