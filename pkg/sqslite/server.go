@@ -1,29 +1,35 @@
 package sqslite
 
 import (
-	"context"
 	"net/http"
+
+	"github.com/julienschmidt/httprouter"
 )
 
 type Server struct {
-	methods map[VerbRoute]http.Handler
+	mux *httprouter.Router
+}
+
+func (s *Server) Initialize() {
+	s.mux = httprouter.New()
+	s.mux.GET("/_aws/sqs/messages", s.handleMethod(nil))
+	s.mux.POST("/_aws/sqs/messages", s.handleMethod(nil))
+
+	s.mux.GET("/_aws/sqs/messages/:region/:account_id/:queue_name", s.handleMethod(nil))
 }
 
 func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-
+	s.mux.ServeHTTP(rw, req)
 }
 
-type VerbRoute struct {
-	Verb  string
-	Route string
-}
+type Handler func(req *http.Request, s serializer)
 
-type Method[Request, Response any] struct {
-	VerbRoute VerbRoute
-	Handler   func(context.Context, Request) (Response, error)
+func (s Server) handleMethod(method Handler) httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
+		s := newSerializer(getRequestProtocol(r))
+		method(r, s)
+	}
 }
-
-func (m Method[Request, Response]) ServeHTTP(rw http.ResponseWriter, req *http.Request) {}
 
 const (
 	serviceProtocolJSON  = "json"
@@ -38,9 +44,22 @@ func getRequestProtocol(req *http.Request) string {
 	return serviceProtocolQuery
 }
 
-type Serializer interface {
+type serializer interface {
 	SerializeError(any)
 	SerializeResponse(any)
 }
 
-func createSerializer(serviceProtocol string)
+func newSerializer(serviceProtocol string) serializer {
+	if serviceProtocol == serviceProtocolJSON {
+		return new(jsonSerializer)
+	}
+	return new(querySerializer)
+}
+
+type jsonSerializer struct {
+	serializer
+}
+
+type querySerializer struct {
+	serializer
+}
