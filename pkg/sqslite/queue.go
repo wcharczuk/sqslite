@@ -23,13 +23,14 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 		return nil, err
 	}
 	queue := &Queue{
-		Name:                    *input.QueueName,
-		URL:                     fmt.Sprintf("http://sqs.%s.localhost/%s", "us-west-2", *input.QueueName),
-		messagesOrdered:         new(LinkedList[*MessageState]),
-		messagesByID:            make(map[uuid.UUID]*LinkedListNode[*MessageState]),
-		messagesByReceiptHandle: make(map[string]uuid.UUID),
-		Attributes:              input.Attributes,
-		Tags:                    input.Tags,
+		Name:                               *input.QueueName,
+		URL:                                fmt.Sprintf("http://sqs.%s.localhost/%s", "us-west-2", *input.QueueName),
+		messagesReady:                      make(map[uuid.UUID]*MessageState),
+		messagesDelayed:                    make(map[uuid.UUID]*MessageState),
+		messagesOutstanding:                make(map[uuid.UUID]*MessageState),
+		messagesOutstandingByReceiptHandle: make(map[string]uuid.UUID),
+		Attributes:                         input.Attributes,
+		Tags:                               input.Tags,
 	}
 	var err *Error
 	//   - DelaySeconds – The length of time, in seconds, for which the delivery of all
@@ -110,11 +111,23 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 		queue.VisibilityTimeout = 30 * time.Second
 	}
 
-	// do retention things
-	var ctx context.Context
-	ctx, queue.retentionWorkerCancel = context.WithCancel(context.Background())
+	// start background workers(s)
+
+	var retentionCtx context.Context
+	retentionCtx, queue.retentionWorkerCancel = context.WithCancel(context.Background())
 	queue.retentionWorker = &retentionWorker{queue: queue}
-	go queue.retentionWorker.Start(ctx)
+	go queue.retentionWorker.Start(retentionCtx)
+
+	var visibilityCtx context.Context
+	visibilityCtx, queue.visibilityWorkerCancel = context.WithCancel(context.Background())
+	queue.visibilityWorker = &visibilityWorker{queue: queue}
+	go queue.visibilityWorker.Start(visibilityCtx)
+
+	var delayCtx context.Context
+	delayCtx, queue.delayWorkerCancel = context.WithCancel(context.Background())
+	queue.delayWorker = &delayWorker{queue: queue}
+	go queue.delayWorker.Start(delayCtx)
+
 	return queue, nil
 }
 
@@ -133,45 +146,66 @@ type Queue struct {
 	Tags       map[string]string
 
 	sequenceNumber uint64
+	lifecycleMu    sync.Mutex
 
-	messagesMu              sync.Mutex
-	messagesOrdered         *LinkedList[*MessageState]
-	messagesByID            map[uuid.UUID]*LinkedListNode[*MessageState]
-	messagesByReceiptHandle map[string]uuid.UUID
+	messagesReadyMu                      sync.Mutex
+	messagesReady                        map[uuid.UUID]*MessageState
+	messagesDelayedMu                    sync.Mutex
+	messagesDelayed                      map[uuid.UUID]*MessageState
+	messagesOutstandingMu                sync.Mutex
+	messagesOutstanding                  map[uuid.UUID]*MessageState
+	messagesOutstandingByReceiptHandleMu sync.Mutex
+	messagesOutstandingByReceiptHandle   map[string]uuid.UUID
 
-	retentionWorker       *retentionWorker
-	retentionWorkerCancel func()
+	retentionWorker        *retentionWorker
+	retentionWorkerCancel  func()
+	visibilityWorker       *visibilityWorker
+	visibilityWorkerCancel func()
+	delayWorker            *delayWorker
+	delayWorkerCancel      func()
 }
 
 func (q *Queue) Close() {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
+	q.lifecycleMu.Lock()
+	defer q.lifecycleMu.Unlock()
 	if q.retentionWorkerCancel != nil {
 		q.retentionWorkerCancel()
 		q.retentionWorkerCancel = nil
 	}
+	if q.delayWorkerCancel != nil {
+		q.delayWorkerCancel()
+		q.delayWorkerCancel = nil
+	}
+	if q.visibilityWorkerCancel != nil {
+		q.visibilityWorkerCancel()
+		q.visibilityWorkerCancel = nil
+	}
 }
 
 func (q *Queue) Push(msgs ...*MessageState) {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
+	q.messagesDelayedMu.Lock()
+	defer q.messagesDelayedMu.Lock()
+	q.messagesReadyMu.Lock()
+	defer q.messagesReadyMu.Lock()
 	for _, m := range msgs {
-		node := q.messagesOrdered.Push(m)
-		q.messagesByID[m.Message.MessageID] = node
+		if m.IsDelayed() {
+			q.messagesDelayed[m.Message.MessageID] = m
+			continue
+		}
+		q.messagesReady[m.Message.MessageID] = m
 	}
 	return
 }
 
 func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration) (output []Message) {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
-	for m := range q.messagesOrdered.Each() {
-		if m.IsDelayed() {
-			continue
-		}
-		if !m.IsVisible() {
-			continue
-		}
+	q.messagesReadyMu.Lock()
+	defer q.messagesReadyMu.Unlock()
+	q.messagesOutstandingByReceiptHandleMu.Lock()
+	defer q.messagesOutstandingByReceiptHandleMu.Unlock()
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
+
+	for _, m := range q.messagesReady {
 		m.IncrementApproximateReceiveCount()
 		if visibilityTimeout > 0 {
 			m.UpdateVisibilityTimeout(visibilityTimeout)
@@ -182,41 +216,50 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 		messageCopy := m.Message
 		messageCopy.ReceiptHandle = Some(uuid.V4().String())
 		m.ReceiptHandles.Add(messageCopy.ReceiptHandle.Value)
-		q.messagesByReceiptHandle[messageCopy.ReceiptHandle.Value] = m.Message.MessageID
+		q.messagesOutstanding[m.Message.MessageID] = m
 		output = append(output, messageCopy)
 		if len(output) == int(maxNumberOfMessages) {
 			break
 		}
 	}
+	for _, m := range output {
+		delete(q.messagesReady, m.MessageID)
+		q.messagesOutstandingByReceiptHandle[m.ReceiptHandle.Value] = m.MessageID
+	}
 	return
 }
 
 func (q *Queue) ChangeMessageVisibility(receiptHandle string, visibilityTimeout time.Duration) (ok bool) {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
+	q.messagesOutstandingByReceiptHandleMu.Lock()
+	defer q.messagesOutstandingByReceiptHandleMu.Unlock()
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
+
 	var messageID uuid.UUID
-	messageID, ok = q.messagesByReceiptHandle[receiptHandle]
+	messageID, ok = q.messagesOutstandingByReceiptHandle[receiptHandle]
 	if !ok {
-		slog.Error("change message visibility; invalid receipt handle", slog.String("receipt_handle", receiptHandle))
+		slog.Error("change message visibility; invalid receipt handle; receipt handle not found", slog.String("receipt_handle", receiptHandle))
 		return
 	}
-	var msgNode *LinkedListNode[*MessageState]
-	msgNode, ok = q.messagesByID[messageID]
+	var msg *MessageState
+	msg, ok = q.messagesOutstanding[messageID]
 	if !ok {
-		slog.Error("change message visibility; invalid message id", slog.String("message_id", messageID.String()))
+		slog.Error("change message visibility; invalid message id; message not found", slog.String("message_id", messageID.String()))
 		return
 	}
-	msgNode.Value.UpdateVisibilityTimeout(visibilityTimeout)
+	msg.UpdateVisibilityTimeout(visibilityTimeout)
+
+	if visibilityTimeout == 0 {
+		// mark the message as ready
+	}
 	return
 }
 
 func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibilityBatchRequestEntry) (successful []types.ChangeMessageVisibilityBatchResultEntry, failed []types.BatchResultErrorEntry) {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
 	var messageID uuid.UUID
 	var ok bool
 	for _, entry := range entries {
-		messageID, ok = q.messagesByReceiptHandle[*entry.ReceiptHandle]
+		messageID, ok = q.messagesOutstandingByReceiptHandle[*entry.ReceiptHandle]
 		if !ok {
 			failed = append(failed, types.BatchResultErrorEntry{
 				Code:        aws.String("InvalidParameterValue"),
@@ -250,12 +293,12 @@ func (q *Queue) Delete(receiptHandle string) (ok bool) {
 	defer q.messagesMu.Unlock()
 
 	var messageID uuid.UUID
-	messageID, ok = q.messagesByReceiptHandle[receiptHandle]
+	messageID, ok = q.messagesOutstandingByReceiptHandle[receiptHandle]
 	if !ok {
-		slog.Error("deleting message; invalid receipt handle", slog.String("receipt_handle", receiptHandle))
+		slog.Error("deleting message; invalid receipt handle; receipt handle not found", slog.String("receipt_handle", receiptHandle))
 		return
 	}
-	slog.Error("deleting message", slog.String("messageID", messageID.String()))
+	slog.Info("deleting message", slog.String("receipt_handle", receiptHandle), slog.String("messageID", messageID.String()))
 	q.deleteUnsafe(messageID)
 	return
 }
@@ -267,7 +310,7 @@ func (q *Queue) DeleteBatch(handles []ReceiptHandleID) (successful []types.Delet
 	var messageID uuid.UUID
 	var ok bool
 	for _, handle := range handles {
-		messageID, ok = q.messagesByReceiptHandle[handle.ReceiptHandle]
+		messageID, ok = q.messagesOutstandingByReceiptHandle[handle.ReceiptHandle]
 		if !ok {
 			failed = append(failed, types.BatchResultErrorEntry{
 				Code:        aws.String("InvalidParameterValue"),
@@ -275,10 +318,10 @@ func (q *Queue) DeleteBatch(handles []ReceiptHandleID) (successful []types.Delet
 				SenderFault: true,
 				Message:     aws.String("ReceiptHandle not found"),
 			})
-			slog.Error("delete message batch; invalid receipt handle", slog.String("receipt_handle", handle.ReceiptHandle))
+			slog.Error("delete message batch; invalid receipt handle; receipt handle not found", slog.String("receipt_handle", handle.ReceiptHandle))
 			continue
 		}
-		slog.Error("deleting message", slog.String("messageID", messageID.String()))
+		slog.Info("deleting message", slog.String("receipt_handle", handle.ReceiptHandle), slog.String("messageID", messageID.String()))
 		q.deleteUnsafe(messageID)
 		successful = append(successful, types.DeleteMessageBatchResultEntry{
 			Id: aws.String(handle.ID),
@@ -291,7 +334,7 @@ func (q *Queue) Purge() {
 	q.messagesMu.Lock()
 	defer q.messagesMu.Unlock()
 	clear(q.messagesByID)
-	clear(q.messagesByReceiptHandle)
+	clear(q.messagesOutstandingByReceiptHandle)
 	q.messagesOrdered = new(LinkedList[*MessageState])
 	return
 }
@@ -461,30 +504,31 @@ const (
 	queueAttributeMessageRetentionPeriod        = "MessageRetentionPeriod"
 	queueAttributeReceiveMessageWaitTimeSeconds = "ReceiveMessageWaitTimeSeconds"
 	queueAttributeVisibilityTimeout             = "VisibilityTimeout"
-	queueAttributeRedrivePolicy                 = "RedrivePolicy" // this will be ignored for now
-	queueAttributeFifoQueue                     = "FifoQueue"     // this will be ignored for now
 )
 
 func (q *Queue) deleteUnsafe(id uuid.UUID) (ok bool) {
-	var node *LinkedListNode[*MessageState]
-	node, ok = q.messagesByID[id]
-	if !ok {
-		return
-	}
-	q.messagesOrdered.Remove(node)
-	for receiptHandle := range node.Value.ReceiptHandles {
-		delete(q.messagesByReceiptHandle, receiptHandle)
-	}
+
 	return
 }
 
 func (q *Queue) PurgeExpired() {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
+	q.messagesDelayedMu.Lock()
+	defer q.messagesDelayedMu.Unlock()
+
 	var toDelete []uuid.UUID
-	for node := range q.messagesOrdered.Each() {
-		if node.IsExpired() {
-			toDelete = append(toDelete, node.Message.MessageID)
+	for _, msg := range q.messagesDelayed {
+		if msg.IsExpired() {
+			toDelete = append(toDelete, msg.Message.MessageID)
+		}
+	}
+	for _, msg := range q.messagesOutstanding {
+		if msg.IsExpired() {
+			toDelete = append(toDelete, msg.Message.MessageID)
+		}
+	}
+	for _, msg := range q.messagesReady {
+		if msg.IsExpired() {
+			toDelete = append(toDelete, msg.Message.MessageID)
 		}
 	}
 	for _, messageID := range toDelete {
