@@ -47,15 +47,7 @@ func main() {
 		}
 		for _, m := range res.Messages {
 			if rand.Float64() > 0.5 {
-				_, err = sqsClient.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
-					QueueUrl:          flagQueueURL,
-					ReceiptHandle:     m.ReceiptHandle,
-					VisibilityTimeout: 0,
-				})
-				if err != nil {
-					slog.Error("error changing message visibility", slog.Any("err", err))
-					return
-				}
+				slog.Info("skipping processing message", slog.String("messageID", *m.MessageId))
 				continue
 			}
 			_, err = sqsClient.DeleteMessage(ctx, &sqs.DeleteMessageInput{

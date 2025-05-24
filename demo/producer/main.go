@@ -5,17 +5,20 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/spf13/pflag"
 )
 
 var (
-	flagQueueURL = pflag.String("queue-url", "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/default", "The queue URL")
+	flagQueueURL  = pflag.String("queue-url", "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/default", "The queue URL")
+	flagBatchSize = pflag.Int("batch-size", 10, "The send message batch size")
 )
 
 func main() {
@@ -36,18 +39,25 @@ func main() {
 		o.BaseEndpoint = &awsEndpoint
 		o.AppID = "sqslite-demo-producer"
 	})
-	var ordinal int
+	var ordinal uint64
 	for {
-		output, err := sqsClient.SendMessage(ctx, &sqs.SendMessageInput{
-			QueueUrl:    flagQueueURL,
-			MessageBody: aws.String(fmt.Sprintf(`{"messageIndex":%d}`, ordinal)),
+		var messages []types.SendMessageBatchRequestEntry
+		for x := range *flagBatchSize {
+			messages = append(messages, types.SendMessageBatchRequestEntry{
+				Id:          aws.String(fmt.Sprintf("message_%02d", x)),
+				MessageBody: aws.String(fmt.Sprintf(`{"messageIndex":%d}`, int(atomic.AddUint64(&ordinal, 1)))),
+			})
+		}
+		output, err := sqsClient.SendMessageBatch(ctx, &sqs.SendMessageBatchInput{
+			QueueUrl: flagQueueURL,
+			Entries:  messages,
 		})
 		if err != nil {
 			slog.Error("error sending message", slog.Any("err", err))
 			return
 		}
-		slog.Info("sent message", slog.String("messageID", *output.MessageId))
-		time.Sleep(100 * time.Millisecond)
+		slog.Info("sent message batch", slog.Int("successful", len(output.Successful)), slog.Int("failed", len(output.Failed)))
+		time.Sleep(10 * time.Second)
 	}
 }
 
