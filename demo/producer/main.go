@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"sync/atomic"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -17,7 +16,7 @@ import (
 )
 
 var (
-	flagQueueURL  = pflag.String("queue-url", "http://sqs.us-west-2.localhost/default", "The queue URL")
+	flagQueueURL  = pflag.String("queue-url", "http://sqslite.us-west-2.localhost/default", "The queue URL")
 	flagBatchSize = pflag.Int("batch-size", 10, "The send message batch size")
 )
 
@@ -57,7 +56,6 @@ func main() {
 			return
 		}
 		slog.Info("sent message batch", slog.Int("successful", len(output.Successful)), slog.Int("failed", len(output.Failed)))
-		time.Sleep(10 * time.Second)
 	}
 }
 

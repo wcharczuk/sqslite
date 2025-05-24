@@ -24,7 +24,7 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 	}
 	queue := &Queue{
 		Name:                               *input.QueueName,
-		URL:                                fmt.Sprintf("http://sqs.%s.localhost/%s", "us-west-2", *input.QueueName),
+		URL:                                fmt.Sprintf("http://sqslite.%s.localhost/%s", "us-west-2", *input.QueueName),
 		messagesReadyOrdered:               new(LinkedList[*MessageState]),
 		messagesReady:                      make(map[uuid.UUID]*LinkedListNode[*MessageState]),
 		messagesDelayed:                    make(map[uuid.UUID]*MessageState),
@@ -134,14 +134,9 @@ type Queue struct {
 	sequenceNumber uint64
 	mu             sync.Mutex
 
-	messagesReadyMu      sync.Mutex
-	messagesReadyOrdered *LinkedList[*MessageState]
-	messagesReady        map[uuid.UUID]*LinkedListNode[*MessageState]
-
-	messagesDelayedMu sync.Mutex
-	messagesDelayed   map[uuid.UUID]*MessageState
-
-	messagesOutstandingMu              sync.Mutex
+	messagesReadyOrdered               *LinkedList[*MessageState]
+	messagesReady                      map[uuid.UUID]*LinkedListNode[*MessageState]
+	messagesDelayed                    map[uuid.UUID]*MessageState
 	messagesOutstanding                map[uuid.UUID]*MessageState
 	messagesOutstandingByReceiptHandle map[string]uuid.UUID
 
@@ -171,11 +166,16 @@ func (q *Queue) Close() {
 }
 
 func (q *Queue) Push(msgs ...*MessageState) {
-	q.messagesDelayedMu.Lock()
-	defer q.messagesDelayedMu.Unlock()
-	q.messagesReadyMu.Lock()
-	defer q.messagesReadyMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	for _, m := range msgs {
+		// only apply the queue level default if
+		// - it's set
+		// - the message does not specify a delay
+		if q.Delay.IsSet && m.Delay.IsZero() {
+			m.Delay = q.Delay
+		}
 		if m.IsDelayed() {
 			q.messagesDelayed[m.Message.MessageID] = m
 			continue
@@ -186,10 +186,8 @@ func (q *Queue) Push(msgs ...*MessageState) {
 }
 
 func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration) (output []Message) {
-	q.messagesReadyMu.Lock()
-	defer q.messagesReadyMu.Unlock()
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
 	var effectiveVisibilityTimeout time.Duration
 	if visibilityTimeout > 0 {
@@ -219,8 +217,9 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 }
 
 func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibilityTimeout time.Duration) (ok bool) {
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	var messageID uuid.UUID
 	messageID, ok = q.messagesOutstandingByReceiptHandle[initiatingReceiptHandle]
 	if !ok {
@@ -235,8 +234,6 @@ func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibili
 	}
 	msg.UpdateVisibilityTimeout(visibilityTimeout)
 	if visibilityTimeout == 0 {
-		q.messagesReadyMu.Lock()
-		defer q.messagesReadyMu.Unlock()
 		slog.Info("change message visibility batch; marking message ready", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()))
 		for receiptHandle := range msg.ReceiptHandles.Consume() {
 			slog.Info("change message visibility; marking message ready; deleting message receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
@@ -253,8 +250,8 @@ func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibili
 }
 
 func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibilityBatchRequestEntry) (successful []types.ChangeMessageVisibilityBatchResultEntry, failed []types.BatchResultErrorEntry) {
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	var messageID uuid.UUID
 	var ok bool
 	var readyMessages []*MessageState
@@ -296,21 +293,18 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 		}
 	}
 	if len(readyMessages) > 0 {
-		q.messagesReadyMu.Lock()
-		defer q.messagesReadyMu.Unlock()
 		for _, msg := range readyMessages {
 			delete(q.messagesOutstanding, msg.Message.MessageID)
 			node := q.messagesReadyOrdered.Push(msg)
 			q.messagesReady[msg.Message.MessageID] = node
 		}
 	}
-
 	return
 }
 
 func (q *Queue) Delete(initiatingReceiptHandle string) (ok bool) {
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	var messageID uuid.UUID
 	messageID, ok = q.messagesOutstandingByReceiptHandle[initiatingReceiptHandle]
 	if !ok {
@@ -335,8 +329,8 @@ func (q *Queue) Delete(initiatingReceiptHandle string) (ok bool) {
 }
 
 func (q *Queue) DeleteBatch(handles []types.DeleteMessageBatchRequestEntry) (successful []types.DeleteMessageBatchResultEntry, failed []types.BatchResultErrorEntry) {
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	var messageID uuid.UUID
 	var ok bool
 	for _, handle := range handles {
@@ -378,12 +372,8 @@ func (q *Queue) DeleteBatch(handles []types.DeleteMessageBatchRequestEntry) (suc
 }
 
 func (q *Queue) Purge() {
-	q.messagesReadyMu.Lock()
-	defer q.messagesReadyMu.Unlock()
-	q.messagesDelayedMu.Lock()
-	defer q.messagesDelayedMu.Unlock()
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
 	q.messagesReadyOrdered = new(LinkedList[*MessageState])
 	clear(q.messagesReady)
@@ -393,12 +383,8 @@ func (q *Queue) Purge() {
 }
 
 func (q *Queue) PurgeExpired() {
-	q.messagesDelayedMu.Lock()
-	defer q.messagesDelayedMu.Unlock()
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
-	q.messagesReadyMu.Lock()
-	defer q.messagesReadyMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
 	var toDeleteDelayed []uuid.UUID
 	for _, msg := range q.messagesDelayed {
@@ -438,10 +424,8 @@ func (q *Queue) PurgeExpired() {
 }
 
 func (q *Queue) UpdateVisible() {
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
-	q.messagesReadyMu.Lock()
-	defer q.messagesReadyMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
 	var ready []*MessageState
 	for _, msg := range q.messagesOutstanding {
@@ -462,10 +446,9 @@ func (q *Queue) UpdateVisible() {
 }
 
 func (q *Queue) UpdateDelayed() {
-	q.messagesOutstandingMu.Lock()
-	defer q.messagesOutstandingMu.Unlock()
-	q.messagesReadyMu.Lock()
-	defer q.messagesReadyMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	var ready []*MessageState
 	for _, msg := range q.messagesDelayed {
 		if !msg.IsDelayed() {
