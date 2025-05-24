@@ -11,14 +11,14 @@ import (
 )
 
 func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
-	q, err := NewQueueFromCreateQueueInput(&sqs.CreateQueueInput{
+	q, err := NewQueueFromCreateQueueInput("http://sqslite.local", &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
 	defer q.Close()
 
 	require.Nil(t, err)
 	require.Equal(t, "test-queue", q.Name)
-	require.Equal(t, "http://sqslite.us-west-2.localhost/test-queue", q.URL)
+	require.Equal(t, "http://sqslite.local/test-queue", q.URL)
 	require.NotNil(t, q.messagesReadyOrdered)
 	require.NotNil(t, q.messagesReady)
 	require.NotNil(t, q.messagesDelayed)
@@ -33,7 +33,7 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 }
 
 func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {
-	q, _ := NewQueueFromCreateQueueInput(&sqs.CreateQueueInput{
+	q, _ := NewQueueFromCreateQueueInput("http://sqslite.local", &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
 	defer q.Close()

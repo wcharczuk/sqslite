@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"net/http"
 	"sqslite/pkg/uuid"
 	"time"
@@ -15,9 +16,24 @@ import (
 )
 
 // NewServer returns a new server.
-func NewServer() *Server {
-	return &Server{
-		queues: NewQueues(),
+func NewServer(options ...ServerOption) *Server {
+	s := Server{
+		baseQueueURL: "http://sqslite.us-west-2.localhost",
+		queues:       NewQueues(),
+	}
+	for _, opt := range options {
+		opt(&s)
+	}
+	return &s
+}
+
+// ServerOption is a function that mutates servers.
+type ServerOption func(*Server)
+
+// OptBaseQueueURL sets the base QueueURL for newly created queues.
+func OptBaseQueueURL(baseQueueURL string) ServerOption {
+	return func(s *Server) {
+		s.baseQueueURL = baseQueueURL
 	}
 }
 
@@ -25,11 +41,25 @@ var _ http.Handler = (*Server)(nil)
 
 // Server implements the http routing layer for sqslite.
 type Server struct {
-	queues *Queues
+	baseQueueURL string
+	queues       *Queues
+}
+
+// Queues returns an iterator for the queues in the server.
+func (s *Server) Queues() iter.Seq[*Queue] {
+	return func(yield func(*Queue) bool) {
+		s.queues.queuesMu.Lock()
+		defer s.queues.queuesMu.Unlock()
+		for _, q := range s.queues.queues {
+			if !yield(q) {
+				return
+			}
+		}
+	}
 }
 
 // Close shuts down the server.
-func (s Server) Close() {
+func (s *Server) Close() {
 	s.queues.Close()
 }
 
@@ -90,7 +120,7 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, err := NewQueueFromCreateQueueInput(input)
+	queue, err := NewQueueFromCreateQueueInput(s.baseQueueURL, input)
 	if err != nil {
 		serialize(rw, err)
 		return

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"os"
 	"os/signal"
 	"runtime"
@@ -19,6 +18,7 @@ import (
 )
 
 var (
+	flagEndpoint   = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
 	flagQueueURL   = pflag.String("queue-url", "http://sqslite.us-west-2.localhost/default", "The queue URL")
 	flagNumPollers = pflag.Int("num-pollers", runtime.NumCPU(), "The number of queue pollers")
 )
@@ -26,7 +26,6 @@ var (
 func main() {
 	pflag.Parse()
 
-	awsEndpoint := "http://localhost:4567"
 	awsRegion := "us-east-1"
 
 	ctx, done := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -40,7 +39,7 @@ func main() {
 		maybeFatal(err)
 	}
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
-		o.BaseEndpoint = &awsEndpoint
+		o.BaseEndpoint = flagEndpoint
 		o.AppID = "sqslite-demo-consumer"
 	})
 
@@ -52,15 +51,15 @@ func main() {
 					QueueUrl:            flagQueueURL,
 					MaxNumberOfMessages: 10,
 					WaitTimeSeconds:     20, // you _really_ should have this be much shorter than the viz timeout
-					VisibilityTimeout:   5,  // this should be ~30 if you don't want things to break
+					VisibilityTimeout:   30, // this should be ~30 if you don't want things to break
 				})
 				if err != nil {
 					return fmt.Errorf("error receiving messages: %w", err)
 				}
 				for _, m := range res.Messages {
-					if rand.Float64() > 0.5 {
-						continue
-					}
+					// if rand.Float64() > 0.75 {
+					// 	continue
+					// }
 					_, err = sqsClient.DeleteMessage(groupCtx, &sqs.DeleteMessageInput{
 						QueueUrl:      flagQueueURL,
 						ReceiptHandle: m.ReceiptHandle,

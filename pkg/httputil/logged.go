@@ -36,5 +36,5 @@ func (l loggedHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if target := req.Header.Get("X-Amz-Target"); target != "" {
 		attributes = append(attributes, slog.String("method", target))
 	}
-	slog.Info("http-request", attributes...)
+	slog.Debug("http-request", attributes...)
 }

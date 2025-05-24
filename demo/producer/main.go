@@ -16,14 +16,15 @@ import (
 )
 
 var (
+	flagEndpoint  = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
 	flagQueueURL  = pflag.String("queue-url", "http://sqslite.us-west-2.localhost/default", "The queue URL")
 	flagBatchSize = pflag.Int("batch-size", 10, "The send message batch size")
+	flagPause     = pflag.Duration("pause", 0, "The time to pause between send message batches")
 )
 
 func main() {
 	pflag.Parse()
 
-	awsEndpoint := "http://localhost:4567"
 	awsRegion := "us-east-1"
 
 	ctx := context.Background()
@@ -35,7 +36,7 @@ func main() {
 		maybeFatal(err)
 	}
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
-		o.BaseEndpoint = &awsEndpoint
+		o.BaseEndpoint = flagEndpoint
 		o.AppID = "sqslite-demo-producer"
 	})
 	var ordinal uint64
@@ -56,6 +57,7 @@ func main() {
 			return
 		}
 		slog.Info("sent message batch", slog.Int("successful", len(output.Successful)), slog.Int("failed", len(output.Failed)))
+		// time.Sleep(time.Second)
 	}
 }
 

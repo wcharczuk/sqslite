@@ -3,7 +3,6 @@ package sqslite
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strconv"
 	"sync"
@@ -18,13 +17,13 @@ import (
 )
 
 // NewQueueFromCreateQueueInput returns a new queue for a given [sqs.CreateQueueInput].
-func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) {
+func NewQueueFromCreateQueueInput(baseQueueURL string, input *sqs.CreateQueueInput) (*Queue, *Error) {
 	if err := validateQueueName(*input.QueueName); err != nil {
 		return nil, err
 	}
 	queue := &Queue{
 		Name:                               *input.QueueName,
-		URL:                                fmt.Sprintf("http://sqslite.%s.localhost/%s", "us-west-2", *input.QueueName),
+		URL:                                fmt.Sprintf("%s/%s", baseQueueURL, *input.QueueName),
 		messagesReadyOrdered:               new(LinkedList[*MessageState]),
 		messagesReady:                      make(map[uuid.UUID]*LinkedListNode[*MessageState]),
 		messagesDelayed:                    make(map[uuid.UUID]*MessageState),
@@ -118,6 +117,7 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 	return queue, nil
 }
 
+// Queue is an individual queue.
 type Queue struct {
 	Name string
 	URL  string
@@ -146,6 +146,24 @@ type Queue struct {
 	visibilityWorkerCancel func()
 	delayWorker            *delayWorker
 	delayWorkerCancel      func()
+
+	stats QueueStats
+}
+
+// Stats are basic statistics about the queue.
+type QueueStats struct {
+	NumMessages            int64
+	NumMessagesReady       int64
+	NumMessagesDelayed     int64
+	NumMessagesOutstanding int64
+}
+
+func (q *Queue) Stats() (output QueueStats) {
+	output.NumMessages = atomic.LoadInt64(&q.stats.NumMessages)
+	output.NumMessagesReady = atomic.LoadInt64(&q.stats.NumMessagesReady)
+	output.NumMessagesDelayed = atomic.LoadInt64(&q.stats.NumMessagesDelayed)
+	output.NumMessagesOutstanding = atomic.LoadInt64(&q.stats.NumMessagesOutstanding)
+	return
 }
 
 func (q *Queue) Close() {
@@ -176,10 +194,13 @@ func (q *Queue) Push(msgs ...*MessageState) {
 		if q.Delay.IsSet && m.Delay.IsZero() {
 			m.Delay = q.Delay
 		}
+		atomic.AddInt64(&q.stats.NumMessages, 1)
 		if m.IsDelayed() {
+			atomic.AddInt64(&q.stats.NumMessagesDelayed, 1)
 			q.messagesDelayed[m.Message.MessageID] = m
 			continue
 		}
+		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
 		node := q.messagesReadyOrdered.Push(m)
 		q.messagesReady[m.Message.MessageID] = node
 	}
@@ -196,12 +217,13 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 		effectiveVisibilityTimeout = q.VisibilityTimeout
 	}
 	for msg := range q.messagesReadyOrdered.Consume() {
+		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
+		atomic.AddInt64(&q.stats.NumMessagesOutstanding, 1)
 		msg.IncrementApproximateReceiveCount()
 		msg.UpdateVisibilityTimeout(effectiveVisibilityTimeout)
 		msg.SetLastReceived(time.Now().UTC())
 		messageCopy := msg.Message
 		messageCopy.ReceiptHandle = Some(uuid.V4().String())
-		slog.Info("receieve message; issuing receipt handle", slog.Duration("visibility_timeout", effectiveVisibilityTimeout), slog.String("receipt_handle", messageCopy.ReceiptHandle.Value))
 		msg.ReceiptHandles.Add(messageCopy.ReceiptHandle.Value)
 		q.messagesOutstandingByReceiptHandle[messageCopy.ReceiptHandle.Value] = messageCopy.MessageID
 		q.messagesOutstanding[msg.Message.MessageID] = msg
@@ -223,26 +245,23 @@ func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibili
 	var messageID uuid.UUID
 	messageID, ok = q.messagesOutstandingByReceiptHandle[initiatingReceiptHandle]
 	if !ok {
-		slog.Error("change message visibility; invalid receipt handle; receipt handle not found", slog.String("receipt_handle", initiatingReceiptHandle))
 		return
 	}
 	var msg *MessageState
 	msg, ok = q.messagesOutstanding[messageID]
 	if !ok {
-		slog.Error("change message visibility; invalid message id; message not found", slog.String("message_id", messageID.String()))
 		return
 	}
 	msg.UpdateVisibilityTimeout(visibilityTimeout)
 	if visibilityTimeout == 0 {
-		slog.Info("change message visibility batch; marking message ready", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()))
 		for receiptHandle := range msg.ReceiptHandles.Consume() {
-			slog.Info("change message visibility; marking message ready; deleting message receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
 			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 		}
-		slog.Info("change message visibility; marking message ready; deleting message receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", initiatingReceiptHandle))
 		msg.ReceiptHandles.Del(initiatingReceiptHandle)
 		delete(q.messagesOutstandingByReceiptHandle, initiatingReceiptHandle)
 		delete(q.messagesOutstanding, msg.Message.MessageID)
+		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
+		atomic.AddInt64(&q.stats.NumMessagesOutstanding, -1)
 		node := q.messagesReadyOrdered.Push(msg)
 		q.messagesReady[msg.Message.MessageID] = node
 	}
@@ -282,9 +301,7 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 			Id: entry.Id,
 		})
 		if entry.VisibilityTimeout == 0 {
-			slog.Info("change message visibility batch; marking message ready", slog.String("initiating_receipt_handle", safeDeref(entry.ReceiptHandle)), slog.String("message_id", messageID.String()))
 			for receiptHandle := range msgNode.ReceiptHandles.Consume() {
-				slog.Info("change message visibility batch; marking message ready; deleting message receipt handle", slog.String("initiating_receipt_handle", safeDeref(entry.ReceiptHandle)), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
 				delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 			}
 			delete(q.messagesOutstandingByReceiptHandle, safeDeref(entry.ReceiptHandle))
@@ -294,6 +311,8 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	}
 	if len(readyMessages) > 0 {
 		for _, msg := range readyMessages {
+			atomic.AddInt64(&q.stats.NumMessagesReady, 1)
+			atomic.AddInt64(&q.stats.NumMessagesOutstanding, -1)
 			delete(q.messagesOutstanding, msg.Message.MessageID)
 			node := q.messagesReadyOrdered.Push(msg)
 			q.messagesReady[msg.Message.MessageID] = node
@@ -308,21 +327,18 @@ func (q *Queue) Delete(initiatingReceiptHandle string) (ok bool) {
 	var messageID uuid.UUID
 	messageID, ok = q.messagesOutstandingByReceiptHandle[initiatingReceiptHandle]
 	if !ok {
-		slog.Error("deleting message; invalid receipt handle; outstanding receipt handle to message id mapping not found", slog.String("initiating_receipt_handle", initiatingReceiptHandle))
 		return
 	}
 	var msg *MessageState
 	msg, ok = q.messagesOutstanding[messageID]
 	if !ok {
-		slog.Error("delete message; invalid message id for receipt handle; outstanding message not found", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()))
 		return
 	}
-	slog.Info("deleting outstanding message", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()))
 	for receiptHandle := range msg.ReceiptHandles.Consume() {
-		slog.Info("delete message; deleting outstanding message; deleting receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
 		delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 	}
-	slog.Info("delete message; deleting outstanding message; deleting receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", initiatingReceiptHandle))
+	atomic.AddInt64(&q.stats.NumMessagesOutstanding, -1)
+	atomic.AddInt64(&q.stats.NumMessages, -1)
 	delete(q.messagesOutstandingByReceiptHandle, initiatingReceiptHandle)
 	delete(q.messagesOutstanding, messageID)
 	return
@@ -342,7 +358,6 @@ func (q *Queue) DeleteBatch(handles []types.DeleteMessageBatchRequestEntry) (suc
 				SenderFault: true,
 				Message:     aws.String("ReceiptHandle not found"),
 			})
-			slog.Error("deleting message batch; invalid receipt handle; outstanding receipt handle to message id mapping not found", slog.String("receipt_handle", safeDeref(handle.ReceiptHandle)))
 			continue
 		}
 		msg, ok := q.messagesOutstanding[messageID]
@@ -353,15 +368,13 @@ func (q *Queue) DeleteBatch(handles []types.DeleteMessageBatchRequestEntry) (suc
 				SenderFault: false,
 				Message:     aws.String("Message not found for receipt handle"),
 			})
-			slog.Error("delete message batch; invalid message id for receipt handle; outstanding message not found", slog.String("receipt_handle", safeDeref(handle.ReceiptHandle)), slog.String("message_id", messageID.String()))
 			continue
 		}
-		slog.Info("delete message batch; deleting outstanding message", slog.String("receipt_handle", safeDeref(handle.ReceiptHandle)), slog.String("message_id", messageID.String()))
 		for receiptHandle := range msg.ReceiptHandles.Consume() {
-			slog.Info("delete message batch; deleting outstanding message; deleting receipt handle", slog.String("initiating_receipt_handle", safeDeref(handle.ReceiptHandle)), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
 			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 		}
-		// largely redundant ...
+		atomic.AddInt64(&q.stats.NumMessagesOutstanding, -1)
+		atomic.AddInt64(&q.stats.NumMessages, -1)
 		delete(q.messagesOutstandingByReceiptHandle, safeDeref(handle.ReceiptHandle))
 		delete(q.messagesOutstanding, messageID)
 		successful = append(successful, types.DeleteMessageBatchResultEntry{
@@ -380,12 +393,18 @@ func (q *Queue) Purge() {
 	clear(q.messagesDelayed)
 	clear(q.messagesOutstanding)
 	clear(q.messagesOutstandingByReceiptHandle)
+
+	atomic.StoreInt64(&q.stats.NumMessages, 0)
+	atomic.StoreInt64(&q.stats.NumMessagesDelayed, 0)
+	atomic.StoreInt64(&q.stats.NumMessagesOutstanding, 0)
+	atomic.StoreInt64(&q.stats.NumMessagesReady, 0)
 }
 
 func (q *Queue) PurgeExpired() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	deleted := make(map[uuid.UUID]struct{})
 	var toDeleteDelayed []uuid.UUID
 	for _, msg := range q.messagesDelayed {
 		if msg.IsExpired() {
@@ -393,8 +412,9 @@ func (q *Queue) PurgeExpired() {
 		}
 	}
 	for _, id := range toDeleteDelayed {
-		slog.Info("purging expired; purging delayed message", slog.String("message_id", id.String()))
+		atomic.AddInt64(&q.stats.NumMessagesDelayed, -1)
 		delete(q.messagesDelayed, id)
+		deleted[id] = struct{}{}
 	}
 	var toDeleteOustanding []*MessageState
 	for _, msg := range q.messagesOutstanding {
@@ -403,11 +423,11 @@ func (q *Queue) PurgeExpired() {
 		}
 	}
 	for _, msg := range toDeleteOustanding {
-		slog.Info("purging expired; purging outstanding message", slog.String("message_id", msg.Message.MessageID.String()))
 		for receiptHandle := range msg.ReceiptHandles.Consume() {
-			slog.Info("purging expired; purging outstanding message; deleting receipt handle", slog.String("id", msg.Message.ID), slog.String("message_id", msg.Message.MessageID.String()), slog.String("receipt_handle", receiptHandle))
 			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 		}
+		deleted[msg.Message.MessageID] = struct{}{}
+		atomic.AddInt64(&q.stats.NumMessagesOutstanding, -1)
 		delete(q.messagesOutstanding, msg.Message.MessageID)
 	}
 	var toDeleteNodes []*LinkedListNode[*MessageState]
@@ -417,10 +437,12 @@ func (q *Queue) PurgeExpired() {
 		}
 	}
 	for _, node := range toDeleteNodes {
-		slog.Info("purging expired; purging ready message", slog.String("message_id", node.Value.Message.MessageID.String()))
 		q.messagesReadyOrdered.Remove(node)
+		deleted[node.Value.Message.MessageID] = struct{}{}
+		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
 		delete(q.messagesReady, node.Value.Message.MessageID)
 	}
+	atomic.AddInt64(&q.stats.NumMessages, -int64(len(deleted)))
 }
 
 func (q *Queue) UpdateVisible() {
@@ -434,11 +456,11 @@ func (q *Queue) UpdateVisible() {
 		}
 	}
 	for _, msg := range ready {
-		slog.Info("update visible; marking message as ready", slog.String("id", msg.Message.ID), slog.String("message_id", msg.Message.MessageID.String()))
 		for receiptHandle := range msg.ReceiptHandles.Consume() {
-			slog.Info("update visible; marking message as ready; deleting receipt handle", slog.String("id", msg.Message.ID), slog.String("message_id", msg.Message.MessageID.String()), slog.String("receipt_handle", receiptHandle))
 			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 		}
+		atomic.AddInt64(&q.stats.NumMessagesOutstanding, -1)
+		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
 		delete(q.messagesOutstanding, msg.Message.MessageID)
 		node := q.messagesReadyOrdered.Push(msg)
 		q.messagesReady[msg.Message.MessageID] = node
@@ -456,7 +478,8 @@ func (q *Queue) UpdateDelayed() {
 		}
 	}
 	for _, msg := range ready {
-		slog.Info("update delayed; marking message as ready", slog.String("id", msg.Message.ID), slog.String("message_id", msg.Message.MessageID.String()))
+		atomic.AddInt64(&q.stats.NumMessagesDelayed, -1)
+		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
 		delete(q.messagesDelayed, msg.Message.MessageID)
 		node := q.messagesReadyOrdered.Push(msg)
 		q.messagesReady[msg.Message.MessageID] = node
