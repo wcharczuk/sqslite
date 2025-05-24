@@ -84,6 +84,7 @@ func (q *Queues) DeleteQueue(ctx context.Context, queueURL string) (ok bool) {
 	if !ok {
 		return
 	}
+	queue.Close()
 	delete(q.queueURLs, queue.Name)
 	delete(q.queues, queueURL)
 	return
