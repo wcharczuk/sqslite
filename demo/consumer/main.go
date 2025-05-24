@@ -38,7 +38,7 @@ func main() {
 		res, err := sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 			QueueUrl:            flagQueueURL,
 			MaxNumberOfMessages: 10,
-			WaitTimeSeconds:     20, // you _really_ should have this be much longer than the viz timeout
+			WaitTimeSeconds:     20, // you _really_ should have this be much shorter than the viz timeout
 			VisibilityTimeout:   5,  // this should be ~30 if you don't want things to break
 		})
 		if err != nil {
