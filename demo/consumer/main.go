@@ -39,7 +39,7 @@ func main() {
 			QueueUrl:            flagQueueURL,
 			MaxNumberOfMessages: 10,
 			WaitTimeSeconds:     20, // you _really_ should have this be much longer than the viz timeout
-			VisibilityTimeout:   30,
+			VisibilityTimeout:   5,  // this should be ~30 if you don't want things to break
 		})
 		if err != nil {
 			slog.Error("error receiving messagess", slog.Any("err", err))
