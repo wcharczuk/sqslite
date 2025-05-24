@@ -12,7 +12,7 @@ type MessageState struct {
 	VisibilityTimeout  time.Duration
 	ReceiveCount       int
 	Delay              Optional[time.Duration]
-	ReceiptHandles     Set[string]
+	ReceiptHandles     *SafeSet[string]
 	LastReceived       Optional[time.Time]
 	FirstReceived      Optional[time.Time]
 	VisibilityDeadline Optional[time.Time]
@@ -39,7 +39,11 @@ func (s *MessageState) SetLastReceived(timestamp time.Time) {
 
 func (s *MessageState) UpdateVisibilityTimeout(timeout time.Duration) {
 	s.VisibilityTimeout = timeout
-	s.VisibilityDeadline = Some(time.Now().UTC().Add(timeout))
+	if timeout == 0 {
+		s.VisibilityDeadline = None[time.Time]()
+	} else {
+		s.VisibilityDeadline = Some(time.Now().UTC().Add(timeout))
+	}
 }
 
 func (s *MessageState) IsVisible() bool {

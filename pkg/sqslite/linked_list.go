@@ -72,6 +72,28 @@ func (l *LinkedList[T]) Pop() (out T, ok bool) {
 	return
 }
 
+// PopNode removes the head node from the list (which contains the element).
+func (l *LinkedList[T]) PopNode() (out *LinkedListNode[T], ok bool) {
+	if l.head == nil {
+		return
+	}
+
+	out = l.head
+	ok = true
+
+	l.len--
+	if l.head == l.tail {
+		l.head = nil
+		l.tail = nil
+		return
+	}
+
+	next := l.head.Next
+	next.Previous = nil
+	l.head = next
+	return
+}
+
 // PopBack removes the last, or tail, element of the list.
 func (l *LinkedList[T]) PopBack() (out T, ok bool) {
 	if l.tail == nil {
@@ -143,6 +165,52 @@ func (q *LinkedList[T]) Each() iter.Seq[T] {
 				return
 			}
 			nodePtr = nodePtr.Next
+		}
+	}
+}
+
+// Consume returns an iterator that pops and yields elements in the list from head to tail.
+func (q *LinkedList[T]) Consume() iter.Seq[T] {
+	return func(yield func(T) bool) {
+		v, ok := q.Pop()
+		if !ok {
+			return
+		}
+		if !yield(v) {
+			return
+		}
+		for ok {
+			v, ok = q.Pop()
+			if !ok {
+				return
+			}
+			if !yield(v) {
+				return
+			}
+
+		}
+	}
+}
+
+// ConsumeNode returns an iterator that pops and yields nodes in the list from head to tail.
+func (q *LinkedList[T]) ConsumeNode() iter.Seq[*LinkedListNode[T]] {
+	return func(yield func(*LinkedListNode[T]) bool) {
+		v, ok := q.PopNode()
+		if !ok {
+			return
+		}
+		if !yield(v) {
+			return
+		}
+		for ok {
+			v, ok = q.PopNode()
+			if !ok {
+				return
+			}
+			if !yield(v) {
+				return
+			}
+
 		}
 	}
 }

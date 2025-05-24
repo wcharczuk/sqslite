@@ -26,12 +26,15 @@ func (l loggedHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	srw := NewResponseWriter(rw)
 	l.next.ServeHTTP(srw, req)
 	attributes := []any{
-		slog.String("method", req.Method),
+		slog.String("verb", req.Method),
 		slog.String("url", req.URL.String()),
 		slog.String("user_agent", req.UserAgent()),
 		slog.String("remote_addr", GetRemoteAddr(req)),
 		slog.String("status_code", http.StatusText(srw.StatusCode())),
 		slog.Duration("elapsed", time.Since(start)),
+	}
+	if target := req.Header.Get("X-Amz-Target"); target != "" {
+		attributes = append(attributes, slog.String("method", target))
 	}
 	slog.Info("http-request", attributes...)
 }

@@ -285,3 +285,28 @@ func Test_LinkedList_ReverseEach(t *testing.T) {
 	}
 	require.Equal(t, []int{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, values)
 }
+
+func Test_LinkedList_Consume(t *testing.T) {
+	n0 := "0"
+	n1 := "1"
+	n2 := "2"
+
+	rhl := new(LinkedList[string])
+	rhl.Push(n0)
+	rhl.Push(n1)
+	rhl.Push(n2)
+
+	require.NotNil(t, rhl.head)
+	require.NotNil(t, rhl.tail)
+	require.Equal(t, 3, rhl.len)
+
+	var consumed []string
+	for v := range rhl.Consume() {
+		consumed = append(consumed, v)
+	}
+	require.Equal(t, 3, len(consumed))
+	require.Equal(t, 0, rhl.len)
+	require.Nil(t, rhl.head)
+	require.Nil(t, rhl.tail)
+	require.Equal(t, []string{"0", "1", "2"}, consumed)
+}

@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	flagQueueURL  = pflag.String("queue-url", "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/default", "The queue URL")
+	flagQueueURL  = pflag.String("queue-url", "http://sqs.us-west-2.localhost/default", "The queue URL")
 	flagBatchSize = pflag.Int("batch-size", 10, "The send message batch size")
 )
 

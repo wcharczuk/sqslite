@@ -34,15 +34,14 @@ func (s Server) Close() {
 }
 
 const (
-	methodCreateQueue             = "AmazonSQS.CreateQueue"
-	methodListQueues              = "AmazonSQS.ListQueues"
-	methodPurgeQueue              = "AmazonSQS.PurgeQueue"
-	methodDeleteQueue             = "AmazonSQS.DeleteQueue"
-	methodReceiveMessage          = "AmazonSQS.ReceiveMessage"
-	methodSendMessage             = "AmazonSQS.SendMessage"
-	methodDeleteMessage           = "AmazonSQS.DeleteMessage"
-	methodChangeMessageVisibility = "AmazonSQS.ChangeMessageVisibility"
-
+	methodCreateQueue                  = "AmazonSQS.CreateQueue"
+	methodListQueues                   = "AmazonSQS.ListQueues"
+	methodPurgeQueue                   = "AmazonSQS.PurgeQueue"
+	methodDeleteQueue                  = "AmazonSQS.DeleteQueue"
+	methodReceiveMessage               = "AmazonSQS.ReceiveMessage"
+	methodSendMessage                  = "AmazonSQS.SendMessage"
+	methodDeleteMessage                = "AmazonSQS.DeleteMessage"
+	methodChangeMessageVisibility      = "AmazonSQS.ChangeMessageVisibility"
 	methodSendMessageBatch             = "AmazonSQS.SendMessageBatch"
 	methodDeleteMessageBatch           = "AmazonSQS.DeleteMessageBatch"
 	methodChangeMessageVisibilityBatch = "AmazonSQS.ChangeMessageVisibilityBatch"
@@ -104,7 +103,6 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	serialize(rw, &sqs.CreateQueueOutput{
 		QueueUrl: &queue.URL,
 	})
-	return
 }
 
 func (s Server) purgeQueue(rw http.ResponseWriter, req *http.Request) {
@@ -119,7 +117,6 @@ func (s Server) purgeQueue(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	serialize(rw, &sqs.PurgeQueueOutput{})
-	return
 }
 
 func (s Server) deleteQueue(rw http.ResponseWriter, req *http.Request) {
@@ -134,7 +131,6 @@ func (s Server) deleteQueue(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	serialize(rw, &sqs.DeleteQueueOutput{})
-	return
 }
 
 func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
@@ -147,11 +143,13 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	if err := validateVisibilityTimeout(time.Duration(input.VisibilityTimeout) * time.Second); err != nil {
+	visibilityTimeout := time.Duration(input.VisibilityTimeout) * time.Second
+	if err := validateVisibilityTimeout(visibilityTimeout); err != nil {
 		serialize(rw, err)
 		return
 	}
-	if err := validateReceiveMessageWaitTime(time.Duration(input.WaitTimeSeconds) * time.Second); err != nil {
+	waitTimeout := time.Duration(input.WaitTimeSeconds) * time.Second
+	if err := validateWaitTimeSeconds(waitTimeout); err != nil {
 		serialize(rw, err)
 		return
 	}
@@ -160,13 +158,11 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
 		return
 	}
-
-	visibilityTimeout := time.Duration(input.VisibilityTimeout) * time.Second
 	allMessages := queue.Receive(int(input.MaxNumberOfMessages), visibilityTimeout)
 	if len(allMessages) < int(input.MaxNumberOfMessages) {
 		var waitTime time.Duration
-		if input.WaitTimeSeconds == 0 {
-			waitTime = time.Duration(input.WaitTimeSeconds)
+		if input.WaitTimeSeconds > 0 {
+			waitTime = waitTimeout
 		} else {
 			waitTime = queue.ReceiveMessageWaitTime
 		}
@@ -227,7 +223,6 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		MD5OfMessageBody:       aws.String(msg.Message.MD5OfBody.Value),
 		SequenceNumber:         aws.String(fmt.Sprint(msg.SequenceNumber)),
 	})
-	return
 }
 
 func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
@@ -266,7 +261,6 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 	serialize(rw, &sqs.SendMessageBatchOutput{
 		Successful: apply(messages, asTypesSendMessageBatchResultEntry),
 	})
-	return
 }
 
 func (s Server) deleteMessage(rw http.ResponseWriter, req *http.Request) {
@@ -290,7 +284,6 @@ func (s Server) deleteMessage(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	serialize(rw, &sqs.DeleteMessageOutput{})
-	return
 }
 
 func (s Server) deleteMessageBatch(rw http.ResponseWriter, req *http.Request) {
@@ -308,8 +301,6 @@ func (s Server) deleteMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
 		return
 	}
-
-	receiptHandles := make([]ReceiptHandleID, 0, len(input.Entries))
 	for _, entry := range input.Entries {
 		if err := requireEntryID(entry.Id); err != nil {
 			serialize(rw, err)
@@ -319,17 +310,12 @@ func (s Server) deleteMessageBatch(rw http.ResponseWriter, req *http.Request) {
 			serialize(rw, err)
 			return
 		}
-		receiptHandles = append(receiptHandles, ReceiptHandleID{
-			ID:            *entry.Id,
-			ReceiptHandle: *entry.ReceiptHandle,
-		})
 	}
-	successful, failed := queue.DeleteBatch(receiptHandles)
+	successful, failed := queue.DeleteBatch(input.Entries)
 	serialize(rw, &sqs.DeleteMessageBatchOutput{
 		Successful: successful,
 		Failed:     failed,
 	})
-	return
 }
 
 func (s Server) changeMessageVisibility(rw http.ResponseWriter, req *http.Request) {
@@ -361,7 +347,6 @@ func (s Server) changeMessageVisibility(rw http.ResponseWriter, req *http.Reques
 		return
 	}
 	serialize(rw, &sqs.ChangeMessageVisibilityOutput{})
-	return
 }
 
 func (s Server) changeMessageVisibilityBatch(rw http.ResponseWriter, req *http.Request) {
@@ -399,7 +384,6 @@ func (s Server) changeMessageVisibilityBatch(rw http.ResponseWriter, req *http.R
 		Successful: successful,
 		Failed:     failed,
 	})
-	return
 }
 
 func (s Server) unknownVerb(rw http.ResponseWriter, req *http.Request) {

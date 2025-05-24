@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	flagQueueURL = pflag.String("queue-url", "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/default", "The queue URL")
+	flagQueueURL = pflag.String("queue-url", "http://sqs.us-west-2.localhost/default", "The queue URL")
 )
 
 func main() {
@@ -38,8 +38,8 @@ func main() {
 		res, err := sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 			QueueUrl:            flagQueueURL,
 			MaxNumberOfMessages: 10,
-			WaitTimeSeconds:     20,
-			VisibilityTimeout:   5,
+			WaitTimeSeconds:     20, // you _really_ should have this be much longer than the viz timeout
+			VisibilityTimeout:   30,
 		})
 		if err != nil {
 			slog.Error("error receiving messagess", slog.Any("err", err))

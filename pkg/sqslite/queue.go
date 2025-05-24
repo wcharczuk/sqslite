@@ -25,7 +25,8 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 	queue := &Queue{
 		Name:                               *input.QueueName,
 		URL:                                fmt.Sprintf("http://sqs.%s.localhost/%s", "us-west-2", *input.QueueName),
-		messagesReady:                      make(map[uuid.UUID]*MessageState),
+		messagesReadyOrdered:               new(LinkedList[*MessageState]),
+		messagesReady:                      make(map[uuid.UUID]*LinkedListNode[*MessageState]),
 		messagesDelayed:                    make(map[uuid.UUID]*MessageState),
 		messagesOutstanding:                make(map[uuid.UUID]*MessageState),
 		messagesOutstandingByReceiptHandle: make(map[string]uuid.UUID),
@@ -33,22 +34,16 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 		Tags:                               input.Tags,
 	}
 	var err *Error
-	//   - DelaySeconds – The length of time, in seconds, for which the delivery of all
-	//   messages in the queue is delayed. Valid values: An integer from 0 to 900 seconds
-	//   (15 minutes). Default: 0.
 	queue.Delay, err = readAttributeDurationSeconds(input.Attributes, queueAttributeDelaySeconds)
 	if err != nil {
 		return nil, err
 	}
 	if queue.Delay.IsSet {
-		if err = validateDelaySeconds(queue.Delay.Value); err != nil {
+		if err = validateDelay(queue.Delay.Value); err != nil {
 			return nil, err
 		}
 	}
 
-	//   - MaximumMessageSize – The limit of how many bytes a message can contain
-	//   before Amazon SQS rejects it. Valid values: An integer from 1,024 bytes (1 KiB)
-	//   to 262,144 bytes (256 KiB). Default: 262,144 (256 KiB).
 	maximumMessageSizeBytes, err := readAttributeDurationInt(input.Attributes, queueAttributeMaximumMessageSize)
 	if err != nil {
 		return nil, err
@@ -62,9 +57,6 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 		queue.MaximumMessageSizeBytes = 256 * 1024 // 256KiB
 	}
 
-	//   - MessageRetentionPeriod – The length of time, in seconds, for which Amazon
-	//   SQS retains a message. Valid values: An integer from 60 seconds (1 minute) to
-	//   1,209,600 seconds (14 days). Default: 345,600 (4 days).
 	messageRetentionPeriod, err := readAttributeDurationSeconds(input.Attributes, queueAttributeMessageRetentionPeriod)
 	if err != nil {
 		return nil, err
@@ -78,9 +70,6 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 		queue.MessageRetentionPeriod = 4 * 24 * time.Hour // 4 days
 	}
 
-	//   - ReceiveMessageWaitTimeSeconds – The length of time, in seconds, for which a ReceiveMessage
-	//   action waits for a message to arrive. Valid values: An integer from 0 to 20
-	//   (seconds). Default: 0.
 	receiveMessageWaitTime, err := readAttributeDurationSeconds(input.Attributes, queueAttributeReceiveMessageWaitTimeSeconds)
 	if err != nil {
 		return nil, err
@@ -94,10 +83,6 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 		queue.ReceiveMessageWaitTime = 20 * time.Second
 	}
 
-	//   - VisibilityTimeout – The visibility timeout for the queue, in seconds. Valid
-	//   values: An integer from 0 to 43,200 (12 hours). Default: 30. For more
-	//   information about the visibility timeout, see [Visibility Timeout]in the Amazon SQS Developer
-	//   Guide.
 	visibilityTimeout, err := readAttributeDurationSeconds(input.Attributes, queueAttributeVisibilityTimeout)
 	if err != nil {
 		return nil, err
@@ -111,7 +96,9 @@ func NewQueueFromCreateQueueInput(input *sqs.CreateQueueInput) (*Queue, *Error) 
 		queue.VisibilityTimeout = 30 * time.Second
 	}
 
+	//
 	// start background workers(s)
+	//
 
 	var retentionCtx context.Context
 	retentionCtx, queue.retentionWorkerCancel = context.WithCancel(context.Background())
@@ -141,21 +128,22 @@ type Queue struct {
 	MessageRetentionPeriod  time.Duration
 	Delay                   Optional[time.Duration]
 
-	// IsDLQ      bool // we don't support this (yet)
 	Attributes map[string]string
 	Tags       map[string]string
 
 	sequenceNumber uint64
-	lifecycleMu    sync.Mutex
+	mu             sync.Mutex
 
-	messagesReadyMu                      sync.Mutex
-	messagesReady                        map[uuid.UUID]*MessageState
-	messagesDelayedMu                    sync.Mutex
-	messagesDelayed                      map[uuid.UUID]*MessageState
-	messagesOutstandingMu                sync.Mutex
-	messagesOutstanding                  map[uuid.UUID]*MessageState
-	messagesOutstandingByReceiptHandleMu sync.Mutex
-	messagesOutstandingByReceiptHandle   map[string]uuid.UUID
+	messagesReadyMu      sync.Mutex
+	messagesReadyOrdered *LinkedList[*MessageState]
+	messagesReady        map[uuid.UUID]*LinkedListNode[*MessageState]
+
+	messagesDelayedMu sync.Mutex
+	messagesDelayed   map[uuid.UUID]*MessageState
+
+	messagesOutstandingMu              sync.Mutex
+	messagesOutstanding                map[uuid.UUID]*MessageState
+	messagesOutstandingByReceiptHandle map[string]uuid.UUID
 
 	retentionWorker        *retentionWorker
 	retentionWorkerCancel  func()
@@ -166,8 +154,8 @@ type Queue struct {
 }
 
 func (q *Queue) Close() {
-	q.lifecycleMu.Lock()
-	defer q.lifecycleMu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	if q.retentionWorkerCancel != nil {
 		q.retentionWorkerCancel()
 		q.retentionWorkerCancel = nil
@@ -184,39 +172,41 @@ func (q *Queue) Close() {
 
 func (q *Queue) Push(msgs ...*MessageState) {
 	q.messagesDelayedMu.Lock()
-	defer q.messagesDelayedMu.Lock()
+	defer q.messagesDelayedMu.Unlock()
 	q.messagesReadyMu.Lock()
-	defer q.messagesReadyMu.Lock()
+	defer q.messagesReadyMu.Unlock()
 	for _, m := range msgs {
 		if m.IsDelayed() {
 			q.messagesDelayed[m.Message.MessageID] = m
 			continue
 		}
-		q.messagesReady[m.Message.MessageID] = m
+		node := q.messagesReadyOrdered.Push(m)
+		q.messagesReady[m.Message.MessageID] = node
 	}
-	return
 }
 
 func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration) (output []Message) {
 	q.messagesReadyMu.Lock()
 	defer q.messagesReadyMu.Unlock()
-	q.messagesOutstandingByReceiptHandleMu.Lock()
-	defer q.messagesOutstandingByReceiptHandleMu.Unlock()
 	q.messagesOutstandingMu.Lock()
 	defer q.messagesOutstandingMu.Unlock()
 
-	for _, m := range q.messagesReady {
-		m.IncrementApproximateReceiveCount()
-		if visibilityTimeout > 0 {
-			m.UpdateVisibilityTimeout(visibilityTimeout)
-		} else {
-			m.UpdateVisibilityTimeout(q.VisibilityTimeout)
-		}
-		m.SetLastReceived(time.Now().UTC())
-		messageCopy := m.Message
+	var effectiveVisibilityTimeout time.Duration
+	if visibilityTimeout > 0 {
+		effectiveVisibilityTimeout = visibilityTimeout
+	} else {
+		effectiveVisibilityTimeout = q.VisibilityTimeout
+	}
+	for msg := range q.messagesReadyOrdered.Consume() {
+		msg.IncrementApproximateReceiveCount()
+		msg.UpdateVisibilityTimeout(effectiveVisibilityTimeout)
+		msg.SetLastReceived(time.Now().UTC())
+		messageCopy := msg.Message
 		messageCopy.ReceiptHandle = Some(uuid.V4().String())
-		m.ReceiptHandles.Add(messageCopy.ReceiptHandle.Value)
-		q.messagesOutstanding[m.Message.MessageID] = m
+		slog.Info("receieve message; issuing receipt handle", slog.Duration("visibility_timeout", effectiveVisibilityTimeout), slog.String("receipt_handle", messageCopy.ReceiptHandle.Value))
+		msg.ReceiptHandles.Add(messageCopy.ReceiptHandle.Value)
+		q.messagesOutstandingByReceiptHandle[messageCopy.ReceiptHandle.Value] = messageCopy.MessageID
+		q.messagesOutstanding[msg.Message.MessageID] = msg
 		output = append(output, messageCopy)
 		if len(output) == int(maxNumberOfMessages) {
 			break
@@ -224,21 +214,17 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 	}
 	for _, m := range output {
 		delete(q.messagesReady, m.MessageID)
-		q.messagesOutstandingByReceiptHandle[m.ReceiptHandle.Value] = m.MessageID
 	}
 	return
 }
 
-func (q *Queue) ChangeMessageVisibility(receiptHandle string, visibilityTimeout time.Duration) (ok bool) {
-	q.messagesOutstandingByReceiptHandleMu.Lock()
-	defer q.messagesOutstandingByReceiptHandleMu.Unlock()
+func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibilityTimeout time.Duration) (ok bool) {
 	q.messagesOutstandingMu.Lock()
 	defer q.messagesOutstandingMu.Unlock()
-
 	var messageID uuid.UUID
-	messageID, ok = q.messagesOutstandingByReceiptHandle[receiptHandle]
+	messageID, ok = q.messagesOutstandingByReceiptHandle[initiatingReceiptHandle]
 	if !ok {
-		slog.Error("change message visibility; invalid receipt handle; receipt handle not found", slog.String("receipt_handle", receiptHandle))
+		slog.Error("change message visibility; invalid receipt handle; receipt handle not found", slog.String("receipt_handle", initiatingReceiptHandle))
 		return
 	}
 	var msg *MessageState
@@ -248,18 +234,32 @@ func (q *Queue) ChangeMessageVisibility(receiptHandle string, visibilityTimeout 
 		return
 	}
 	msg.UpdateVisibilityTimeout(visibilityTimeout)
-
 	if visibilityTimeout == 0 {
-		// mark the message as ready
+		q.messagesReadyMu.Lock()
+		defer q.messagesReadyMu.Unlock()
+		slog.Info("change message visibility batch; marking message ready", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()))
+		for receiptHandle := range msg.ReceiptHandles.Consume() {
+			slog.Info("change message visibility; marking message ready; deleting message receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
+			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
+		}
+		slog.Info("change message visibility; marking message ready; deleting message receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", initiatingReceiptHandle))
+		msg.ReceiptHandles.Del(initiatingReceiptHandle)
+		delete(q.messagesOutstandingByReceiptHandle, initiatingReceiptHandle)
+		delete(q.messagesOutstanding, msg.Message.MessageID)
+		node := q.messagesReadyOrdered.Push(msg)
+		q.messagesReady[msg.Message.MessageID] = node
 	}
 	return
 }
 
 func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibilityBatchRequestEntry) (successful []types.ChangeMessageVisibilityBatchResultEntry, failed []types.BatchResultErrorEntry) {
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
 	var messageID uuid.UUID
 	var ok bool
+	var readyMessages []*MessageState
 	for _, entry := range entries {
-		messageID, ok = q.messagesOutstandingByReceiptHandle[*entry.ReceiptHandle]
+		messageID, ok = q.messagesOutstandingByReceiptHandle[safeDeref(entry.ReceiptHandle)]
 		if !ok {
 			failed = append(failed, types.BatchResultErrorEntry{
 				Code:        aws.String("InvalidParameterValue"),
@@ -269,8 +269,8 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 			})
 			return
 		}
-		var msgNode *LinkedListNode[*MessageState]
-		msgNode, ok = q.messagesByID[messageID]
+		var msgNode *MessageState
+		msgNode, ok = q.messagesOutstanding[messageID]
 		if !ok {
 			failed = append(failed, types.BatchResultErrorEntry{
 				Code:        aws.String("InternalServerError"),
@@ -280,63 +280,204 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 			})
 			return
 		}
-		msgNode.Value.UpdateVisibilityTimeout(time.Duration(entry.VisibilityTimeout) * time.Second)
+		msgNode.UpdateVisibilityTimeout(time.Duration(entry.VisibilityTimeout) * time.Second)
 		successful = append(successful, types.ChangeMessageVisibilityBatchResultEntry{
 			Id: entry.Id,
 		})
+		if entry.VisibilityTimeout == 0 {
+			slog.Info("change message visibility batch; marking message ready", slog.String("initiating_receipt_handle", safeDeref(entry.ReceiptHandle)), slog.String("message_id", messageID.String()))
+			for receiptHandle := range msgNode.ReceiptHandles.Consume() {
+				slog.Info("change message visibility batch; marking message ready; deleting message receipt handle", slog.String("initiating_receipt_handle", safeDeref(entry.ReceiptHandle)), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
+				delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
+			}
+			delete(q.messagesOutstandingByReceiptHandle, safeDeref(entry.ReceiptHandle))
+			msgNode.ReceiptHandles.Del(safeDeref(entry.ReceiptHandle))
+			readyMessages = append(readyMessages, msgNode)
+		}
 	}
+	if len(readyMessages) > 0 {
+		q.messagesReadyMu.Lock()
+		defer q.messagesReadyMu.Unlock()
+		for _, msg := range readyMessages {
+			delete(q.messagesOutstanding, msg.Message.MessageID)
+			node := q.messagesReadyOrdered.Push(msg)
+			q.messagesReady[msg.Message.MessageID] = node
+		}
+	}
+
 	return
 }
 
-func (q *Queue) Delete(receiptHandle string) (ok bool) {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
-
+func (q *Queue) Delete(initiatingReceiptHandle string) (ok bool) {
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
 	var messageID uuid.UUID
-	messageID, ok = q.messagesOutstandingByReceiptHandle[receiptHandle]
+	messageID, ok = q.messagesOutstandingByReceiptHandle[initiatingReceiptHandle]
 	if !ok {
-		slog.Error("deleting message; invalid receipt handle; receipt handle not found", slog.String("receipt_handle", receiptHandle))
+		slog.Error("deleting message; invalid receipt handle; outstanding receipt handle to message id mapping not found", slog.String("initiating_receipt_handle", initiatingReceiptHandle))
 		return
 	}
-	slog.Info("deleting message", slog.String("receipt_handle", receiptHandle), slog.String("messageID", messageID.String()))
-	q.deleteUnsafe(messageID)
+	var msg *MessageState
+	msg, ok = q.messagesOutstanding[messageID]
+	if !ok {
+		slog.Error("delete message; invalid message id for receipt handle; outstanding message not found", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()))
+		return
+	}
+	slog.Info("deleting outstanding message", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()))
+	for receiptHandle := range msg.ReceiptHandles.Consume() {
+		slog.Info("delete message; deleting outstanding message; deleting receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
+		delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
+	}
+	slog.Info("delete message; deleting outstanding message; deleting receipt handle", slog.String("initiating_receipt_handle", initiatingReceiptHandle), slog.String("message_id", messageID.String()), slog.String("receipt_handle", initiatingReceiptHandle))
+	delete(q.messagesOutstandingByReceiptHandle, initiatingReceiptHandle)
+	delete(q.messagesOutstanding, messageID)
 	return
 }
 
-func (q *Queue) DeleteBatch(handles []ReceiptHandleID) (successful []types.DeleteMessageBatchResultEntry, failed []types.BatchResultErrorEntry) {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
-
+func (q *Queue) DeleteBatch(handles []types.DeleteMessageBatchRequestEntry) (successful []types.DeleteMessageBatchResultEntry, failed []types.BatchResultErrorEntry) {
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
 	var messageID uuid.UUID
 	var ok bool
 	for _, handle := range handles {
-		messageID, ok = q.messagesOutstandingByReceiptHandle[handle.ReceiptHandle]
+		messageID, ok = q.messagesOutstandingByReceiptHandle[safeDeref(handle.ReceiptHandle)]
 		if !ok {
 			failed = append(failed, types.BatchResultErrorEntry{
 				Code:        aws.String("InvalidParameterValue"),
-				Id:          aws.String(handle.ID),
+				Id:          handle.Id,
 				SenderFault: true,
 				Message:     aws.String("ReceiptHandle not found"),
 			})
-			slog.Error("delete message batch; invalid receipt handle; receipt handle not found", slog.String("receipt_handle", handle.ReceiptHandle))
+			slog.Error("deleting message batch; invalid receipt handle; outstanding receipt handle to message id mapping not found", slog.String("receipt_handle", safeDeref(handle.ReceiptHandle)))
 			continue
 		}
-		slog.Info("deleting message", slog.String("receipt_handle", handle.ReceiptHandle), slog.String("messageID", messageID.String()))
-		q.deleteUnsafe(messageID)
+		msg, ok := q.messagesOutstanding[messageID]
+		if !ok {
+			failed = append(failed, types.BatchResultErrorEntry{
+				Code:        aws.String("InconsistentState"),
+				Id:          handle.Id,
+				SenderFault: false,
+				Message:     aws.String("Message not found for receipt handle"),
+			})
+			slog.Error("delete message batch; invalid message id for receipt handle; outstanding message not found", slog.String("receipt_handle", safeDeref(handle.ReceiptHandle)), slog.String("message_id", messageID.String()))
+			continue
+		}
+		slog.Info("delete message batch; deleting outstanding message", slog.String("receipt_handle", safeDeref(handle.ReceiptHandle)), slog.String("message_id", messageID.String()))
+		for receiptHandle := range msg.ReceiptHandles.Consume() {
+			slog.Info("delete message batch; deleting outstanding message; deleting receipt handle", slog.String("initiating_receipt_handle", safeDeref(handle.ReceiptHandle)), slog.String("message_id", messageID.String()), slog.String("receipt_handle", receiptHandle))
+			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
+		}
+		// largely redundant ...
+		delete(q.messagesOutstandingByReceiptHandle, safeDeref(handle.ReceiptHandle))
+		delete(q.messagesOutstanding, messageID)
 		successful = append(successful, types.DeleteMessageBatchResultEntry{
-			Id: aws.String(handle.ID),
+			Id: handle.Id,
 		})
 	}
 	return
 }
 
 func (q *Queue) Purge() {
-	q.messagesMu.Lock()
-	defer q.messagesMu.Unlock()
-	clear(q.messagesByID)
+	q.messagesReadyMu.Lock()
+	defer q.messagesReadyMu.Unlock()
+	q.messagesDelayedMu.Lock()
+	defer q.messagesDelayedMu.Unlock()
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
+
+	q.messagesReadyOrdered = new(LinkedList[*MessageState])
+	clear(q.messagesReady)
+	clear(q.messagesDelayed)
+	clear(q.messagesOutstanding)
 	clear(q.messagesOutstandingByReceiptHandle)
-	q.messagesOrdered = new(LinkedList[*MessageState])
-	return
+}
+
+func (q *Queue) PurgeExpired() {
+	q.messagesDelayedMu.Lock()
+	defer q.messagesDelayedMu.Unlock()
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
+	q.messagesReadyMu.Lock()
+	defer q.messagesReadyMu.Unlock()
+
+	var toDeleteDelayed []uuid.UUID
+	for _, msg := range q.messagesDelayed {
+		if msg.IsExpired() {
+			toDeleteDelayed = append(toDeleteDelayed, msg.Message.MessageID)
+		}
+	}
+	for _, id := range toDeleteDelayed {
+		slog.Info("purging expired; purging delayed message", slog.String("message_id", id.String()))
+		delete(q.messagesDelayed, id)
+	}
+	var toDeleteOustanding []*MessageState
+	for _, msg := range q.messagesOutstanding {
+		if msg.IsExpired() {
+			toDeleteOustanding = append(toDeleteOustanding, msg)
+		}
+	}
+	for _, msg := range toDeleteOustanding {
+		slog.Info("purging expired; purging outstanding message", slog.String("message_id", msg.Message.MessageID.String()))
+		for receiptHandle := range msg.ReceiptHandles.Consume() {
+			slog.Info("purging expired; purging outstanding message; deleting receipt handle", slog.String("id", msg.Message.ID), slog.String("message_id", msg.Message.MessageID.String()), slog.String("receipt_handle", receiptHandle))
+			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
+		}
+		delete(q.messagesOutstanding, msg.Message.MessageID)
+	}
+	var toDeleteNodes []*LinkedListNode[*MessageState]
+	for _, msg := range q.messagesReady {
+		if msg.Value.IsExpired() {
+			toDeleteNodes = append(toDeleteNodes, msg)
+		}
+	}
+	for _, node := range toDeleteNodes {
+		slog.Info("purging expired; purging ready message", slog.String("message_id", node.Value.Message.MessageID.String()))
+		q.messagesReadyOrdered.Remove(node)
+		delete(q.messagesReady, node.Value.Message.MessageID)
+	}
+}
+
+func (q *Queue) UpdateVisible() {
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
+	q.messagesReadyMu.Lock()
+	defer q.messagesReadyMu.Unlock()
+
+	var ready []*MessageState
+	for _, msg := range q.messagesOutstanding {
+		if msg.IsVisible() {
+			ready = append(ready, msg)
+		}
+	}
+	for _, msg := range ready {
+		slog.Info("update visible; marking message as ready", slog.String("id", msg.Message.ID), slog.String("message_id", msg.Message.MessageID.String()))
+		for receiptHandle := range msg.ReceiptHandles.Consume() {
+			slog.Info("update visible; marking message as ready; deleting receipt handle", slog.String("id", msg.Message.ID), slog.String("message_id", msg.Message.MessageID.String()), slog.String("receipt_handle", receiptHandle))
+			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
+		}
+		delete(q.messagesOutstanding, msg.Message.MessageID)
+		node := q.messagesReadyOrdered.Push(msg)
+		q.messagesReady[msg.Message.MessageID] = node
+	}
+}
+
+func (q *Queue) UpdateDelayed() {
+	q.messagesOutstandingMu.Lock()
+	defer q.messagesOutstandingMu.Unlock()
+	q.messagesReadyMu.Lock()
+	defer q.messagesReadyMu.Unlock()
+	var ready []*MessageState
+	for _, msg := range q.messagesDelayed {
+		if !msg.IsDelayed() {
+			ready = append(ready, msg)
+		}
+	}
+	for _, msg := range ready {
+		slog.Info("update delayed; marking message as ready", slog.String("id", msg.Message.ID), slog.String("message_id", msg.Message.MessageID.String()))
+		delete(q.messagesDelayed, msg.Message.MessageID)
+		node := q.messagesReadyOrdered.Push(msg)
+		q.messagesReady[msg.Message.MessageID] = node
+	}
 }
 
 // NewMessageStateFromInput returns a new [MessageState] from a given send message input
@@ -345,7 +486,7 @@ func (q *Queue) NewMessageState(m Message, delaySeconds int) (*MessageState, *Er
 	sqsm := &MessageState{
 		Message:           m,
 		Created:           nowUTC,
-		ReceiptHandles:    make(Set[string]),
+		ReceiptHandles:    &SafeSet[string]{storage: make(map[string]struct{})},
 		SequenceNumber:    atomic.AddUint64(&q.sequenceNumber, 1),
 		RetentionDeadline: nowUTC.Add(q.MessageRetentionPeriod),
 	}
@@ -353,11 +494,6 @@ func (q *Queue) NewMessageState(m Message, delaySeconds int) (*MessageState, *Er
 		sqsm.Delay = Some(time.Duration(delaySeconds) * time.Second)
 	}
 	return sqsm, nil
-}
-
-type ReceiptHandleID struct {
-	ID            string
-	ReceiptHandle string
 }
 
 //
@@ -400,12 +536,12 @@ func validateQueueName(queueName string) *Error {
 	return nil
 }
 
-func validateDelaySeconds(delaySeconds time.Duration) *Error {
-	if delaySeconds < 0 {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid DelaySeconds; must be greater than or equal to 0, you put: %v", delaySeconds))
+func validateDelay(delay time.Duration) *Error {
+	if delay < 0 {
+		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid DelaySeconds; must be greater than or equal to 0, you put: %v", delay))
 	}
-	if delaySeconds > 90*time.Second {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid DelaySeconds; must be less than or equal to 90 seconds, you put: %v", delaySeconds))
+	if delay > 90*time.Second {
+		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid DelaySeconds; must be less than or equal to 90 seconds, you put: %v", delay))
 	}
 	return nil
 }
@@ -440,12 +576,12 @@ func validateReceiveMessageWaitTime(receiveMessageWaitTime time.Duration) *Error
 	return nil
 }
 
-func validateWaitMessageSeconds(waitMessageSeconds time.Duration) *Error {
-	if waitMessageSeconds < 0 {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid WaitMessageSeconds; must be greater than or equal to 0, you put: %v", waitMessageSeconds))
+func validateWaitTimeSeconds(waitTime time.Duration) *Error {
+	if waitTime < 0 {
+		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid WaitTimeSeconds; must be greater than or equal to 0, you put: %v", waitTime))
 	}
-	if waitMessageSeconds > 20*time.Second {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid WaitMessageSeconds; must be less than or equal to 20 seconds, you put: %v", waitMessageSeconds))
+	if waitTime > 20*time.Second {
+		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid WaitTimeSeconds; must be less than or equal to 20 seconds, you put: %v", waitTime))
 	}
 	return nil
 }
@@ -505,34 +641,3 @@ const (
 	queueAttributeReceiveMessageWaitTimeSeconds = "ReceiveMessageWaitTimeSeconds"
 	queueAttributeVisibilityTimeout             = "VisibilityTimeout"
 )
-
-func (q *Queue) deleteUnsafe(id uuid.UUID) (ok bool) {
-
-	return
-}
-
-func (q *Queue) PurgeExpired() {
-	q.messagesDelayedMu.Lock()
-	defer q.messagesDelayedMu.Unlock()
-
-	var toDelete []uuid.UUID
-	for _, msg := range q.messagesDelayed {
-		if msg.IsExpired() {
-			toDelete = append(toDelete, msg.Message.MessageID)
-		}
-	}
-	for _, msg := range q.messagesOutstanding {
-		if msg.IsExpired() {
-			toDelete = append(toDelete, msg.Message.MessageID)
-		}
-	}
-	for _, msg := range q.messagesReady {
-		if msg.IsExpired() {
-			toDelete = append(toDelete, msg.Message.MessageID)
-		}
-	}
-	for _, messageID := range toDelete {
-		slog.Error("purging expired message", slog.String("messageID", messageID.String()))
-		q.deleteUnsafe(messageID)
-	}
-}
