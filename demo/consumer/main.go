@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"os/signal"
 	"runtime"
@@ -18,9 +19,13 @@ import (
 )
 
 var (
-	flagEndpoint   = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
-	flagQueueURL   = pflag.String("queue-url", "http://sqslite.us-west-2.local/default", "The queue URL")
-	flagNumPollers = pflag.Int("num-pollers", runtime.NumCPU(), "The number of queue pollers")
+	flagEndpoint                 = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
+	flagQueueURL                 = pflag.String("queue-url", "http://sqslite.us-west-2.local/default", "The queue URL")
+	flagNumPollers               = pflag.Int("num-pollers", runtime.NumCPU(), "The number of queue pollers")
+	flagFailurePct               = pflag.Float64("failure-pct", 0.1, "The fraction of messages to skip deletion for, triggering visibility timeouts")
+	flagMaxNumberOfMessages      = pflag.Int32("max-number-of-messages", 10, "The time in seconds to wait for the receive batch [0,10]")
+	flagWaitTimeSeconds          = pflag.Int32("wait-time-seconds", 20, "The time in seconds to wait for the receive batch")
+	flagVisibilityTimeoutSeconds = pflag.Int32("visibility-timeout-seconds", 30, "The visibility timeout for received messages in seconds")
 )
 
 func main() {
@@ -49,17 +54,19 @@ func main() {
 			for {
 				res, err := sqsClient.ReceiveMessage(groupCtx, &sqs.ReceiveMessageInput{
 					QueueUrl:            flagQueueURL,
-					MaxNumberOfMessages: 10,
-					WaitTimeSeconds:     20, // you _really_ should have this be much shorter than the viz timeout
-					VisibilityTimeout:   30, // this should be ~30 if you don't want things to break
+					MaxNumberOfMessages: *flagMaxNumberOfMessages,
+					WaitTimeSeconds:     *flagWaitTimeSeconds,
+					VisibilityTimeout:   *flagVisibilityTimeoutSeconds,
 				})
 				if err != nil {
 					return fmt.Errorf("error receiving messages: %w", err)
 				}
 				for _, m := range res.Messages {
-					// if rand.Float64() > 0.75 {
-					// 	continue
-					// }
+					if *flagFailurePct > 0 {
+						if rand.Float64() < *flagFailurePct {
+							continue
+						}
+					}
 					_, err = sqsClient.DeleteMessage(groupCtx, &sqs.DeleteMessageInput{
 						QueueUrl:      flagQueueURL,
 						ReceiptHandle: m.ReceiptHandle,
