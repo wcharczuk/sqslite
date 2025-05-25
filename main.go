@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,25 +12,33 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/pflag"
 	"golang.org/x/sync/errgroup"
 
 	"sqslite/pkg/httputil"
 	"sqslite/pkg/sqslite"
 )
 
+var (
+	flagBindAddr            = pflag.String("bind-addr", ":4566", "The server bind address")
+	flagShutdownGracePeriod = pflag.Duration("shutdown-grace-period", 30*time.Second, "The server shutdown grace period")
+)
+
 func main() {
+	flag.Parse()
 	slog.SetDefault(
 		slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 			AddSource: false,
 		})),
 	)
+
 	server := sqslite.NewServer(
 		sqslite.OptBaseQueueURL(
-			fmt.Sprintf("http://sqslite.%s.local:4566", "us-west-2"),
+			fmt.Sprintf("http://sqslite.%s.local", "us-west-2"),
 		),
 	)
 	httpSrv := &http.Server{
-		Addr:    ":4566",
+		Addr:    *flagBindAddr,
 		Handler: httputil.LoggedHandler(server),
 	}
 	group, groupCtx := errgroup.WithContext(context.Background())
@@ -49,7 +58,7 @@ func main() {
 		}
 	})
 	group.Go(func() error {
-		slog.Info("server listening", slog.String("addr", ":4566"))
+		slog.Info("server listening", slog.String("addr", *flagBindAddr))
 		return httpSrv.ListenAndServe()
 	})
 	group.Go(func() error {
@@ -57,11 +66,11 @@ func main() {
 		defer done()
 		select {
 		case <-groupCtx.Done():
-			shutdownContext, shutdownComplete := context.WithTimeout(context.Background(), 30*time.Second)
+			shutdownContext, shutdownComplete := context.WithTimeout(context.Background(), *flagShutdownGracePeriod)
 			defer shutdownComplete()
 			return httpSrv.Shutdown(shutdownContext)
 		case <-ctx.Done():
-			shutdownContext, shutdownComplete := context.WithTimeout(context.Background(), 30*time.Second)
+			shutdownContext, shutdownComplete := context.WithTimeout(context.Background(), *flagShutdownGracePeriod)
 			defer shutdownComplete()
 			return httpSrv.Shutdown(shutdownContext)
 		}
