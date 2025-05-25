@@ -56,6 +56,10 @@ func main() {
 		ctx, done := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer done()
 		select {
+		case <-groupCtx.Done():
+			shutdownContext, shutdownComplete := context.WithTimeout(context.Background(), 30*time.Second)
+			defer shutdownComplete()
+			return httpSrv.Shutdown(shutdownContext)
 		case <-ctx.Done():
 			shutdownContext, shutdownComplete := context.WithTimeout(context.Background(), 30*time.Second)
 			defer shutdownComplete()
