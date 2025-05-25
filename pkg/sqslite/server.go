@@ -45,8 +45,18 @@ type Server struct {
 	queues       *Queues
 }
 
-// Queues returns an iterator for the queues in the server.
-func (s *Server) Queues() iter.Seq[*Queue] {
+// BaseQueueURL returns the base queue url.
+func (s *Server) BaseQueueURL() string {
+	return s.baseQueueURL
+}
+
+// Queues returns the underlying queues storage.
+func (s *Server) Queues() *Queues {
+	return s.queues
+}
+
+// EachQueue returns an iterator for the queues in the server.
+func (s *Server) EachQueue() iter.Seq[*Queue] {
 	return func(yield func(*Queue) bool) {
 		s.queues.queuesMu.Lock()
 		defer s.queues.queuesMu.Unlock()

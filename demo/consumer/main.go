@@ -19,7 +19,7 @@ import (
 
 var (
 	flagEndpoint   = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
-	flagQueueURL   = pflag.String("queue-url", "http://sqslite.us-west-2.localhost/default", "The queue URL")
+	flagQueueURL   = pflag.String("queue-url", "http://sqslite.us-west-2.local/default", "The queue URL")
 	flagNumPollers = pflag.Int("num-pollers", runtime.NumCPU(), "The number of queue pollers")
 )
 
