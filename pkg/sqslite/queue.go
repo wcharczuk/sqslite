@@ -228,13 +228,16 @@ func (q *Queue) Push(msgs ...*MessageState) {
 func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration) (output []Message) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-
+	if len(q.messagesInflight) >= q.MaximumMessagesInflight {
+		return
+	}
 	var effectiveVisibilityTimeout time.Duration
 	if visibilityTimeout > 0 {
 		effectiveVisibilityTimeout = visibilityTimeout
 	} else {
 		effectiveVisibilityTimeout = q.VisibilityTimeout
 	}
+
 	for msg := range q.messagesReadyOrdered.Consume() {
 		atomic.AddUint64(&q.stats.TotalMessagesReceived, 1)
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
