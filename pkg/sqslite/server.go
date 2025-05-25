@@ -265,6 +265,10 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
+	if len(input.Entries) > 10 {
+		serialize(rw, ErrorInvalidParameterValue(fmt.Sprintf("Entries must have at most 10 entries, you provided %d", len(input.Entries))))
+		return
+	}
 	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if !ok {
 		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
