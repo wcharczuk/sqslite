@@ -35,13 +35,16 @@ func main() {
 	group, groupCtx := errgroup.WithContext(context.Background())
 	group.Go(func() error {
 		t := time.NewTicker(2 * time.Second)
+		prevTimestamp := time.Now()
 		defer t.Stop()
+		prevStats := make(map[string]sqslite.QueueStats)
 		for {
 			select {
 			case <-groupCtx.Done():
 				return nil
 			case <-t.C:
-				printServerStats(server)
+				prevStats = printServerStats(server, time.Since(prevTimestamp), prevStats)
+				prevTimestamp = time.Now()
 			}
 		}
 	})
@@ -67,9 +70,15 @@ func main() {
 	}
 }
 
-func printServerStats(server *sqslite.Server) {
+func printServerStats(server *sqslite.Server, elapsed time.Duration, prev map[string]sqslite.QueueStats) map[string]sqslite.QueueStats {
+	var elapsedSeconds float64 = float64(elapsed) / float64(time.Second)
+	newStats := make(map[string]sqslite.QueueStats)
 	for q := range server.Queues() {
+		prevStats, _ := prev[q.Name]
 		stats := q.Stats()
+		changeMessagesSent := float64(stats.TotalMessagesSent - prevStats.TotalMessagesSent)
+		changeMessagesReceived := float64(stats.TotalMessagesReceived - prevStats.TotalMessagesReceived)
+		changeMessagesDeleted := float64(stats.TotalMessagesDeleted - prevStats.TotalMessagesDeleted)
 		slog.Info(
 			"queue stats",
 			slog.String("queue", q.Name),
@@ -77,6 +86,11 @@ func printServerStats(server *sqslite.Server) {
 			slog.Int64("num_messages_ready", stats.NumMessagesReady),
 			slog.Int64("num_messages_outstanding", stats.NumMessagesOutstanding),
 			slog.Int64("num_messages_delayed", stats.NumMessagesDelayed),
+			slog.String("send_rate", fmt.Sprintf("%02f/sec", changeMessagesSent/elapsedSeconds)),
+			slog.String("receive_rate", fmt.Sprintf("%02f/sec", changeMessagesReceived/elapsedSeconds)),
+			slog.String("delete_rate", fmt.Sprintf("%02f/sec", changeMessagesDeleted/elapsedSeconds)),
 		)
+		newStats[q.Name] = stats
 	}
+	return newStats
 }

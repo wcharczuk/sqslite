@@ -38,14 +38,14 @@ func main() {
 	if err != nil {
 		maybeFatal(err)
 	}
-	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
-		o.BaseEndpoint = flagEndpoint
-		o.AppID = "sqslite-demo-consumer"
-	})
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	poll := func(_ int) func() error {
 		return func() error {
+			sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
+				o.BaseEndpoint = flagEndpoint
+				o.AppID = "sqslite-demo-consumer"
+			})
 			for {
 				res, err := sqsClient.ReceiveMessage(groupCtx, &sqs.ReceiveMessageInput{
 					QueueUrl:            flagQueueURL,

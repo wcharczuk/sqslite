@@ -156,6 +156,12 @@ type QueueStats struct {
 	NumMessagesReady       int64
 	NumMessagesDelayed     int64
 	NumMessagesOutstanding int64
+
+	TotalMessagesSent              uint64
+	TotalMessagesReceived          uint64
+	TotalMessagesDeleted           uint64
+	TotalMessagesChangedVisibility uint64
+	TotalMessagesPurged            uint64
 }
 
 func (q *Queue) Stats() (output QueueStats) {
@@ -163,6 +169,12 @@ func (q *Queue) Stats() (output QueueStats) {
 	output.NumMessagesReady = atomic.LoadInt64(&q.stats.NumMessagesReady)
 	output.NumMessagesDelayed = atomic.LoadInt64(&q.stats.NumMessagesDelayed)
 	output.NumMessagesOutstanding = atomic.LoadInt64(&q.stats.NumMessagesOutstanding)
+
+	output.TotalMessagesSent = atomic.LoadUint64(&q.stats.TotalMessagesSent)
+	output.TotalMessagesReceived = atomic.LoadUint64(&q.stats.TotalMessagesReceived)
+	output.TotalMessagesDeleted = atomic.LoadUint64(&q.stats.TotalMessagesDeleted)
+	output.TotalMessagesChangedVisibility = atomic.LoadUint64(&q.stats.TotalMessagesChangedVisibility)
+	output.TotalMessagesPurged = atomic.LoadUint64(&q.stats.TotalMessagesPurged)
 	return
 }
 
@@ -194,6 +206,7 @@ func (q *Queue) Push(msgs ...*MessageState) {
 		if q.Delay.IsSet && m.Delay.IsZero() {
 			m.Delay = q.Delay
 		}
+		atomic.AddUint64(&q.stats.TotalMessagesSent, 1)
 		atomic.AddInt64(&q.stats.NumMessages, 1)
 		if m.IsDelayed() {
 			atomic.AddInt64(&q.stats.NumMessagesDelayed, 1)
@@ -217,6 +230,7 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 		effectiveVisibilityTimeout = q.VisibilityTimeout
 	}
 	for msg := range q.messagesReadyOrdered.Consume() {
+		atomic.AddUint64(&q.stats.TotalMessagesReceived, 1)
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
 		atomic.AddInt64(&q.stats.NumMessagesOutstanding, 1)
 		msg.IncrementApproximateReceiveCount()
@@ -254,6 +268,7 @@ func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibili
 	}
 	msg.UpdateVisibilityTimeout(visibilityTimeout)
 	if visibilityTimeout == 0 {
+		atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
 		for receiptHandle := range msg.ReceiptHandles.Consume() {
 			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 		}
@@ -296,6 +311,7 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 			})
 			return
 		}
+		atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
 		msgNode.UpdateVisibilityTimeout(time.Duration(entry.VisibilityTimeout) * time.Second)
 		successful = append(successful, types.ChangeMessageVisibilityBatchResultEntry{
 			Id: entry.Id,
@@ -337,6 +353,7 @@ func (q *Queue) Delete(initiatingReceiptHandle string) (ok bool) {
 	for receiptHandle := range msg.ReceiptHandles.Consume() {
 		delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 	}
+	atomic.AddUint64(&q.stats.TotalMessagesDeleted, 1)
 	atomic.AddInt64(&q.stats.NumMessagesOutstanding, -1)
 	atomic.AddInt64(&q.stats.NumMessages, -1)
 	delete(q.messagesOutstandingByReceiptHandle, initiatingReceiptHandle)
@@ -373,6 +390,7 @@ func (q *Queue) DeleteBatch(handles []types.DeleteMessageBatchRequestEntry) (suc
 		for receiptHandle := range msg.ReceiptHandles.Consume() {
 			delete(q.messagesOutstandingByReceiptHandle, receiptHandle)
 		}
+		atomic.AddUint64(&q.stats.TotalMessagesDeleted, 1)
 		atomic.AddInt64(&q.stats.NumMessagesOutstanding, -1)
 		atomic.AddInt64(&q.stats.NumMessages, -1)
 		delete(q.messagesOutstandingByReceiptHandle, safeDeref(handle.ReceiptHandle))
@@ -394,6 +412,7 @@ func (q *Queue) Purge() {
 	clear(q.messagesOutstanding)
 	clear(q.messagesOutstandingByReceiptHandle)
 
+	atomic.AddUint64(&q.stats.TotalMessagesPurged, uint64(atomic.LoadInt64(&q.stats.NumMessages)))
 	atomic.StoreInt64(&q.stats.NumMessages, 0)
 	atomic.StoreInt64(&q.stats.NumMessagesDelayed, 0)
 	atomic.StoreInt64(&q.stats.NumMessagesOutstanding, 0)
@@ -442,6 +461,7 @@ func (q *Queue) PurgeExpired() {
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
 		delete(q.messagesReady, node.Value.Message.MessageID)
 	}
+	atomic.AddUint64(&q.stats.TotalMessagesPurged, uint64(len(deleted)))
 	atomic.AddInt64(&q.stats.NumMessages, -int64(len(deleted)))
 }
 
