@@ -22,14 +22,15 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	require.NotNil(t, q.messagesReadyOrdered)
 	require.NotNil(t, q.messagesReady)
 	require.NotNil(t, q.messagesDelayed)
-	require.NotNil(t, q.messagesOutstanding)
-	require.NotNil(t, q.messagesOutstandingByReceiptHandle)
+	require.NotNil(t, q.messagesInflight)
+	require.NotNil(t, q.messagesInflightByReceiptHandle)
 
 	require.Equal(t, false, q.Delay.IsSet)
 	require.Equal(t, 256*1024, q.MaximumMessageSizeBytes)
 	require.Equal(t, 4*24*time.Hour, q.MessageRetentionPeriod)
 	require.Equal(t, 20*time.Second, q.ReceiveMessageWaitTime)
 	require.Equal(t, 30*time.Second, q.VisibilityTimeout)
+	require.Equal(t, 120000, q.MaximumMessagesInflight)
 }
 
 func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {

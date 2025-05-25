@@ -46,7 +46,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid log level: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println(logLeveler.Level().String())
 	switch *flagLogFormat {
 	case "json":
 		slog.SetDefault(
@@ -65,7 +64,7 @@ func main() {
 		)
 		slant.Print(os.Stdout, "sqslite")
 	}
-	slog.Info("using log level", slog.String("log_level", logLeveler.Level().String()))
+	slog.Error("using log level", slog.String("log_level", logLeveler.Level().String()))
 
 	//
 	// server setup
@@ -87,7 +86,7 @@ func main() {
 
 	httpSrv := &http.Server{
 		Addr:    *flagBindAddr,
-		Handler: httputil.LoggedHandler(server),
+		Handler: httputil.Logged(httputil.Gzipped(server)),
 	}
 	group, groupCtx := errgroup.WithContext(context.Background())
 	group.Go(func() error {
@@ -118,6 +117,7 @@ func main() {
 		signal.Notify(updateLogLevel, updateLogLevelSignals...)
 		defer signal.Reset(updateLogLevelSignals...)
 		increaseLogLevel := func() {
+			oldLevel := logLeveler.Level().String()
 			switch logLeveler.Level() {
 			case slog.LevelInfo:
 				logLeveler.Set(slog.LevelDebug)
@@ -126,8 +126,10 @@ func main() {
 			case slog.LevelError:
 				logLeveler.Set(slog.LevelWarn)
 			}
+			slog.Error("increasing log level", slog.String("old_level", oldLevel), slog.String("new_level", logLeveler.Level().String()))
 		}
 		decreaseLogLevel := func() {
+			oldLevel := logLeveler.Level().String()
 			switch logLeveler.Level() {
 			case slog.LevelDebug:
 				logLeveler.Set(slog.LevelInfo)
@@ -136,6 +138,7 @@ func main() {
 			case slog.LevelWarn:
 				logLeveler.Set(slog.LevelError)
 			}
+			slog.Error("decreasing log level", slog.String("old_level", oldLevel), slog.String("new-level", logLeveler.Level().String()))
 		}
 		for {
 			select {
@@ -155,20 +158,23 @@ func main() {
 	group.Go(func() error {
 		ctx, done := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer done()
-		select {
-		case <-groupCtx.Done():
-			shutdownContext, shutdownComplete := context.WithTimeout(context.Background(), *flagShutdownGracePeriod)
-			defer shutdownComplete()
-			return httpSrv.Shutdown(shutdownContext)
-		case <-ctx.Done():
+		doShutdown := func() error {
 			shutdownContext, shutdownComplete := context.WithTimeout(context.Background(), *flagShutdownGracePeriod)
 			defer shutdownComplete()
 			return httpSrv.Shutdown(shutdownContext)
 		}
+		select {
+		case <-groupCtx.Done():
+			slog.Error("another process has exited, draining http server gracefully", slog.Duration("grace_period", *flagShutdownGracePeriod))
+			return doShutdown()
+		case <-ctx.Done():
+			slog.Error("shutdown signal received, draining http server gracefully", slog.Duration("grace_period", *flagShutdownGracePeriod))
+			return doShutdown()
+		}
 	})
 	if err := group.Wait(); err != nil {
 		if !errors.Is(err, http.ErrServerClosed) {
-			slog.Info("server exiting with error", slog.Any("err", err))
+			slog.Error("server exiting with error", slog.Any("err", err))
 			os.Exit(1)
 		}
 	}
@@ -185,18 +191,23 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 		changeMessagesChangedVisiblity := float64(stats.TotalMessagesChangedVisibility - prevStats.TotalMessagesChangedVisibility)
 		changeMessagesDeleted := float64(stats.TotalMessagesDeleted - prevStats.TotalMessagesDeleted)
 		changeMessagesPurged := float64(stats.TotalMessagesPurged - prevStats.TotalMessagesPurged)
-		slog.Debug(
+		changeMessagesDelayedToReady := float64(stats.TotalMessagesDelayedToReady - prevStats.TotalMessagesDelayedToReady)
+		changeMessagesInflightToReady := float64(stats.TotalMessagesInflightToReady - prevStats.TotalMessagesInflightToReady)
+		slog.Info(
 			"statistics",
-			slog.String("queue", q.Name),
+			slog.String("queue_name", q.Name),
+			slog.String("queue_url", q.URL),
 			slog.Int64("num_messages", stats.NumMessages),
 			slog.Int64("num_messages_ready", stats.NumMessagesReady),
-			slog.Int64("num_messages_outstanding", stats.NumMessagesOutstanding),
+			slog.Int64("num_messages_inflight", stats.NumMessagesInflight),
 			slog.Int64("num_messages_delayed", stats.NumMessagesDelayed),
 			slog.String("sent_rate", fmt.Sprintf("%0.2f/sec", changeMessagesSent/elapsedSeconds)),
 			slog.String("received_rate", fmt.Sprintf("%0.2f/sec", changeMessagesReceived/elapsedSeconds)),
 			slog.String("changed_visibility_rate", fmt.Sprintf("%0.2f/sec", changeMessagesChangedVisiblity/elapsedSeconds)),
 			slog.String("deleted_rate", fmt.Sprintf("%0.2f/sec", changeMessagesDeleted/elapsedSeconds)),
 			slog.String("purged_rate", fmt.Sprintf("%0.2f/sec", changeMessagesPurged/elapsedSeconds)),
+			slog.String("delayed_to_ready_rate", fmt.Sprintf("%0.2f/sec", changeMessagesDelayedToReady/elapsedSeconds)),
+			slog.String("inflight_to_ready_rate", fmt.Sprintf("%0.2f/sec", changeMessagesInflightToReady/elapsedSeconds)),
 		)
 		newStats[q.Name] = stats
 	}

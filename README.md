@@ -11,6 +11,6 @@ It's meant to mimic the behaviors of "real" sqs queues, but without the cost or 
 > go install github.com/wcharczuk/sqslite@latest
 ```
 
-# Fifo Queues
+# FIFO queues not supported
 
-Fifo Queues are not currently supported. I can add support for them later but we don't use them in practice very often, and I wanted instead to focus on getting normal queues behaving correctly sooner.
+Fifo Queues are not currently supported. I can add support for them later but we don't use them in practice very often, and I wanted instead to focus on getting standard queues behaving correctly sooner.

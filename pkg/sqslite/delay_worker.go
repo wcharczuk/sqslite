@@ -25,7 +25,7 @@ func (d *delayWorker) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-tick.C:
-			d.queue.UpdateDelayed()
+			d.queue.UpdateDelayedToReady()
 			continue
 		}
 	}

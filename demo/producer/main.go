@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -56,8 +57,12 @@ func main() {
 			slog.Error("error sending message", slog.Any("err", err))
 			return
 		}
-		slog.Info("sent message batch", slog.Int("successful", len(output.Successful)), slog.Int("failed", len(output.Failed)))
-		// time.Sleep(time.Second)
+		if len(output.Failed) > 0 {
+			slog.Error("sent message batch with failed messages", slog.Int("successful", len(output.Successful)), slog.Int("failed", len(output.Failed)))
+		}
+		if *flagPause > 0 {
+			time.Sleep(*flagPause)
+		}
 	}
 }
 
