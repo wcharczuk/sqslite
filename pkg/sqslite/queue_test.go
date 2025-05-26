@@ -235,3 +235,192 @@ func TestQueue_Receive_setsLastReceivedTime(t *testing.T) {
 	require.True(t, msgState.LastReceived.Value.Before(after) || msgState.LastReceived.Value.Equal(after))
 	q.mu.Unlock()
 }
+
+func TestQueue_Push_singleMessageWithoutDelay_addsToReadyQueue(t *testing.T) {
+	q := createTestQueue(t)
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 0)
+
+	q.Push(msgState)
+
+	q.mu.Lock()
+	require.Len(t, q.messagesReady, 1)
+	q.mu.Unlock()
+}
+
+func TestQueue_Push_singleMessageWithDelay_addsToDelayedQueue(t *testing.T) {
+	q := createTestQueue(t)
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 10) // 10 second delay
+
+	q.Push(msgState)
+
+	q.mu.Lock()
+	require.Len(t, q.messagesDelayed, 1)
+	q.mu.Unlock()
+}
+
+func TestQueue_Push_multipleMessages_handlesAllMessages(t *testing.T) {
+	q := createTestQueue(t)
+
+	msg1 := createTestMessage("test body 1")
+	msgState1, _ := q.NewMessageState(msg1, 0)
+	msg2 := createTestMessage("test body 2")
+	msgState2, _ := q.NewMessageState(msg2, 0)
+
+	q.Push(msgState1, msgState2)
+
+	q.mu.Lock()
+	require.Len(t, q.messagesReady, 2)
+	q.mu.Unlock()
+}
+
+func TestQueue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *testing.T) {
+	q := createTestQueue(t)
+	q.Delay = Some(5 * time.Second)
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 0) // No delay on message
+
+	q.Push(msgState)
+
+	q.mu.Lock()
+	require.Len(t, q.messagesDelayed, 1)
+	q.mu.Unlock()
+}
+
+func TestQueue_Push_queueHasDefaultDelayMessageHasDelay_keepsMessageDelay(t *testing.T) {
+	q := createTestQueue(t)
+	q.Delay = Some(5 * time.Second)
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 10) // Message has its own delay
+
+	q.Push(msgState)
+
+	// Message should still be delayed, but keep its original delay
+	q.mu.Lock()
+	require.Equal(t, 10*time.Second, msgState.Delay.Value)
+	q.mu.Unlock()
+}
+
+func TestQueue_Push_incrementsTotalMessagesSent(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 0)
+
+	q.Push(msgState)
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.TotalMessagesSent+1, updatedStats.TotalMessagesSent)
+}
+
+func TestQueue_Push_incrementsNumMessages(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 0)
+
+	q.Push(msgState)
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.NumMessages+1, updatedStats.NumMessages)
+}
+
+func TestQueue_Push_nonDelayedMessage_incrementsNumMessagesReady(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 0)
+
+	q.Push(msgState)
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
+}
+
+func TestQueue_Push_delayedMessage_incrementsNumMessagesDelayed(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 10)
+
+	q.Push(msgState)
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.NumMessagesDelayed+1, updatedStats.NumMessagesDelayed)
+}
+
+func TestQueue_Push_readyMessage_addsToMessagesReadyMap(t *testing.T) {
+	q := createTestQueue(t)
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 0)
+
+	q.Push(msgState)
+
+	q.mu.Lock()
+	_, exists := q.messagesReady[msg.MessageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_Push_delayedMessage_addsToMessagesDelayedMap(t *testing.T) {
+	q := createTestQueue(t)
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 10)
+
+	q.Push(msgState)
+
+	q.mu.Lock()
+	_, exists := q.messagesDelayed[msg.MessageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_Push_readyMessage_addsToOrderedLinkedList(t *testing.T) {
+	q := createTestQueue(t)
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 0)
+
+	q.Push(msgState)
+
+	q.mu.Lock()
+	require.Equal(t, 1, q.messagesReadyOrdered.Len())
+	q.mu.Unlock()
+}
+
+func TestQueue_Push_noMessages_isNoOp(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	q.Push() // Call with no arguments
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats, updatedStats)
+}
+
+func TestQueue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T) {
+	q := createTestQueue(t)
+
+	readyMsg := createTestMessage("ready")
+	readyMsgState, _ := q.NewMessageState(readyMsg, 0)
+	delayedMsg := createTestMessage("delayed")
+	delayedMsgState, _ := q.NewMessageState(delayedMsg, 10)
+
+	q.Push(readyMsgState, delayedMsgState)
+
+	q.mu.Lock()
+	require.Len(t, q.messagesReady, 1)
+	require.Len(t, q.messagesDelayed, 1)
+	q.mu.Unlock()
+}
