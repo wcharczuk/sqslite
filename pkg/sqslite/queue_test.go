@@ -1203,3 +1203,392 @@ func TestQueue_ChangeMessageVisibility_setsVisibilityDeadlineCorrectly(t *testin
 	require.True(t, msgState.VisibilityDeadline.Value.Before(latestDeadline) || msgState.VisibilityDeadline.Value.Equal(latestDeadline))
 	q.mu.Unlock()
 }
+
+func TestQueue_ChangeMessageVisibilityBatch_allValidEntries_returnsAllSuccessful(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive multiple messages
+	pushTestMessages(q, 3)
+	received := q.Receive(3, 0)
+	require.Len(t, received, 3)
+
+	// Create batch request
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 60},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 90},
+		{Id: aws.String("msg3"), ReceiptHandle: aws.String(received[2].ReceiptHandle.Value), VisibilityTimeout: 120},
+	}
+
+	successful, failed := q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	require.Len(t, successful, 3)
+	require.Len(t, failed, 0)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_allInvalidEntries_returnsAllFailed(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Create batch request with invalid receipt handles
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String("invalid1"), VisibilityTimeout: 60},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String("invalid2"), VisibilityTimeout: 90},
+	}
+
+	successful, failed := q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	require.Len(t, successful, 0)
+	require.Len(t, failed, 1) // Early return, only first failure reported
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_mixedValidInvalid_failsEarly(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive one message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	// Create batch request with valid first, invalid second
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("valid"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 60},
+		{Id: aws.String("invalid"), ReceiptHandle: aws.String("invalid-handle"), VisibilityTimeout: 90},
+	}
+
+	successful, failed := q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	// Should process valid entry and fail on invalid, early return
+	require.Len(t, successful, 1)
+	require.Len(t, failed, 1)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_emptySlice_returnsEmptyResults(t *testing.T) {
+	q := createTestQueue(t)
+
+	successful, failed := q.ChangeMessageVisibilityBatch([]types.ChangeMessageVisibilityBatchRequestEntry{})
+
+	require.Len(t, successful, 0)
+	require.Len(t, failed, 0)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_updatesVisibilityTimeoutsForSuccessfulEntries(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	// Create batch request with different timeouts
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 60},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 90},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	q.mu.Lock()
+	msgState1 := q.messagesInflight[received[0].MessageID]
+	msgState2 := q.messagesInflight[received[1].MessageID]
+	require.Equal(t, 60*time.Second, msgState1.VisibilityTimeout)
+	require.Equal(t, 90*time.Second, msgState2.VisibilityTimeout)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_movesToReadyQueue(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	// Create batch request with zero timeout for first message
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 0},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 60},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	q.mu.Lock()
+	// First message should be in ready queue
+	_, exists := q.messagesReady[received[0].MessageID]
+	require.True(t, exists)
+	// Second message should still be in inflight
+	_, exists = q.messagesInflight[received[1].MessageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_removesFromInflightQueue(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	// Create batch request with zero timeout for first message
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 0},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 60},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	q.mu.Lock()
+	// First message should NOT be in inflight queue
+	_, exists := q.messagesInflight[received[0].MessageID]
+	require.False(t, exists)
+	// Second message should still be in inflight
+	_, exists = q.messagesInflight[received[1].MessageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_incrementsTotalMessagesChangedVisibilityForAllEntries(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	// Create batch request with mixed zero and non-zero timeouts
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 0},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 60},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	updatedStats := q.Stats()
+	// Should increment for BOTH entries (unlike single version)
+	require.Equal(t, initialStats.TotalMessagesChangedVisibility+2, updatedStats.TotalMessagesChangedVisibility)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_incrementsNumMessagesReady(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+	afterReceiveStats := q.Stats()
+
+	// Create batch request with one zero timeout
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 0},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 60},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterReceiveStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_decrementsNumMessagesInflight(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+	afterReceiveStats := q.Stats()
+
+	// Create batch request with one zero timeout
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 0},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 60},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_removesAllReceiptHandles(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	// Add an extra receipt handle for the same message
+	q.mu.Lock()
+	msgState := q.messagesInflight[messageID]
+	extraHandle := "extra-handle"
+	msgState.ReceiptHandles.Add(extraHandle)
+	q.messagesInflightByReceiptHandle[extraHandle] = messageID
+	q.mu.Unlock()
+
+	// Create batch request with zero timeout
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 0},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflightByReceiptHandle[extraHandle]
+	require.False(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_nonZeroTimeout_keepsMessagesInInflight(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	// Create batch request with non-zero timeouts
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 60},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 90},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	q.mu.Lock()
+	_, exists1 := q.messagesInflight[received[0].MessageID]
+	_, exists2 := q.messagesInflight[received[1].MessageID]
+	require.True(t, exists1)
+	require.True(t, exists2)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_receiptHandleNotFound_returnsInvalidParameterValueError(t *testing.T) {
+	q := createTestQueue(t)
+
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("invalid"), ReceiptHandle: aws.String("not-found"), VisibilityTimeout: 60},
+	}
+
+	successful, failed := q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	require.Len(t, successful, 0)
+	require.Len(t, failed, 1)
+	require.Equal(t, "InvalidParameterValue", *failed[0].Code)
+	require.Equal(t, "invalid", *failed[0].Id)
+	require.True(t, failed[0].SenderFault)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_messageIdNotInInflight_returnsInternalServerError(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	receiptHandle := received[0].ReceiptHandle.Value
+	messageID := received[0].MessageID
+
+	// Manually remove the message from inflight but leave the receipt handle mapping
+	q.mu.Lock()
+	delete(q.messagesInflight, messageID)
+	q.mu.Unlock()
+
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("inconsistent"), ReceiptHandle: aws.String(receiptHandle), VisibilityTimeout: 60},
+	}
+
+	successful, failed := q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	require.Len(t, successful, 0)
+	require.Len(t, failed, 1)
+	require.Equal(t, "InternalServerError", *failed[0].Code)
+	require.Equal(t, "inconsistent", *failed[0].Id)
+	require.False(t, failed[0].SenderFault)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_earlyReturnBehavior_stopsProcessingOnFirstFailure(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive two messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+	initialStats := q.Stats()
+
+	// Create batch with invalid first entry, valid second entry
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("invalid"), ReceiptHandle: aws.String("invalid-handle"), VisibilityTimeout: 60},
+		{Id: aws.String("valid"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 90},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	updatedStats := q.Stats()
+	// Should NOT process any entries due to early return
+	require.Equal(t, initialStats.TotalMessagesChangedVisibility, updatedStats.TotalMessagesChangedVisibility)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("first-msg"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 60},
+		{Id: aws.String("second-msg"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 90},
+	}
+
+	successful, _ := q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	require.Len(t, successful, 2)
+	require.Equal(t, "first-msg", *successful[0].Id)
+	require.Equal(t, "second-msg", *successful[1].Id)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.T) {
+	q := createTestQueue(t)
+
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("error1"), ReceiptHandle: aws.String("invalid1"), VisibilityTimeout: 60},
+	}
+
+	_, failed := q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	require.Len(t, failed, 1)
+	require.Equal(t, "error1", *failed[0].Id)
+	require.Equal(t, "ReceiptHandle not found", *failed[0].Message)
+}
+
+func TestQueue_ChangeMessageVisibilityBatch_mixedZeroAndNonZeroTimeouts_handlesCorrectly(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 3)
+	received := q.Receive(3, 0)
+	require.Len(t, received, 3)
+
+	// Create batch with mixed timeouts
+	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
+		{Id: aws.String("zero1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value), VisibilityTimeout: 0},
+		{Id: aws.String("nonzero"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value), VisibilityTimeout: 60},
+		{Id: aws.String("zero2"), ReceiptHandle: aws.String(received[2].ReceiptHandle.Value), VisibilityTimeout: 0},
+	}
+
+	q.ChangeMessageVisibilityBatch(entriesSlice)
+
+	q.mu.Lock()
+	// Zero timeout messages should be in ready queue
+	_, exists1 := q.messagesReady[received[0].MessageID]
+	_, exists3 := q.messagesReady[received[2].MessageID]
+	require.True(t, exists1)
+	require.True(t, exists3)
+	// Non-zero timeout message should still be in inflight
+	_, exists2 := q.messagesInflight[received[1].MessageID]
+	require.True(t, exists2)
+	q.mu.Unlock()
+}
