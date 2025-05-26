@@ -1,6 +1,10 @@
 sqslite
 =======
 
+[![Continuous Integration](https://github.com/wcharczuk/sqslite/actions/workflows/ci.yml/badge.svg)](https://github.com/wcharczuk/sqslite/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/wcharczuk/sqslite)](https://goreportcard.com/report/github.com/wcharczuk/sqslite)
+
+
 sqslite is designed to be a light-weight, local only testing backend for sqs based queue consumers and producers. 
 
 It's meant to mimic the behaviors of "real" sqs queues, but without the cost or complexity of setting up development only queues.
@@ -14,7 +18,7 @@ It's meant to mimic the behaviors of "real" sqs queues, but without the cost or 
 # Limitations
 
 This goes without saying but this server is not strictly perfectly at parity with the live AWS SQS service for things like
-- error messages strictly
+- error messages / codes
 - legacy api calling conventions / formats outside json
 - authentication
 - kms / encryption 
