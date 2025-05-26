@@ -17,10 +17,11 @@ import (
 )
 
 var (
-	flagEndpoint  = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
-	flagQueueURL  = pflag.String("queue-url", "http://sqslite.us-west-2.local/default", "The queue URL")
-	flagBatchSize = pflag.Int("batch-size", 10, "The send message batch size")
-	flagPause     = pflag.Duration("pause", 0, "The time to pause between send message batches")
+	flagEndpoint     = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
+	flagQueueURL     = pflag.String("queue-url", "http://sqslite.us-west-2.local/default", "The queue URL")
+	flagBatchSize    = pflag.Int("batch-size", 10, "The send message batch size")
+	flagPause        = pflag.Duration("pause", 0, "The time to pause between send message batches")
+	flagDelaySeconds = pflag.Int("delay-seconds", 0, "The delay seconds for each message")
 )
 
 func main() {
@@ -45,8 +46,9 @@ func main() {
 		var messages []types.SendMessageBatchRequestEntry
 		for x := range *flagBatchSize {
 			messages = append(messages, types.SendMessageBatchRequestEntry{
-				Id:          aws.String(fmt.Sprintf("message_%02d", x)),
-				MessageBody: aws.String(fmt.Sprintf(`{"messageIndex":%d}`, int(atomic.AddUint64(&ordinal, 1)))),
+				Id:           aws.String(fmt.Sprintf("message_%02d", x)),
+				MessageBody:  aws.String(fmt.Sprintf(`{"messageIndex":%d}`, int(atomic.AddUint64(&ordinal, 1)))),
+				DelaySeconds: 10,
 			})
 		}
 		output, err := sqsClient.SendMessageBatch(ctx, &sqs.SendMessageBatchInput{
