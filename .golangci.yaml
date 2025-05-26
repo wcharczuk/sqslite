@@ -3,6 +3,12 @@ version: "2"
 formatters:
   enable:
     - goimports
+  settings:
+    goimports:
+      # put imports beginning with prefix after 3rd-party packages;
+      # it's a comma-separated list of prefixes
+      local-prefixes: [sqslite]
+
 
 linters:
   default: none
@@ -12,26 +18,12 @@ linters:
     - ineffassign
     - staticcheck
     - misspell
-  fast: true
   settings:
     revive:
       rules:
         - name: package-comments
           severity: warning
           disabled: true
-
-    gofmt:
-      # simplify code: gofmt with `-s` option, true by default
-      simplify: true
-
-    goimports:
-      # put imports beginning with prefix after 3rd-party packages;
-      # it's a comma-separated list of prefixes
-      local-prefixes: sqslite
-
-    govet:
-      # report about shadowed variables
-      check-shadowing: false
 
     staticcheck:
       # mirrors the check list from `repoctl lint`
