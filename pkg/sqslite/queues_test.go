@@ -245,7 +245,7 @@ func Test_Queues_concurrentOperations_maintainConsistency(t *testing.T) {
 
 	// Goroutine 1: GetQueue
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			queues.GetQueue(ctx, "http://sqslite.local/test-queue")
 			time.Sleep(time.Microsecond)
 		}
@@ -254,7 +254,7 @@ func Test_Queues_concurrentOperations_maintainConsistency(t *testing.T) {
 
 	// Goroutine 2: GetQueueURL
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			queues.GetQueueURL(ctx, "test-queue")
 			time.Sleep(time.Microsecond)
 		}
@@ -263,7 +263,7 @@ func Test_Queues_concurrentOperations_maintainConsistency(t *testing.T) {
 
 	// Goroutine 3: ListQueues
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			queues.ListQueues(ctx, "")
 			time.Sleep(time.Microsecond)
 		}
@@ -271,7 +271,7 @@ func Test_Queues_concurrentOperations_maintainConsistency(t *testing.T) {
 	}()
 
 	// Wait for all goroutines to complete
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-done
 	}
 
