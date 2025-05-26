@@ -2,7 +2,6 @@ sqslite
 =======
 
 [![Continuous Integration](https://github.com/wcharczuk/sqslite/actions/workflows/ci.yaml/badge.svg)](https://github.com/wcharczuk/sqslite/actions/workflows/ci.yaml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/wcharczuk/sqslite)](https://goreportcard.com/report/github.com/wcharczuk/sqslite)
 
 
 sqslite is designed to be a light-weight, local only testing backend for sqs based queue consumers and producers. 
