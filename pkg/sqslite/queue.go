@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"sqslite/pkg/uuid"
+	"github.com/wcharcuzk/sqslite/pkg/uuid"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"

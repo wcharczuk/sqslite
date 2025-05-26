@@ -16,9 +16,9 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/sync/errgroup"
 
-	"sqslite/pkg/httputil"
-	"sqslite/pkg/slant"
-	"sqslite/pkg/sqslite"
+	"github.com/wcharcuzk/sqslite/pkg/httputil"
+	"github.com/wcharcuzk/sqslite/pkg/slant"
+	"github.com/wcharcuzk/sqslite/pkg/sqslite"
 )
 
 var (
