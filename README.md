@@ -1,7 +1,7 @@
 sqslite
 =======
 
-[![Continuous Integration](https://github.com/wcharczuk/sqslite/actions/workflows/ci.yml/badge.svg)](https://github.com/wcharczuk/sqslite/actions/workflows/ci.yml)
+[![Continuous Integration](https://github.com/wcharczuk/sqslite/actions/workflows/ci.yaml/badge.svg)](https://github.com/wcharczuk/sqslite/actions/workflows/ci.yaml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/wcharczuk/sqslite)](https://goreportcard.com/report/github.com/wcharczuk/sqslite)
 
 
