@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -631,4 +632,315 @@ func TestQueue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {
 	_, exists3 := q.messagesInflight[received[2].MessageID]
 	require.True(t, exists3)
 	q.mu.Unlock()
+}
+
+func TestQueue_DeleteBatch_allValidReceiptHandles_returnsAllSuccessful(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive multiple messages
+	pushTestMessages(q, 3)
+	received := q.Receive(3, 0)
+	require.Len(t, received, 3)
+
+	// Create batch request
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value)},
+		{Id: aws.String("msg3"), ReceiptHandle: aws.String(received[2].ReceiptHandle.Value)},
+	}
+
+	successful, failed := q.DeleteBatch(entriesSlice)
+
+	require.Len(t, successful, 3)
+	require.Len(t, failed, 0)
+}
+
+func TestQueue_DeleteBatch_allInvalidReceiptHandles_returnsAllFailed(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Create batch request with invalid receipt handles
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String("invalid1")},
+		{Id: aws.String("msg2"), ReceiptHandle: aws.String("invalid2")},
+	}
+
+	successful, failed := q.DeleteBatch(entriesSlice)
+
+	require.Len(t, successful, 0)
+	require.Len(t, failed, 2)
+}
+
+func TestQueue_DeleteBatch_mixedValidInvalid_returnsMixedResults(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive one message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	// Create batch request with one valid and one invalid
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("valid"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+		{Id: aws.String("invalid"), ReceiptHandle: aws.String("invalid-handle")},
+	}
+
+	successful, failed := q.DeleteBatch(entriesSlice)
+
+	require.Len(t, successful, 1)
+	require.Len(t, failed, 1)
+}
+
+func TestQueue_DeleteBatch_emptySlice_returnsEmptyResults(t *testing.T) {
+	q := createTestQueue(t)
+
+	successful, failed := q.DeleteBatch([]types.DeleteMessageBatchRequestEntry{})
+
+	require.Len(t, successful, 0)
+	require.Len(t, failed, 0)
+}
+
+func TestQueue_DeleteBatch_removesSuccessfulMessagesFromInflight(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	// Create batch request with one valid handle
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+	}
+
+	q.DeleteBatch(entriesSlice)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflight[received[0].MessageID]
+	require.False(t, exists)
+	// Second message should still be there
+	_, exists = q.messagesInflight[received[1].MessageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_DeleteBatch_removesSuccessfulReceiptHandles(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	// Create batch request
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+	}
+
+	q.DeleteBatch(entriesSlice)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflightByReceiptHandle[received[0].ReceiptHandle.Value]
+	require.False(t, exists)
+	// Second message receipt handle should still be there
+	_, exists = q.messagesInflightByReceiptHandle[received[1].ReceiptHandle.Value]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_DeleteBatch_removesAllReceiptHandlesForSuccessfulMessages(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	// Add an extra receipt handle for the same message
+	q.mu.Lock()
+	msgState := q.messagesInflight[messageID]
+	extraHandle := "extra-handle"
+	msgState.ReceiptHandles.Add(extraHandle)
+	q.messagesInflightByReceiptHandle[extraHandle] = messageID
+	q.mu.Unlock()
+
+	// Delete the message
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+	}
+
+	q.DeleteBatch(entriesSlice)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflightByReceiptHandle[extraHandle]
+	require.False(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_DeleteBatch_incrementsTotalMessagesDeletedForSuccessfulOnly(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	// Push and receive one message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	// Create batch with one valid and one invalid
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("valid"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+		{Id: aws.String("invalid"), ReceiptHandle: aws.String("invalid-handle")},
+	}
+
+	q.DeleteBatch(entriesSlice)
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.TotalMessagesDeleted+1, updatedStats.TotalMessagesDeleted)
+}
+
+func TestQueue_DeleteBatch_decrementsNumMessagesInflightForSuccessfulOnly(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive two messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+	afterReceiveStats := q.Stats()
+
+	// Create batch with one valid handle
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+	}
+
+	q.DeleteBatch(entriesSlice)
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
+}
+
+func TestQueue_DeleteBatch_decrementsNumMessagesForSuccessfulOnly(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive two messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+	afterReceiveStats := q.Stats()
+
+	// Create batch with one valid handle
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("msg1"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+	}
+
+	q.DeleteBatch(entriesSlice)
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterReceiveStats.NumMessages-1, updatedStats.NumMessages)
+}
+
+func TestQueue_DeleteBatch_receiptHandleNotFound_returnsInvalidParameterValueError(t *testing.T) {
+	q := createTestQueue(t)
+
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("invalid"), ReceiptHandle: aws.String("not-found")},
+	}
+
+	successful, failed := q.DeleteBatch(entriesSlice)
+
+	require.Len(t, successful, 0)
+	require.Len(t, failed, 1)
+	require.Equal(t, "InvalidParameterValue", *failed[0].Code)
+	require.Equal(t, "invalid", *failed[0].Id)
+	require.True(t, failed[0].SenderFault)
+}
+
+func TestQueue_DeleteBatch_messageIdNotInInflight_returnsInconsistentStateError(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	receiptHandle := received[0].ReceiptHandle.Value
+	messageID := received[0].MessageID
+
+	// Manually remove the message from inflight but leave the receipt handle mapping
+	q.mu.Lock()
+	delete(q.messagesInflight, messageID)
+	q.mu.Unlock()
+
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("inconsistent"), ReceiptHandle: aws.String(receiptHandle)},
+	}
+
+	successful, failed := q.DeleteBatch(entriesSlice)
+
+	require.Len(t, successful, 0)
+	require.Len(t, failed, 1)
+	require.Equal(t, "InconsistentState", *failed[0].Code)
+	require.Equal(t, "inconsistent", *failed[0].Id)
+	require.False(t, failed[0].SenderFault)
+}
+
+func TestQueue_DeleteBatch_preservesFailedMessagesInInflightState(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive two messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	// Create batch with one valid and one invalid
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("valid"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+		{Id: aws.String("invalid"), ReceiptHandle: aws.String("invalid-handle")},
+	}
+
+	q.DeleteBatch(entriesSlice)
+
+	q.mu.Lock()
+	// Valid message should be deleted
+	_, exists1 := q.messagesInflight[received[0].MessageID]
+	require.False(t, exists1)
+	// Invalid request shouldn't affect other messages
+	_, exists2 := q.messagesInflight[received[1].MessageID]
+	require.True(t, exists2)
+	q.mu.Unlock()
+}
+
+func TestQueue_DeleteBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive messages
+	pushTestMessages(q, 2)
+	received := q.Receive(2, 0)
+	require.Len(t, received, 2)
+
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("first-msg"), ReceiptHandle: aws.String(received[0].ReceiptHandle.Value)},
+		{Id: aws.String("second-msg"), ReceiptHandle: aws.String(received[1].ReceiptHandle.Value)},
+	}
+
+	successful, _ := q.DeleteBatch(entriesSlice)
+
+	require.Len(t, successful, 2)
+	require.Equal(t, "first-msg", *successful[0].Id)
+	require.Equal(t, "second-msg", *successful[1].Id)
+}
+
+func TestQueue_DeleteBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.T) {
+	q := createTestQueue(t)
+
+	entriesSlice := []types.DeleteMessageBatchRequestEntry{
+		{Id: aws.String("error1"), ReceiptHandle: aws.String("invalid1")},
+		{Id: aws.String("error2"), ReceiptHandle: aws.String("invalid2")},
+	}
+
+	_, failed := q.DeleteBatch(entriesSlice)
+
+	require.Len(t, failed, 2)
+	require.Equal(t, "error1", *failed[0].Id)
+	require.Equal(t, "error2", *failed[1].Id)
+	require.Equal(t, "ReceiptHandle not found", *failed[0].Message)
+	require.Equal(t, "ReceiptHandle not found", *failed[1].Message)
 }
