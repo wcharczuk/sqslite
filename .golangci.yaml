@@ -1,0 +1,46 @@
+version: "2"
+
+enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+
+linters:
+  default: none
+  enable:
+    - govet
+    - revive
+    - ineffassign
+    - staticcheck
+    - misspell
+  fast: true
+  settings:
+    revive:
+      rules:
+        - name: package-comments
+          severity: warning
+          disabled: true
+
+    gofmt:
+      # simplify code: gofmt with `-s` option, true by default
+      simplify: true
+
+    goimports:
+      # put imports beginning with prefix after 3rd-party packages;
+      # it's a comma-separated list of prefixes
+      local-prefixes: sqslite
+
+    govet:
+      # report about shadowed variables
+      check-shadowing: false
+
+    staticcheck:
+      # mirrors the check list from `repoctl lint`
+      checks: [S1000,S1008,S1023,S1035,SA4006,SA5008]
+
+    misspell:
+      # Correct spellings using locale preferences for US or UK.
+      # Default is to use a neutral variety of English.
+      # Setting locale to US will correct the British spelling of 'colour' to 'color'.
+      locale: US

@@ -97,30 +97,30 @@ func countTrailingSpace(row []rune) int {
 	return 0
 }
 
-func trimRightSpaceMax(row []rune, max int) ([]rune, int) {
+func trimRightSpaceMax(row []rune, maxCount int) ([]rune, int) {
 	var count int
-	for index := 0; index < len(row) && count < max; index++ {
+	for index := 0; index < len(row) && count < maxCount; index++ {
 		if !unicode.IsSpace(row[len(row)-(index+1)]) {
 			break
 		}
 		count++
 	}
-	return row[:len(row)-count], max - count
+	return row[:len(row)-count], maxCount - count
 }
 
-func trimLeftSpaceMax(row []rune, max int) ([]rune, int) {
+func trimLeftSpaceMax(row []rune, maxCount int) ([]rune, int) {
 	for index := 0; index < len(row); index++ {
-		if !unicode.IsSpace(row[index]) || index == max {
-			return row[index:], max - index
+		if !unicode.IsSpace(row[index]) || index == maxCount {
+			return row[index:], maxCount - index
 		}
 	}
-	return row, max
+	return row, maxCount
 }
 
-func replaceRunes(row []rune, old, new rune) []rune {
+func replaceRunes(row []rune, oldRune, newRune rune) []rune {
 	for index := range row {
-		if row[index] == old {
-			row[index] = new
+		if row[index] == oldRune {
+			row[index] = newRune
 		}
 	}
 	return row

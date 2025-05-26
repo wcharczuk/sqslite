@@ -230,13 +230,15 @@ func Test_LinkedList_Remove_tail(t *testing.T) {
 	n1 := "1"
 	n2 := "2"
 	n3 := "3"
-
+ 
 	q.Push(n0)
 	q.Push(n1)
 	q.Push(n2)
 	n3n := q.Push(n3)
 
 	q.Remove(n3n)
+
+	require.Equal(t, "2", q.tail.Value)
 }
 
 func Test_LinkedList_PopAll(t *testing.T) {
