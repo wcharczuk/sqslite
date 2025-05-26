@@ -1,4 +1,4 @@
-module github.com/wcharcuzk/sqslite
+module github.com/wcharczuk/sqslite
 
 go 1.24
 
