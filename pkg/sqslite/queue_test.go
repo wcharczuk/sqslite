@@ -1935,3 +1935,312 @@ func TestQueue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState(
 	require.True(t, exists)
 	q.mu.Unlock()
 }
+
+func TestQueue_UpdateDelayedToReady_noDelayedMessages_isNoOp(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	q.UpdateDelayedToReady()
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats, updatedStats)
+}
+
+func TestQueue_UpdateDelayedToReady_noReadyMessages_isNoOp(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with future delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 10) // 10 second delay
+	q.Push(msgState)
+	initialStats := q.Stats()
+
+	q.UpdateDelayedToReady()
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.TotalMessagesDelayedToReady, updatedStats.TotalMessagesDelayedToReady)
+}
+
+func TestQueue_UpdateDelayedToReady_withReadyMessages_movesToReady(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	q.Push(msgState)
+	messageID := msg.MessageID
+
+	// Make the message ready by setting creation time to past
+	q.mu.Lock()
+	delayedMsg := q.messagesDelayed[messageID]
+	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second) // Created 2 seconds ago
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	_, exists := q.messagesReady[messageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_UpdateDelayedToReady_mixedReadyDelayed_movesOnlyReady(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push two messages with delays
+	msg1 := createTestMessage("test body 1")
+	msgState1, _ := q.NewMessageState(msg1, 1) // 1 second delay
+	msg2 := createTestMessage("test body 2")
+	msgState2, _ := q.NewMessageState(msg2, 10) // 10 second delay
+	q.Push(msgState1, msgState2)
+
+	// Make first message ready (expired delay), keep second delayed
+	q.mu.Lock()
+	delayedMsg1 := q.messagesDelayed[msg1.MessageID]
+	delayedMsg1.Created = time.Now().UTC().Add(-2 * time.Second) // Created 2 seconds ago, delay expired
+	// msg2 keeps its current creation time, so delay is still active
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	// First message should be in ready
+	_, exists1 := q.messagesReady[msg1.MessageID]
+	require.True(t, exists1)
+	// Second message should still be in delayed
+	_, exists2 := q.messagesDelayed[msg2.MessageID]
+	require.True(t, exists2)
+	q.mu.Unlock()
+}
+
+func TestQueue_UpdateDelayedToReady_removesReadyMessagesFromDelayed(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	q.Push(msgState)
+	messageID := msg.MessageID
+
+	// Make the message ready
+	q.mu.Lock()
+	delayedMsg := q.messagesDelayed[messageID]
+	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	_, exists := q.messagesDelayed[messageID]
+	require.False(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_UpdateDelayedToReady_addsReadyMessagesToReady(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	q.Push(msgState)
+	messageID := msg.MessageID
+
+	// Make the message ready
+	q.mu.Lock()
+	delayedMsg := q.messagesDelayed[messageID]
+	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	_, exists := q.messagesReady[messageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_UpdateDelayedToReady_addsReadyMessagesToOrderedList(t *testing.T) {
+	q := createTestQueue(t)
+	initialListLen := q.messagesReadyOrdered.Len()
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	q.Push(msgState)
+	messageID := msg.MessageID
+
+	// Make the message ready
+	q.mu.Lock()
+	delayedMsg := q.messagesDelayed[messageID]
+	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	require.Equal(t, initialListLen+1, q.messagesReadyOrdered.Len())
+	q.mu.Unlock()
+}
+
+func TestQueue_UpdateDelayedToReady_incrementsTotalMessagesDelayedToReady(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	// Push two messages with delays
+	msg1 := createTestMessage("test body 1")
+	msgState1, _ := q.NewMessageState(msg1, 1)
+	msg2 := createTestMessage("test body 2")
+	msgState2, _ := q.NewMessageState(msg2, 1)
+	q.Push(msgState1, msgState2)
+
+	// Make both messages ready
+	q.mu.Lock()
+	delayedMsg1 := q.messagesDelayed[msg1.MessageID]
+	delayedMsg2 := q.messagesDelayed[msg2.MessageID]
+	delayedMsg1.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg2.Created = time.Now().UTC().Add(-2 * time.Second)
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.TotalMessagesDelayedToReady+2, updatedStats.TotalMessagesDelayedToReady)
+}
+
+func TestQueue_UpdateDelayedToReady_incrementsNumMessagesReadyForReadyMessages(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 1)
+	q.Push(msgState)
+	afterPushStats := q.Stats()
+
+	// Make the message ready
+	q.mu.Lock()
+	delayedMsg := q.messagesDelayed[msg.MessageID]
+	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterPushStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
+}
+
+func TestQueue_UpdateDelayedToReady_decrementsNumMessagesDelayedForReadyMessages(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 1)
+	q.Push(msgState)
+	afterPushStats := q.Stats()
+
+	// Make the message ready
+	q.mu.Lock()
+	delayedMsg := q.messagesDelayed[msg.MessageID]
+	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterPushStats.NumMessagesDelayed-1, updatedStats.NumMessagesDelayed)
+}
+
+func TestQueue_UpdateDelayedToReady_expiredDelayPeriod_movesMessage(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	q.Push(msgState)
+	messageID := msg.MessageID
+
+	// Set creation time to 2 seconds ago (delay expired)
+	q.mu.Lock()
+	delayedMsg := q.messagesDelayed[messageID]
+	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	_, inDelayed := q.messagesDelayed[messageID]
+	_, inReady := q.messagesReady[messageID]
+	require.False(t, inDelayed)
+	require.True(t, inReady)
+	q.mu.Unlock()
+}
+
+func TestQueue_UpdateDelayedToReady_futureDelayPeriod_keepsMessageInDelayed(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 10) // 10 second delay
+	q.Push(msgState)
+	messageID := msg.MessageID
+
+	// Keep current creation time (delay still active)
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	_, inDelayed := q.messagesDelayed[messageID]
+	_, inReady := q.messagesReady[messageID]
+	require.True(t, inDelayed)
+	require.False(t, inReady)
+	q.mu.Unlock()
+}
+
+func TestQueue_UpdateDelayedToReady_zeroDelay_movesMessage(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push a message with delay
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, 1)
+	q.Push(msgState)
+	messageID := msg.MessageID
+
+	// Set delay to zero (no delay)
+	q.mu.Lock()
+	delayedMsg := q.messagesDelayed[messageID]
+	delayedMsg.Delay = None[time.Duration]()
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	_, inDelayed := q.messagesDelayed[messageID]
+	_, inReady := q.messagesReady[messageID]
+	require.False(t, inDelayed)
+	require.True(t, inReady)
+	q.mu.Unlock()
+}
+
+func TestQueue_UpdateDelayedToReady_preservesStillDelayedMessagesInDelayedState(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push two messages with delays
+	msg1 := createTestMessage("test body 1")
+	msgState1, _ := q.NewMessageState(msg1, 1)
+	msg2 := createTestMessage("test body 2")
+	msgState2, _ := q.NewMessageState(msg2, 10)
+	q.Push(msgState1, msgState2)
+
+	// Make first message ready, keep second delayed
+	q.mu.Lock()
+	delayedMsg1 := q.messagesDelayed[msg1.MessageID]
+	delayedMsg1.Created = time.Now().UTC().Add(-2 * time.Second)
+	// msg2 keeps its delay active
+	q.mu.Unlock()
+
+	q.UpdateDelayedToReady()
+
+	q.mu.Lock()
+	// Second message should remain unchanged in delayed
+	_, exists := q.messagesDelayed[msg2.MessageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
