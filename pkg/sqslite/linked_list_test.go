@@ -230,7 +230,7 @@ func Test_LinkedList_Remove_tail(t *testing.T) {
 	n1 := "1"
 	n2 := "2"
 	n3 := "3"
- 
+
 	q.Push(n0)
 	q.Push(n1)
 	q.Push(n2)

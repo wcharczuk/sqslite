@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
-	"sqslite/pkg/uuid"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+
+	"sqslite/pkg/uuid"
 )
 
 // NewServer returns a new server.

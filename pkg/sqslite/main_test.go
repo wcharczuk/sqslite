@@ -1,8 +1,9 @@
 package sqslite
 
 import (
-	"sqslite/pkg/uuid"
 	"testing"
+
+	"sqslite/pkg/uuid"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
