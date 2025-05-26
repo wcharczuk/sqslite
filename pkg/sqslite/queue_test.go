@@ -424,3 +424,211 @@ func TestQueue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T) 
 	require.Len(t, q.messagesDelayed, 1)
 	q.mu.Unlock()
 }
+
+func TestQueue_Delete_validReceiptHandle_returnsTrue(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message to get it in inflight state
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	result := q.Delete(received[0].ReceiptHandle.Value)
+
+	require.True(t, result)
+}
+
+func TestQueue_Delete_invalidReceiptHandle_returnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	result := q.Delete("invalid-receipt-handle")
+
+	require.False(t, result)
+}
+
+func TestQueue_Delete_removesMessageFromInflightMap(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	q.Delete(received[0].ReceiptHandle.Value)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflight[messageID]
+	require.False(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_Delete_removesReceiptHandleFromMap(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	receiptHandle := received[0].ReceiptHandle.Value
+
+	q.Delete(receiptHandle)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflightByReceiptHandle[receiptHandle]
+	require.False(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_Delete_removesAllReceiptHandlesForMessage(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	// Simulate multiple receipt handles for the same message
+	q.mu.Lock()
+	msgState := q.messagesInflight[messageID]
+	extraHandle := "extra-handle"
+	msgState.ReceiptHandles.Add(extraHandle)
+	q.messagesInflightByReceiptHandle[extraHandle] = messageID
+	q.mu.Unlock()
+
+	q.Delete(received[0].ReceiptHandle.Value)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflightByReceiptHandle[extraHandle]
+	require.False(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_Delete_incrementsTotalMessagesDeleted(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	q.Delete(received[0].ReceiptHandle.Value)
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.TotalMessagesDeleted+1, updatedStats.TotalMessagesDeleted)
+}
+
+func TestQueue_Delete_decrementsNumMessagesInflight(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	afterReceiveStats := q.Stats()
+
+	q.Delete(received[0].ReceiptHandle.Value)
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
+}
+
+func TestQueue_Delete_decrementsNumMessages(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	afterReceiveStats := q.Stats()
+
+	q.Delete(received[0].ReceiptHandle.Value)
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterReceiveStats.NumMessages-1, updatedStats.NumMessages)
+}
+
+func TestQueue_Delete_receiptHandleNotInMap_returnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message but use a different receipt handle
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	result := q.Delete("non-existent-receipt-handle")
+
+	require.False(t, result)
+}
+
+func TestQueue_Delete_messageIdNotInInflight_returnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	receiptHandle := received[0].ReceiptHandle.Value
+	messageID := received[0].MessageID
+
+	// Manually remove the message from inflight but leave the receipt handle mapping
+	q.mu.Lock()
+	delete(q.messagesInflight, messageID)
+	q.mu.Unlock()
+
+	result := q.Delete(receiptHandle)
+
+	require.False(t, result)
+}
+
+func TestQueue_Delete_emptyReceiptHandle_returnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	result := q.Delete("")
+
+	require.False(t, result)
+}
+
+func TestQueue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	receiptHandle := received[0].ReceiptHandle.Value
+
+	// First delete should succeed
+	firstResult := q.Delete(receiptHandle)
+	require.True(t, firstResult)
+
+	// Second delete should fail
+	secondResult := q.Delete(receiptHandle)
+
+	require.False(t, secondResult)
+}
+
+func TestQueue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive multiple messages
+	pushTestMessages(q, 3)
+	received := q.Receive(3, 0)
+	require.Len(t, received, 3)
+
+	// Delete only the first message
+	q.Delete(received[0].ReceiptHandle.Value)
+
+	q.mu.Lock()
+	// First message should be gone
+	_, exists1 := q.messagesInflight[received[0].MessageID]
+	require.False(t, exists1)
+	// Other messages should still be there
+	_, exists2 := q.messagesInflight[received[1].MessageID]
+	require.True(t, exists2)
+	_, exists3 := q.messagesInflight[received[2].MessageID]
+	require.True(t, exists3)
+	q.mu.Unlock()
+}
