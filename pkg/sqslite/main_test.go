@@ -24,7 +24,7 @@ func createTestQueue(t *testing.T) *Queue {
 func createTestMessage(body string) Message {
 	return Message{
 		MessageID: uuid.V4(),
-		Body:      Some(body),
+		Body:      Some(body), // once told me
 	}
 }
 
