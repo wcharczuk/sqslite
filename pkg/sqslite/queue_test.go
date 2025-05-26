@@ -944,3 +944,262 @@ func TestQueue_DeleteBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.
 	require.Equal(t, "ReceiptHandle not found", *failed[0].Message)
 	require.Equal(t, "ReceiptHandle not found", *failed[1].Message)
 }
+
+func TestQueue_ChangeMessageVisibility_validReceiptHandle_returnsTrue(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message to get it in inflight state
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	result := q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 60*time.Second)
+
+	require.True(t, result)
+}
+
+func TestQueue_ChangeMessageVisibility_invalidReceiptHandle_returnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	result := q.ChangeMessageVisibility("invalid-receipt-handle", 60*time.Second)
+
+	require.False(t, result)
+}
+
+func TestQueue_ChangeMessageVisibility_updatesMessageVisibilityTimeout(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+	newTimeout := 120 * time.Second
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, newTimeout)
+
+	q.mu.Lock()
+	msgState := q.messagesInflight[messageID]
+	require.Equal(t, newTimeout, msgState.VisibilityTimeout)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibility_zeroTimeout_makesMessageImmediatelyVisible(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 0)
+
+	q.mu.Lock()
+	msgState := q.messagesReady[messageID]
+	require.True(t, msgState.Value.VisibilityDeadline.IsZero())
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibility_zeroTimeout_movesMessageToReadyQueue(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 0)
+
+	q.mu.Lock()
+	_, exists := q.messagesReady[messageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibility_zeroTimeout_removesFromInflightQueue(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 0)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflight[messageID]
+	require.False(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibility_zeroTimeout_incrementsTotalMessagesChangedVisibility(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 0)
+
+	updatedStats := q.Stats()
+	require.Equal(t, initialStats.TotalMessagesChangedVisibility+1, updatedStats.TotalMessagesChangedVisibility)
+}
+
+func TestQueue_ChangeMessageVisibility_zeroTimeout_incrementsNumMessagesReady(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	afterReceiveStats := q.Stats()
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 0)
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterReceiveStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
+}
+
+func TestQueue_ChangeMessageVisibility_zeroTimeout_decrementsNumMessagesInflight(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	afterReceiveStats := q.Stats()
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 0)
+
+	updatedStats := q.Stats()
+	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
+}
+
+func TestQueue_ChangeMessageVisibility_zeroTimeout_removesAllReceiptHandles(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	// Add an extra receipt handle for the same message
+	q.mu.Lock()
+	msgState := q.messagesInflight[messageID]
+	extraHandle := "extra-handle"
+	msgState.ReceiptHandles.Add(extraHandle)
+	q.messagesInflightByReceiptHandle[extraHandle] = messageID
+	q.mu.Unlock()
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 0)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflightByReceiptHandle[extraHandle]
+	require.False(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibility_nonZeroTimeout_keepsMessageInInflight(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 60*time.Second)
+
+	q.mu.Lock()
+	_, exists := q.messagesInflight[messageID]
+	require.True(t, exists)
+	q.mu.Unlock()
+}
+
+func TestQueue_ChangeMessageVisibility_receiptHandleNotFound_returnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message but use a different receipt handle
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	result := q.ChangeMessageVisibility("non-existent-receipt-handle", 60*time.Second)
+
+	require.False(t, result)
+}
+
+func TestQueue_ChangeMessageVisibility_messageIdNotInInflight_returnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	receiptHandle := received[0].ReceiptHandle.Value
+	messageID := received[0].MessageID
+
+	// Manually remove the message from inflight but leave the receipt handle mapping
+	q.mu.Lock()
+	delete(q.messagesInflight, messageID)
+	q.mu.Unlock()
+
+	result := q.ChangeMessageVisibility(receiptHandle, 60*time.Second)
+
+	require.False(t, result)
+}
+
+func TestQueue_ChangeMessageVisibility_emptyReceiptHandle_returnsFalse(t *testing.T) {
+	q := createTestQueue(t)
+
+	result := q.ChangeMessageVisibility("", 60*time.Second)
+
+	require.False(t, result)
+}
+
+func TestQueue_ChangeMessageVisibility_nonZeroTimeout_doesNotUpdateStatistics(t *testing.T) {
+	q := createTestQueue(t)
+	initialStats := q.Stats()
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 60*time.Second)
+
+	updatedStats := q.Stats()
+	// TotalMessagesChangedVisibility should NOT be incremented for non-zero timeout
+	require.Equal(t, initialStats.TotalMessagesChangedVisibility, updatedStats.TotalMessagesChangedVisibility)
+}
+
+func TestQueue_ChangeMessageVisibility_setsVisibilityDeadlineCorrectly(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push and receive a message
+	pushTestMessages(q, 1)
+	received := q.Receive(1, 0)
+	require.Len(t, received, 1)
+	messageID := received[0].MessageID
+	newTimeout := 90 * time.Second
+
+	before := time.Now().UTC()
+	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, newTimeout)
+	after := time.Now().UTC()
+
+	q.mu.Lock()
+	msgState := q.messagesInflight[messageID]
+	require.True(t, msgState.VisibilityDeadline.IsSet)
+	// Check that the deadline is approximately correct (within reasonable bounds)
+	expectedDeadline := before.Add(newTimeout)
+	latestDeadline := after.Add(newTimeout)
+	require.True(t, msgState.VisibilityDeadline.Value.After(expectedDeadline) || msgState.VisibilityDeadline.Value.Equal(expectedDeadline))
+	require.True(t, msgState.VisibilityDeadline.Value.Before(latestDeadline) || msgState.VisibilityDeadline.Value.Equal(latestDeadline))
+	q.mu.Unlock()
+}
