@@ -1,6 +1,7 @@
 package sqslite
 
 import (
+	"sqslite/pkg/uuid"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -10,6 +11,7 @@ import (
 
 // Helper function to create a test queue with default settings
 func createTestQueue(t *testing.T) *Queue {
+	t.Helper()
 	q, err := NewQueueFromCreateQueueInput("http://sqslite.local", &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
@@ -20,7 +22,8 @@ func createTestQueue(t *testing.T) *Queue {
 
 func createTestMessage(body string) Message {
 	return Message{
-		Body: Some(body),
+		MessageID: uuid.V4(),
+		Body:      Some(body),
 	}
 }
 

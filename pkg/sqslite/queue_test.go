@@ -33,6 +33,14 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	require.Equal(t, 120000, q.MaximumMessagesInflight)
 }
 
+func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
+	_, err := NewQueueFromCreateQueueInput("http://sqslite.local", &sqs.CreateQueueInput{
+		QueueName: aws.String("test!!!queue"),
+	})
+
+	require.NotNil(t, err)
+}
+
 func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {
 	q, _ := NewQueueFromCreateQueueInput("http://sqslite.local", &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
@@ -158,7 +166,7 @@ func TestQueue_Receive_updatesStatistics(t *testing.T) {
 	require.Equal(t, initialStats.NumMessagesInflight+2, updatedStats.NumMessagesInflight)
 }
 
-func TestQueue_Receive_GeneratesReceiptHandles(t *testing.T) {
+func TestQueue_Receive_generatesReceiptHandles(t *testing.T) {
 	q := createTestQueue(t)
 
 	pushTestMessages(q, 2)
@@ -182,7 +190,7 @@ func TestQueue_Receive_GeneratesReceiptHandles(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Receive_ReturnsEmptyWhenQueueEmpty(t *testing.T) {
+func TestQueue_Receive_returnsEmptyWhenQueueEmpty(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Don't push any messages
@@ -192,7 +200,7 @@ func TestQueue_Receive_ReturnsEmptyWhenQueueEmpty(t *testing.T) {
 	require.Empty(t, received)
 }
 
-func TestQueue_Receive_IncrementsApproximateReceiveCount(t *testing.T) {
+func TestQueue_Receive_incrementsApproximateReceiveCount(t *testing.T) {
 	q := createTestQueue(t)
 
 	pushTestMessages(q, 1)
@@ -208,7 +216,7 @@ func TestQueue_Receive_IncrementsApproximateReceiveCount(t *testing.T) {
 	require.Equal(t, "1", count)
 }
 
-func TestQueue_Receive_SetsLastReceivedTime(t *testing.T) {
+func TestQueue_Receive_setsLastReceivedTime(t *testing.T) {
 	q := createTestQueue(t)
 
 	pushTestMessages(q, 1)

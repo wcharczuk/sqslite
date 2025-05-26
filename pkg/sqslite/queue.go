@@ -564,7 +564,7 @@ func safeDeref[T any](valuePtr *T) (output T) {
 	return
 }
 
-var validQueueNameRegexp = regexp.MustCompile("[0-9,a-z,A-Z,_-]")
+var validQueueNameRegexp = regexp.MustCompile("^[0-9,a-z,A-Z,_,-]+$")
 
 func validateQueueName(queueName string) *Error {
 	if queueName == "" {
