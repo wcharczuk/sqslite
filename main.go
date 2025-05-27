@@ -78,7 +78,7 @@ func main() {
 	//
 	// create the default queue
 	//
-	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Config(), "AKID", &sqs.CreateQueueInput{
+	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Config(), sqslite.DefaultAccountID, &sqs.CreateQueueInput{
 		QueueName: aws.String("default"),
 	})
 	defaultQueue.Start()

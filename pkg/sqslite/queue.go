@@ -25,7 +25,8 @@ func NewQueueFromCreateQueueInput(cfg ServerConfig, accountID string, input *sqs
 	}
 	queue := &Queue{
 		Name:                            *input.QueueName,
-		URL:                             fmt.Sprintf("%s/%s", cfg.BaseURLOrDefault(), *input.QueueName),
+		AccountID:                       accountID,
+		URL:                             fmt.Sprintf("%s/%s/%s", cfg.BaseURLOrDefault(), accountID, *input.QueueName),
 		ARN:                             fmt.Sprintf("arn:aws:sqs:%s:%s:%s", cfg.AWSRegionOrDefault(), accountID, *input.QueueName),
 		messagesReadyOrdered:            new(LinkedList[*MessageState]),
 		messagesReady:                   make(map[uuid.UUID]*LinkedListNode[*MessageState]),
@@ -124,9 +125,11 @@ type RedrivePolicy struct {
 
 // Queue is an individual queue.
 type Queue struct {
-	Name string
-	URL  string
-	ARN  string
+	Name      string
+	AccountID string
+
+	URL string
+	ARN string
 
 	RedrivePolicy Optional[RedrivePolicy]
 

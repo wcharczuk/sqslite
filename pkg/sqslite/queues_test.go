@@ -32,7 +32,7 @@ func Test_NewQueues_returnsNewInstance(t *testing.T) {
 
 func Test_Queues_Close_closesAllQueues(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 
 	// Create and add test queues
 	queue1 := createTestQueueWithNameAndURL("test-queue-1", "http://sqslite.local/test-queue-1")
@@ -41,8 +41,19 @@ func Test_Queues_Close_closesAllQueues(t *testing.T) {
 	queues.AddQueue(ctx, queue1)
 	queues.AddQueue(ctx, queue2)
 
+	queue1.Start()
+	queue2.Start()
+
 	// Close all queues
 	queues.Close()
+
+	require.Nil(t, queue1.visibilityWorkerCancel)
+	require.Nil(t, queue1.delayWorkerCancel)
+	require.Nil(t, queue1.retentionWorkerCancel)
+
+	require.Nil(t, queue2.visibilityWorkerCancel)
+	require.Nil(t, queue2.delayWorkerCancel)
+	require.Nil(t, queue2.retentionWorkerCancel)
 
 	// Verify queues are closed (we can't directly check if Close() was called,
 	// but we can verify the structure is still intact)
@@ -51,19 +62,19 @@ func Test_Queues_Close_closesAllQueues(t *testing.T) {
 
 func Test_Queues_AddQueue_addsNewQueue(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
 
 	err := queues.AddQueue(ctx, queue)
 
 	require.Nil(t, err)
-	require.Equal(t, "http://sqslite.local/test-queue", queues.queueURLs["test-queue"])
+	require.Equal(t, "http://sqslite.local/test-queue", queues.queueURLs[QueueName{AccountID: "test-account", QueueName: "test-queue"}])
 	require.Equal(t, queue, queues.queues["http://sqslite.local/test-queue"])
 }
 
 func Test_Queues_AddQueue_returnsErrorWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue1 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue-1")
 	queue2 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue-2")
 
@@ -81,7 +92,7 @@ func Test_Queues_AddQueue_returnsErrorWhenQueueExists(t *testing.T) {
 
 func Test_Queues_AddQueue_allowsDifferentNames(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue1 := createTestQueueWithNameAndURL("queue-1", "http://sqslite.local/queue-1")
 	queue2 := createTestQueueWithNameAndURL("queue-2", "http://sqslite.local/queue-2")
 
@@ -96,7 +107,7 @@ func Test_Queues_AddQueue_allowsDifferentNames(t *testing.T) {
 
 func Test_Queues_PurgeQueue_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
 	queues.AddQueue(ctx, queue)
 
@@ -107,7 +118,7 @@ func Test_Queues_PurgeQueue_returnsTrueWhenQueueExists(t *testing.T) {
 
 func Test_Queues_PurgeQueue_returnsFalseWhenQueueNotExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 
 	ok := queues.PurgeQueue(ctx, "http://sqslite.local/nonexistent")
 
@@ -116,7 +127,7 @@ func Test_Queues_PurgeQueue_returnsFalseWhenQueueNotExists(t *testing.T) {
 
 func Test_Queues_ListQueues_returnsEmptyWhenNoQueues(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 
 	result, err := queues.ListQueues(ctx)
 
@@ -126,7 +137,7 @@ func Test_Queues_ListQueues_returnsEmptyWhenNoQueues(t *testing.T) {
 
 func Test_Queues_ListQueues_returnsAllQueues(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue1 := createTestQueueWithNameAndURL("queue-1", "http://sqslite.local/queue-1")
 	queue2 := createTestQueueWithNameAndURL("queue-2", "http://sqslite.local/queue-2")
 
@@ -144,7 +155,7 @@ func Test_Queues_ListQueues_returnsAllQueues(t *testing.T) {
 
 func Test_Queues_GetQueueURL_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
 	queues.AddQueue(ctx, queue)
 
@@ -156,7 +167,7 @@ func Test_Queues_GetQueueURL_returnsTrueWhenQueueExists(t *testing.T) {
 
 func Test_Queues_GetQueueURL_returnsFalseWhenQueueNotExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 
 	url, ok := queues.GetQueueURL(ctx, "nonexistent")
 
@@ -166,7 +177,7 @@ func Test_Queues_GetQueueURL_returnsFalseWhenQueueNotExists(t *testing.T) {
 
 func Test_Queues_GetQueue_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
 	queues.AddQueue(ctx, queue)
 
@@ -178,7 +189,7 @@ func Test_Queues_GetQueue_returnsTrueWhenQueueExists(t *testing.T) {
 
 func Test_Queues_GetQueue_returnsFalseWhenQueueNotExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 
 	retrievedQueue, ok := queues.GetQueue(ctx, "http://sqslite.local/nonexistent")
 
@@ -188,7 +199,7 @@ func Test_Queues_GetQueue_returnsFalseWhenQueueNotExists(t *testing.T) {
 
 func Test_Queues_DeleteQueue_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
 	queues.AddQueue(ctx, queue)
 
@@ -196,7 +207,7 @@ func Test_Queues_DeleteQueue_returnsTrueWhenQueueExists(t *testing.T) {
 
 	require.True(t, ok)
 	// Verify queue is removed from both maps
-	_, urlExists := queues.queueURLs["test-queue"]
+	_, urlExists := queues.queueURLs[QueueName{AccountID: "test-account", QueueName: "test-queue"}]
 	_, queueExists := queues.queues["http://sqslite.local/test-queue"]
 	require.False(t, urlExists)
 	require.False(t, queueExists)
@@ -204,7 +215,7 @@ func Test_Queues_DeleteQueue_returnsTrueWhenQueueExists(t *testing.T) {
 
 func Test_Queues_DeleteQueue_returnsFalseWhenQueueNotExists(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 
 	ok := queues.DeleteQueue(ctx, "http://sqslite.local/nonexistent")
 
@@ -213,12 +224,12 @@ func Test_Queues_DeleteQueue_returnsFalseWhenQueueNotExists(t *testing.T) {
 
 func Test_Queues_DeleteQueue_removesFromBothMaps(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
 	queues.AddQueue(ctx, queue)
 
 	// Verify queue exists in both maps
-	_, urlExists := queues.queueURLs["test-queue"]
+	_, urlExists := queues.queueURLs[QueueName{AccountID: "test-account", QueueName: "test-queue"}]
 	_, queueExists := queues.queues["http://sqslite.local/test-queue"]
 	require.True(t, urlExists)
 	require.True(t, queueExists)
@@ -226,7 +237,7 @@ func Test_Queues_DeleteQueue_removesFromBothMaps(t *testing.T) {
 	queues.DeleteQueue(ctx, "http://sqslite.local/test-queue")
 
 	// Verify queue is removed from both maps
-	_, urlExists = queues.queueURLs["test-queue"]
+	_, urlExists = queues.queueURLs[QueueName{AccountID: "test-account", QueueName: "test-queue"}]
 	_, queueExists = queues.queues["http://sqslite.local/test-queue"]
 	require.False(t, urlExists)
 	require.False(t, queueExists)
@@ -234,7 +245,7 @@ func Test_Queues_DeleteQueue_removesFromBothMaps(t *testing.T) {
 
 func Test_Queues_createAndDeleteCycle_maintainConsistency(t *testing.T) {
 	queues := NewQueues()
-	ctx := context.Background()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 
 	// Create, delete, and recreate the same queue
 	queue1 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")

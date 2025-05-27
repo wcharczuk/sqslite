@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -129,6 +128,16 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		s.unknownPath(rw, req)
 		return
 	}
+
+	authz, err := getRequestAuthorization(req)
+	if err != nil {
+		serialize(rw, err)
+		return
+	}
+	req = req.WithContext(
+		WithContextAuthorization(req.Context(), authz),
+	)
+
 	action := req.Header.Get("X-Amz-Target")
 	switch action {
 	case methodCreateQueue:
@@ -168,14 +177,12 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-
-	accountID, err := getAccountID(req)
-	if err != nil {
-		serialize(rw, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, ErrorUnauthorized())
 		return
 	}
-
-	queue, err := NewQueueFromCreateQueueInput(s.cfg, accountID, input)
+	queue, err := NewQueueFromCreateQueueInput(s.cfg, authz.AccountID, input)
 	if err != nil {
 		serialize(rw, err)
 		return
@@ -189,20 +196,6 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	serialize(rw, &sqs.CreateQueueOutput{
 		QueueUrl: &queue.URL,
 	})
-}
-
-func getAccountID(req *http.Request) (string, *Error) {
-	authorization := req.Header.Get("Authorization")
-	if authorization == "" {
-		return "", ErrorUnauthorized()
-	}
-	fields := strings.Fields(authorization)
-	if len(fields) < 2 {
-		return "", ErrorUnauthorized()
-	}
-	credentialsField := strings.TrimPrefix(fields[1], "Credential=")
-	accountID, _, _ := strings.Cut(credentialsField, "/")
-	return accountID, nil
 }
 
 func (s Server) setQueueAttributes(rw http.ResponseWriter, req *http.Request) {
