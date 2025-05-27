@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// Message attributes
+const (
+	MessageAttributeApproximateReceiveCount = "ApproximateReceiveCount"
+	MessageAttributeMessageGroupID          = "MessageGroupId"
+	MessageAttributeMessageDeduplicationId  = "MessageDeduplicationId"
+)
+
 type MessageState struct {
 	Message                Message
 	Created                time.Time
@@ -15,7 +22,7 @@ type MessageState struct {
 	ReceiptHandles         *SafeSet[string]
 	SequenceNumber         uint64
 
-	/* these require queue mutex */
+	/* these require the parent queue mutex */
 	FirstReceived      Optional[time.Time]
 	LastReceived       Optional[time.Time]
 	VisibilityDeadline Optional[time.Time]

@@ -204,9 +204,9 @@ func (s Server) setQueueAttributes(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	if err = queue.SetQueueAttributes(input.Attributes); err != nil {
@@ -222,9 +222,9 @@ func (s Server) tagQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	queue.Tag(input.Tags)
@@ -237,9 +237,9 @@ func (s Server) untagQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	queue.Untag(input.TagKeys)
@@ -294,9 +294,9 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	allMessages := queue.Receive(int(input.MaxNumberOfMessages), visibilityTimeout)
@@ -343,9 +343,9 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	if err := validateMessageBodySize(input.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
@@ -380,9 +380,9 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, ErrorInvalidParameterValue(fmt.Sprintf("Entries must have at most 10 entries, you provided %d", len(input.Entries))))
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	messages := make([]*MessageState, 0, len(input.Entries))
@@ -418,14 +418,14 @@ func (s Server) deleteMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
-	ok = queue.Delete(*input.ReceiptHandle)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("ReceiptHandle"))
+	err = queue.Delete(*input.ReceiptHandle)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	serialize(rw, &sqs.DeleteMessageOutput{})
@@ -441,9 +441,9 @@ func (s Server) deleteMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	for _, entry := range input.Entries {
@@ -478,12 +478,12 @@ func (s Server) changeMessageVisibility(rw http.ResponseWriter, req *http.Reques
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
-	ok = queue.ChangeMessageVisibility(
+	ok := queue.ChangeMessageVisibility(
 		safeDeref(input.ReceiptHandle),
 		visibilityTimeout,
 	)
@@ -504,9 +504,9 @@ func (s Server) changeMessageVisibilityBatch(rw http.ResponseWriter, req *http.R
 		serialize(rw, err)
 		return
 	}
-	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, err)
 		return
 	}
 	for _, entry := range input.Entries {

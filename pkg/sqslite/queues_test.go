@@ -181,9 +181,8 @@ func Test_Queues_GetQueue_returnsTrueWhenQueueExists(t *testing.T) {
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
 	queues.AddQueue(ctx, queue)
 
-	retrievedQueue, ok := queues.GetQueue(ctx, "http://sqslite.local/test-queue")
-
-	require.True(t, ok)
+	retrievedQueue, err := queues.GetQueue(ctx, "http://sqslite.local/test-queue")
+	require.Nil(t, err)
 	require.Equal(t, queue, retrievedQueue)
 }
 
@@ -191,9 +190,9 @@ func Test_Queues_GetQueue_returnsFalseWhenQueueNotExists(t *testing.T) {
 	queues := NewQueues()
 	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 
-	retrievedQueue, ok := queues.GetQueue(ctx, "http://sqslite.local/nonexistent")
+	retrievedQueue, err := queues.GetQueue(ctx, "http://sqslite.local/nonexistent")
 
-	require.False(t, ok)
+	require.NotNil(t, err)
 	require.Nil(t, retrievedQueue)
 }
 
@@ -261,7 +260,7 @@ func Test_Queues_createAndDeleteCycle_maintainConsistency(t *testing.T) {
 	require.Nil(t, err2)
 
 	// Verify new queue is accessible
-	retrievedQueue, ok := queues.GetQueue(ctx, "http://sqslite.local/test-queue")
-	require.True(t, ok)
+	retrievedQueue, err := queues.GetQueue(ctx, "http://sqslite.local/test-queue")
+	require.Nil(t, err)
 	require.Equal(t, queue2, retrievedQueue)
 }

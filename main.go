@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -76,10 +77,23 @@ func main() {
 	)
 
 	//
-	// create the default queue
+	// create the default queue(s)
 	//
+	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(server.Config(), sqslite.DefaultAccountID, &sqs.CreateQueueInput{
+		QueueName: aws.String("default-dlq"),
+	})
+	defaultQueueDLQ.Start()
+	_ = server.Queues().AddQueue(context.Background(), defaultQueueDLQ)
+	slog.Info("created default queue dlq with url", slog.String("queue_url", defaultQueueDLQ.URL))
+
 	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Config(), sqslite.DefaultAccountID, &sqs.CreateQueueInput{
 		QueueName: aws.String("default"),
+		Attributes: map[string]string{
+			sqslite.QueueAttributeRedrivePolicy: marshalJSON(sqslite.RedrivePolicy{
+				DeadLetterTargetArn: defaultQueueDLQ.ARN,
+				MaxReceiveCount:     3,
+			}),
+		},
 	})
 	defaultQueue.Start()
 	_ = server.Queues().AddQueue(context.Background(), defaultQueue)
@@ -194,6 +208,7 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 		changeMessagesPurged := float64(stats.TotalMessagesPurged - prevStats.TotalMessagesPurged)
 		changeMessagesDelayedToReady := float64(stats.TotalMessagesDelayedToReady - prevStats.TotalMessagesDelayedToReady)
 		changeMessagesInflightToReady := float64(stats.TotalMessagesInflightToReady - prevStats.TotalMessagesInflightToReady)
+		changeMessagesInflightToDLQ := float64(stats.TotalMessagesInflightToDLQ - prevStats.TotalMessagesInflightToDLQ)
 		slog.Info(
 			"statistics",
 			slog.String("queue_name", q.Name),
@@ -209,8 +224,14 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 			slog.String("purged_rate", fmt.Sprintf("%0.2f/sec", changeMessagesPurged/elapsedSeconds)),
 			slog.String("delayed_to_ready_rate", fmt.Sprintf("%0.2f/sec", changeMessagesDelayedToReady/elapsedSeconds)),
 			slog.String("inflight_to_ready_rate", fmt.Sprintf("%0.2f/sec", changeMessagesInflightToReady/elapsedSeconds)),
+			slog.String("inflight_to_dlq_rate", fmt.Sprintf("%0.2f/sec", changeMessagesInflightToDLQ/elapsedSeconds)),
 		)
 		newStats[q.Name] = stats
 	}
 	return newStats
+}
+
+func marshalJSON(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
 }

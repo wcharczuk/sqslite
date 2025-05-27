@@ -3,6 +3,7 @@ package sqslite
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -62,7 +63,7 @@ func (q *Queues) AddQueue(ctx context.Context, queue *Queue) (err *Error) {
 		queue.dlqTarget = dlq
 	}
 	q.queueURLs[QueueName{AccountID: queue.AccountID, QueueName: queue.Name}] = queue.URL
-	q.queueARNs[queue.ARN] = queue.ARN
+	q.queueARNs[queue.ARN] = queue.URL
 	q.queues[queue.URL] = queue
 	return
 }
@@ -100,28 +101,30 @@ func (q *Queues) GetQueueURL(ctx context.Context, queueName string) (queueURL st
 	var authz Authorization
 	authz, ok = GetContextAuthorization(ctx)
 	if !ok {
+		slog.Debug("queues; get queue url; context authorization not found")
 		return
 	}
 	queueURL, ok = q.queueURLs[QueueName{AccountID: authz.AccountID, QueueName: queueName}]
 	return
 }
 
-func (q *Queues) GetQueue(ctx context.Context, queueURL string) (queue *Queue, ok bool) {
+func (q *Queues) GetQueue(ctx context.Context, queueURL string) (queue *Queue, err *Error) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
 
-	var authz Authorization
-	authz, ok = GetContextAuthorization(ctx)
+	authz, ok := GetContextAuthorization(ctx)
 	if !ok {
+		err = ErrorUnauthorized()
 		return
 	}
 	queue, ok = q.queues[queueURL]
 	if !ok {
+		err = ErrorInvalidParameterValue("QueueURL")
 		return
 	}
 	if queue.AccountID != authz.AccountID {
 		queue = nil
-		ok = false
+		err = ErrorInvalidParameterValue("QueueURL")
 	}
 	return
 }

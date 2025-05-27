@@ -87,9 +87,9 @@ func Test_Queue_Receive_setsApproximateReceiveCountAttribute(t *testing.T) {
 	require.LessOrEqual(t, len(received), 3)
 	require.Equal(t, 3, len(received))
 
-	require.Equal(t, "1", received[0].Attributes[messageAttributeApproximateReceiveCount])
-	require.Equal(t, "1", received[1].Attributes[messageAttributeApproximateReceiveCount])
-	require.Equal(t, "1", received[2].Attributes[messageAttributeApproximateReceiveCount])
+	require.Equal(t, "1", received[0].Attributes[MessageAttributeApproximateReceiveCount])
+	require.Equal(t, "1", received[1].Attributes[MessageAttributeApproximateReceiveCount])
+	require.Equal(t, "1", received[2].Attributes[MessageAttributeApproximateReceiveCount])
 }
 
 func Test_Queue_Receive_returnsEmptyWhenMaxInflightReached(t *testing.T) {
@@ -458,17 +458,17 @@ func Test_Queue_Delete_validReceiptHandle_returnsTrue(t *testing.T) {
 	received := q.Receive(1, 0)
 	require.Len(t, received, 1)
 
-	result := q.Delete(received[0].ReceiptHandle.Value)
+	err := q.Delete(received[0].ReceiptHandle.Value)
 
-	require.True(t, result)
+	require.Nil(t, err)
 }
 
 func Test_Queue_Delete_invalidReceiptHandle_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
-	result := q.Delete("invalid-receipt-handle")
+	err := q.Delete("invalid-receipt-handle")
 
-	require.False(t, result)
+	require.NotNil(t, err)
 }
 
 func Test_Queue_Delete_removesMessageFromInflightMap(t *testing.T) {
@@ -583,9 +583,9 @@ func Test_Queue_Delete_receiptHandleNotInMap_returnsFalse(t *testing.T) {
 	received := q.Receive(1, 0)
 	require.Len(t, received, 1)
 
-	result := q.Delete("non-existent-receipt-handle")
+	err := q.Delete("non-existent-receipt-handle")
 
-	require.False(t, result)
+	require.NotNil(t, err)
 }
 
 func Test_Queue_Delete_messageIdNotInInflight_returnsFalse(t *testing.T) {
@@ -603,17 +603,17 @@ func Test_Queue_Delete_messageIdNotInInflight_returnsFalse(t *testing.T) {
 	delete(q.messagesInflight, messageID)
 	q.mu.Unlock()
 
-	result := q.Delete(receiptHandle)
+	err := q.Delete(receiptHandle)
 
-	require.False(t, result)
+	require.NotNil(t, err)
 }
 
 func Test_Queue_Delete_emptyReceiptHandle_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
-	result := q.Delete("")
+	err := q.Delete("")
 
-	require.False(t, result)
+	require.NotNil(t, err)
 }
 
 func Test_Queue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
@@ -626,13 +626,13 @@ func Test_Queue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
 	receiptHandle := received[0].ReceiptHandle.Value
 
 	// First delete should succeed
-	firstResult := q.Delete(receiptHandle)
-	require.True(t, firstResult)
+	err := q.Delete(receiptHandle)
+	require.Nil(t, err)
 
 	// Second delete should fail
-	secondResult := q.Delete(receiptHandle)
+	err = q.Delete(receiptHandle)
 
-	require.False(t, secondResult)
+	require.NotNil(t, err)
 }
 
 func Test_Queue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {

@@ -43,8 +43,18 @@ func NewQueueFromCreateQueueInput(cfg ServerConfig, accountID string, input *sqs
 	return queue, nil
 }
 
+// QueueAttributes
+const (
+	QueueAttributeDelaySeconds                  = "DelaySeconds"
+	QueueAttributeMaximumMessageSize            = "MaximumMessageSize"
+	QueueAttributeMessageRetentionPeriod        = "MessageRetentionPeriod"
+	QueueAttributeReceiveMessageWaitTimeSeconds = "ReceiveMessageWaitTimeSeconds"
+	QueueAttributeVisibilityTimeout             = "VisibilityTimeout"
+	QueueAttributeRedrivePolicy                 = "RedrivePolicy"
+)
+
 func applyQueueAttributes(queue *Queue, messageAttributes map[string]string, applyDefaults bool) *Error {
-	delay, err := readAttributeDurationSeconds(messageAttributes, queueAttributeDelaySeconds)
+	delay, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeDelaySeconds)
 	if err != nil {
 		return err
 	}
@@ -55,7 +65,7 @@ func applyQueueAttributes(queue *Queue, messageAttributes map[string]string, app
 		queue.Delay = delay
 	}
 
-	maximumMessageSizeBytes, err := readAttributeDurationInt(messageAttributes, queueAttributeMaximumMessageSize)
+	maximumMessageSizeBytes, err := readAttributeDurationInt(messageAttributes, QueueAttributeMaximumMessageSize)
 	if err != nil {
 		return err
 	}
@@ -68,7 +78,7 @@ func applyQueueAttributes(queue *Queue, messageAttributes map[string]string, app
 		queue.MaximumMessageSizeBytes = 256 * 1024 // 256KiB
 	}
 
-	messageRetentionPeriod, err := readAttributeDurationSeconds(messageAttributes, queueAttributeMessageRetentionPeriod)
+	messageRetentionPeriod, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeMessageRetentionPeriod)
 	if err != nil {
 		return err
 	}
@@ -81,7 +91,7 @@ func applyQueueAttributes(queue *Queue, messageAttributes map[string]string, app
 		queue.MessageRetentionPeriod = 4 * 24 * time.Hour // 4 days
 	}
 
-	receiveMessageWaitTime, err := readAttributeDurationSeconds(messageAttributes, queueAttributeReceiveMessageWaitTimeSeconds)
+	receiveMessageWaitTime, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeReceiveMessageWaitTimeSeconds)
 	if err != nil {
 		return err
 	}
@@ -94,7 +104,7 @@ func applyQueueAttributes(queue *Queue, messageAttributes map[string]string, app
 		queue.ReceiveMessageWaitTime = 20 * time.Second
 	}
 
-	visibilityTimeout, err := readAttributeDurationSeconds(messageAttributes, queueAttributeVisibilityTimeout)
+	visibilityTimeout, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeVisibilityTimeout)
 	if err != nil {
 		return err
 	}
@@ -181,6 +191,7 @@ type QueueStats struct {
 	TotalMessagesPurged            uint64
 	TotalMessagesInflightToReady   uint64
 	TotalMessagesDelayedToReady    uint64
+	TotalMessagesInflightToDLQ     uint64
 }
 
 func (q *Queue) Stats() (output QueueStats) {
@@ -196,6 +207,7 @@ func (q *Queue) Stats() (output QueueStats) {
 	output.TotalMessagesPurged = atomic.LoadUint64(&q.stats.TotalMessagesPurged)
 	output.TotalMessagesInflightToReady = atomic.LoadUint64(&q.stats.TotalMessagesInflightToReady)
 	output.TotalMessagesDelayedToReady = atomic.LoadUint64(&q.stats.TotalMessagesDelayedToReady)
+	output.TotalMessagesInflightToDLQ = atomic.LoadUint64(&q.stats.TotalMessagesInflightToDLQ)
 	return
 }
 
@@ -319,7 +331,7 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 		if messageCopy.Attributes == nil {
 			messageCopy.Attributes = make(map[string]string)
 		}
-		messageCopy.Attributes[messageAttributeApproximateReceiveCount] = fmt.Sprint(msg.ReceiveCount)
+		messageCopy.Attributes[MessageAttributeApproximateReceiveCount] = fmt.Sprint(msg.ReceiveCount)
 
 		output = append(output, messageCopy)
 		if len(output) == int(maxNumberOfMessages) {
@@ -405,17 +417,18 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	return
 }
 
-func (q *Queue) Delete(initiatingReceiptHandle string) (ok bool) {
+func (q *Queue) Delete(initiatingReceiptHandle string) (err *Error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	var messageID uuid.UUID
-	messageID, ok = q.messagesInflightByReceiptHandle[initiatingReceiptHandle]
+	messageID, ok := q.messagesInflightByReceiptHandle[initiatingReceiptHandle]
 	if !ok {
+		err = ErrorInvalidParameterValue("ReceiptHandle")
 		return
 	}
 	var msg *MessageState
 	msg, ok = q.messagesInflight[messageID]
 	if !ok {
+		err = ErrorInvalidParameterValue("ReceiptHandle")
 		return
 	}
 	for receiptHandle := range msg.ReceiptHandles.Consume() {
@@ -549,7 +562,6 @@ func (q *Queue) UpdateInflightToReady() {
 			ready = append(ready, msg)
 		}
 	}
-	atomic.AddUint64(&q.stats.TotalMessagesInflightToReady, uint64(len(ready)))
 	for _, msg := range ready {
 		if q.RedrivePolicy.IsSet {
 			if msg.ReceiveCount >= uint32(q.RedrivePolicy.Value.MaxReceiveCount) {
@@ -573,7 +585,6 @@ func (q *Queue) UpdateDelayedToReady() {
 			ready = append(ready, msg)
 		}
 	}
-	atomic.AddUint64(&q.stats.TotalMessagesDelayedToReady, uint64(len(ready)))
 	for _, msg := range ready {
 		q.moveMessageFromDelayedToReadyUnsafe(msg)
 	}
@@ -600,6 +611,7 @@ func (q *Queue) NewMessageState(m Message, created time.Time, delaySeconds int) 
 
 func (q *Queue) moveMessageFromInflightToDLQUnsafe(msg *MessageState) {
 	delete(q.messagesInflight, msg.Message.MessageID)
+	atomic.AddUint64(&q.stats.TotalMessagesInflightToDLQ, 1)
 	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 	q.moveMessageToDLQUnsafe(msg)
 }
@@ -609,12 +621,14 @@ func (q *Queue) moveMessageFromInflightToReadyUnsafe(msg *MessageState) {
 		delete(q.messagesInflightByReceiptHandle, receiptHandle)
 	}
 	delete(q.messagesInflight, msg.Message.MessageID)
+	atomic.AddUint64(&q.stats.TotalMessagesInflightToReady, 1)
 	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 	q.moveMessageToReadyUnsafe(msg)
 }
 
 func (q *Queue) moveMessageFromDelayedToReadyUnsafe(msg *MessageState) {
 	delete(q.messagesDelayed, msg.Message.MessageID)
+	atomic.AddUint64(&q.stats.TotalMessagesDelayedToReady, 1)
 	atomic.AddInt64(&q.stats.NumMessagesDelayed, -1)
 	q.moveMessageToReadyUnsafe(msg)
 }
@@ -628,12 +642,6 @@ func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
 	node := q.messagesReadyOrdered.Push(msg)
 	q.messagesReady[msg.Message.MessageID] = node
 }
-
-const (
-	messageAttributeApproximateReceiveCount = "ApproximateReceiveCount"
-	messageAttributeMessageGroupID          = "MessageGroupId"
-	messageAttributeMessageDeduplicationId  = "MessageDeduplicationId"
-)
 
 func keysAndValues[K comparable, V any](m map[K]V) (output []string) {
 	output = make([]string, 0, len(m)<<1)
@@ -764,7 +772,7 @@ func readAttributeDurationInt(attributes map[string]string, attributeName string
 }
 
 func readAttributeRedrivePolicy(attributes map[string]string) (output Optional[RedrivePolicy], err *Error) {
-	value, ok := attributes[queueAttributeRedrivePolicy]
+	value, ok := attributes[QueueAttributeRedrivePolicy]
 	if !ok {
 		return
 	}
@@ -776,12 +784,3 @@ func readAttributeRedrivePolicy(attributes map[string]string) (output Optional[R
 	output = Some(policy)
 	return
 }
-
-const (
-	queueAttributeDelaySeconds                  = "DelaySeconds"
-	queueAttributeMaximumMessageSize            = "MaximumMessageSize"
-	queueAttributeMessageRetentionPeriod        = "MessageRetentionPeriod"
-	queueAttributeReceiveMessageWaitTimeSeconds = "ReceiveMessageWaitTimeSeconds"
-	queueAttributeVisibilityTimeout             = "VisibilityTimeout"
-	queueAttributeRedrivePolicy                 = "RedrivePolicy"
-)
