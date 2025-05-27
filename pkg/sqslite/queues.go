@@ -10,6 +10,7 @@ import (
 func NewQueues() *Queues {
 	return &Queues{
 		queueURLs: make(map[string]string),
+		queueARNs: make(map[string]string),
 		queues:    make(map[string]*Queue),
 	}
 }
