@@ -26,8 +26,8 @@ To then connect with this server, you will need to change how you instantiate yo
 
 ```go
 sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
-		o.BaseEndpoint = "http://localhost:4566"
-	})
+	o.BaseEndpoint = "http://localhost:4566"
+})
 ```
 
 # Limitations
