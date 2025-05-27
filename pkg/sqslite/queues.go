@@ -55,7 +55,7 @@ func (q *Queues) AddQueue(ctx context.Context, queue *Queue) (err *Error) {
 		queue.dlqTarget = dlq
 	}
 	q.queueURLs[queue.Name] = queue.URL
-	q.queueARNs[queue.ARN] = queue.URL
+	q.queueARNs[queue.ARN] = queue.ARN
 	q.queues[queue.URL] = queue
 	return
 }
