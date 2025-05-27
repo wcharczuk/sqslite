@@ -43,10 +43,10 @@ func ErrorUnknownOperation(message string) *Error {
 
 func ErrorUnauthorized() *Error {
 	return &Error{
-		Code:        "Unauthorized",
-		StatusCode:  http.StatusUnauthorized,
+		Code:        "InvalidSecurity",
+		StatusCode:  http.StatusBadRequest,
 		SenderFault: true,
-		Message:     "Invalid Authorization",
+		Message:     "The request was not made over HTTPS or did not use SigV4 for signing.",
 	}
 }
 
@@ -83,6 +83,24 @@ func ErrorInternalServer(message string) *Error {
 		StatusCode:  http.StatusInternalServerError,
 		SenderFault: true,
 		Message:     message,
+	}
+}
+
+func ErrorNotReady() *Error {
+	return &Error{
+		Code:        "NotReady",
+		StatusCode:  http.StatusBadRequest,
+		SenderFault: true,
+		Message:     "Queue is not ready",
+	}
+}
+
+func ErrorQueueDoesNotExist() *Error {
+	return &Error{
+		Code:        "QueueDoesNotExist",
+		StatusCode:  http.StatusBadRequest,
+		SenderFault: true,
+		Message:     "Ensure that the QueueUrl is correct and that the queue has not been deleted.",
 	}
 }
 

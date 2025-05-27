@@ -39,7 +39,13 @@ func getRequestAuthorization(req *http.Request) (Authorization, *Error) {
 		return Authorization{}, ErrorUnauthorized()
 	}
 	credentialsField := strings.TrimPrefix(fields[1], "Credential=")
+	if credentialsField == "" {
+		return Authorization{}, ErrorUnauthorized()
+	}
 	accountID, _, _ := strings.Cut(credentialsField, "/")
+	if accountID == "" {
+		return Authorization{}, ErrorUnauthorized()
+	}
 	return Authorization{
 		AccountID: accountID,
 	}, nil

@@ -26,8 +26,9 @@ func NewQueueFromCreateQueueInput(cfg ServerConfig, accountID string, input *sqs
 	queue := &Queue{
 		Name:                            *input.QueueName,
 		AccountID:                       accountID,
-		URL:                             fmt.Sprintf("%s/%s/%s", cfg.BaseURLOrDefault(), accountID, *input.QueueName),
-		ARN:                             fmt.Sprintf("arn:aws:sqs:%s:%s:%s", cfg.AWSRegionOrDefault(), accountID, *input.QueueName),
+		URL:                             QueueURL(cfg, accountID, *input.QueueName),
+		ARN:                             QueueARN(cfg, accountID, *input.QueueName),
+		created:                         time.Now().UTC(),
 		messagesReadyOrdered:            new(LinkedList[*MessageState]),
 		messagesReady:                   make(map[uuid.UUID]*LinkedListNode[*MessageState]),
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
@@ -37,10 +38,20 @@ func NewQueueFromCreateQueueInput(cfg ServerConfig, accountID string, input *sqs
 		Attributes:                      input.Attributes,
 		Tags:                            input.Tags,
 	}
-	if err := applyQueueAttributes(queue, input.Attributes, true /*applyDefaults*/); err != nil {
+	if err := queue.applyQueueAttributesUnsafe(input.Attributes, true /*applyDefaults*/); err != nil {
 		return nil, err
 	}
 	return queue, nil
+}
+
+// QueueURL creates a queue url from required inputs.
+func QueueURL(cfg ServerConfig, accountID, queueName string) string {
+	return fmt.Sprintf("%s/%s/%s", cfg.BaseURLOrDefault(), accountID, queueName)
+}
+
+// QueueARN creates a queue arn from required inputs.
+func QueueARN(cfg ServerConfig, accountID, queueName string) string {
+	return fmt.Sprintf("arn:aws:sqs:%s:%s:%s", cfg.AWSRegionOrDefault(), accountID, queueName)
 }
 
 // QueueAttributes
@@ -53,81 +64,6 @@ const (
 	QueueAttributeRedrivePolicy                 = "RedrivePolicy"
 )
 
-func applyQueueAttributes(queue *Queue, messageAttributes map[string]string, applyDefaults bool) *Error {
-	delay, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeDelaySeconds)
-	if err != nil {
-		return err
-	}
-	if delay.IsSet {
-		if err = validateDelay(queue.Delay.Value); err != nil {
-			return err
-		}
-		queue.Delay = delay
-	}
-
-	maximumMessageSizeBytes, err := readAttributeDurationInt(messageAttributes, QueueAttributeMaximumMessageSize)
-	if err != nil {
-		return err
-	}
-	if maximumMessageSizeBytes.IsSet {
-		if err = validateMaximumMessageSizeBytes(maximumMessageSizeBytes.Value); err != nil {
-			return err
-		}
-		queue.MaximumMessageSizeBytes = maximumMessageSizeBytes.Value
-	} else if applyDefaults {
-		queue.MaximumMessageSizeBytes = 256 * 1024 // 256KiB
-	}
-
-	messageRetentionPeriod, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeMessageRetentionPeriod)
-	if err != nil {
-		return err
-	}
-	if messageRetentionPeriod.IsSet {
-		if err = validateMessageRetentionPeriod(messageRetentionPeriod.Value); err != nil {
-			return err
-		}
-		queue.MessageRetentionPeriod = messageRetentionPeriod.Value
-	} else if applyDefaults {
-		queue.MessageRetentionPeriod = 4 * 24 * time.Hour // 4 days
-	}
-
-	receiveMessageWaitTime, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeReceiveMessageWaitTimeSeconds)
-	if err != nil {
-		return err
-	}
-	if receiveMessageWaitTime.IsSet {
-		if err = validateReceiveMessageWaitTime(receiveMessageWaitTime.Value); err != nil {
-			return err
-		}
-		queue.ReceiveMessageWaitTime = receiveMessageWaitTime.Value
-	} else if applyDefaults {
-		queue.ReceiveMessageWaitTime = 20 * time.Second
-	}
-
-	visibilityTimeout, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeVisibilityTimeout)
-	if err != nil {
-		return err
-	}
-	if visibilityTimeout.IsSet {
-		if err = validateVisibilityTimeout(visibilityTimeout.Value); err != nil {
-			return err
-		}
-		queue.VisibilityTimeout = visibilityTimeout.Value
-	} else if applyDefaults {
-		queue.VisibilityTimeout = 30 * time.Second
-	}
-
-	redrivePolicy, err := readAttributeRedrivePolicy(messageAttributes)
-	if err != nil {
-		return err
-	}
-	if redrivePolicy.IsSet {
-		queue.RedrivePolicy = redrivePolicy
-	}
-
-	return nil
-}
-
 type RedrivePolicy struct {
 	DeadLetterTargetArn string `json:"deadLetterTargetArn"`
 	MaxReceiveCount     int    `json:"maxReceiveCount"`
@@ -137,9 +73,8 @@ type RedrivePolicy struct {
 type Queue struct {
 	Name      string
 	AccountID string
-
-	URL string
-	ARN string
+	URL       string
+	ARN       string
 
 	RedrivePolicy Optional[RedrivePolicy]
 
@@ -152,6 +87,8 @@ type Queue struct {
 
 	Attributes map[string]string
 	Tags       map[string]string
+
+	created time.Time
 
 	sequenceNumber uint64
 	lifecycleMu    sync.Mutex
@@ -211,6 +148,11 @@ func (q *Queue) Stats() (output QueueStats) {
 	return
 }
 
+// Created returns the timestamp when the queue was instantiated with [NewQueueFromCreateQueueInput].
+func (q *Queue) Created() time.Time {
+	return q.created
+}
+
 func (q *Queue) Start() {
 	q.lifecycleMu.Lock()
 	defer q.lifecycleMu.Unlock()
@@ -268,7 +210,7 @@ func (q *Queue) Untag(tags []string) {
 func (q *Queue) SetQueueAttributes(attributes map[string]string) *Error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return applyQueueAttributes(q, attributes, false /*applyDefaults*/)
+	return q.applyQueueAttributesUnsafe(attributes, false /*applyDefaults*/)
 
 }
 
@@ -641,6 +583,81 @@ func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
 	atomic.AddInt64(&q.stats.NumMessagesReady, 1)
 	node := q.messagesReadyOrdered.Push(msg)
 	q.messagesReady[msg.Message.MessageID] = node
+}
+
+func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, applyDefaults bool) *Error {
+	delay, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeDelaySeconds)
+	if err != nil {
+		return err
+	}
+	if delay.IsSet {
+		if err = validateDelay(q.Delay.Value); err != nil {
+			return err
+		}
+		q.Delay = delay
+	}
+
+	maximumMessageSizeBytes, err := readAttributeDurationInt(messageAttributes, QueueAttributeMaximumMessageSize)
+	if err != nil {
+		return err
+	}
+	if maximumMessageSizeBytes.IsSet {
+		if err = validateMaximumMessageSizeBytes(maximumMessageSizeBytes.Value); err != nil {
+			return err
+		}
+		q.MaximumMessageSizeBytes = maximumMessageSizeBytes.Value
+	} else if applyDefaults {
+		q.MaximumMessageSizeBytes = 256 * 1024 // 256KiB
+	}
+
+	messageRetentionPeriod, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeMessageRetentionPeriod)
+	if err != nil {
+		return err
+	}
+	if messageRetentionPeriod.IsSet {
+		if err = validateMessageRetentionPeriod(messageRetentionPeriod.Value); err != nil {
+			return err
+		}
+		q.MessageRetentionPeriod = messageRetentionPeriod.Value
+	} else if applyDefaults {
+		q.MessageRetentionPeriod = 4 * 24 * time.Hour // 4 days
+	}
+
+	receiveMessageWaitTime, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeReceiveMessageWaitTimeSeconds)
+	if err != nil {
+		return err
+	}
+	if receiveMessageWaitTime.IsSet {
+		if err = validateReceiveMessageWaitTime(receiveMessageWaitTime.Value); err != nil {
+			return err
+		}
+		q.ReceiveMessageWaitTime = receiveMessageWaitTime.Value
+	} else if applyDefaults {
+		q.ReceiveMessageWaitTime = 20 * time.Second
+	}
+
+	visibilityTimeout, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeVisibilityTimeout)
+	if err != nil {
+		return err
+	}
+	if visibilityTimeout.IsSet {
+		if err = validateVisibilityTimeout(visibilityTimeout.Value); err != nil {
+			return err
+		}
+		q.VisibilityTimeout = visibilityTimeout.Value
+	} else if applyDefaults {
+		q.VisibilityTimeout = 30 * time.Second
+	}
+
+	redrivePolicy, err := readAttributeRedrivePolicy(messageAttributes)
+	if err != nil {
+		return err
+	}
+	if redrivePolicy.IsSet {
+		q.RedrivePolicy = redrivePolicy
+	}
+
+	return nil
 }
 
 func keysAndValues[K comparable, V any](m map[K]V) (output []string) {

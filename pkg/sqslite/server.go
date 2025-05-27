@@ -12,8 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-
-	"github.com/wcharczuk/sqslite/pkg/uuid"
 )
 
 // NewServer returns a new server.
@@ -131,7 +129,7 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	authz, err := getRequestAuthorization(req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	req = req.WithContext(
@@ -167,33 +165,33 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	case methodChangeMessageVisibilityBatch:
 		s.changeMessageVisibilityBatch(rw, req)
 	default:
-		s.invalidMethod(rw, action)
+		s.invalidMethod(rw, req, action)
 	}
 }
 
 func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.CreateQueueInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	authz, ok := GetContextAuthorization(req.Context())
 	if !ok {
-		serialize(rw, ErrorUnauthorized())
+		serialize(rw, req, ErrorUnauthorized())
 		return
 	}
 	queue, err := NewQueueFromCreateQueueInput(s.cfg, authz.AccountID, input)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	err = s.queues.AddQueue(req.Context(), queue)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue.Start()
-	serialize(rw, &sqs.CreateQueueOutput{
+	serialize(rw, req, &sqs.CreateQueueOutput{
 		QueueUrl: &queue.URL,
 	})
 }
@@ -201,102 +199,102 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 func (s Server) setQueueAttributes(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.SetQueueAttributesInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err = queue.SetQueueAttributes(input.Attributes); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
-	serialize(rw, &sqs.SetQueueAttributesOutput{})
+	serialize(rw, req, &sqs.SetQueueAttributesOutput{})
 }
 
 func (s Server) tagQueue(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.TagQueueInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue.Tag(input.Tags)
-	serialize(rw, &sqs.TagQueueOutput{})
+	serialize(rw, req, &sqs.TagQueueOutput{})
 }
 
 func (s Server) untagQueue(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.UntagQueueInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue.Untag(input.TagKeys)
-	serialize(rw, &sqs.UntagQueueOutput{})
+	serialize(rw, req, &sqs.UntagQueueOutput{})
 }
 
 func (s Server) purgeQueue(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.PurgeQueueInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	ok := s.queues.PurgeQueue(req.Context(), *input.QueueUrl)
 	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+		serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
 		return
 	}
-	serialize(rw, &sqs.PurgeQueueOutput{})
+	serialize(rw, req, &sqs.PurgeQueueOutput{})
 }
 
 func (s Server) deleteQueue(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.DeleteQueueInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	ok := s.queues.DeleteQueue(req.Context(), *input.QueueUrl)
 	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+		serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
 		return
 	}
-	serialize(rw, &sqs.DeleteQueueOutput{})
+	serialize(rw, req, &sqs.DeleteQueueOutput{})
 }
 
 func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.ReceiveMessageInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err := requireQueueURL(input.QueueUrl); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	visibilityTimeout := time.Duration(input.VisibilityTimeout) * time.Second
 	if err := validateVisibilityTimeout(visibilityTimeout); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	waitTimeout := time.Duration(input.WaitTimeSeconds) * time.Second
 	if err := validateWaitTimeSeconds(waitTimeout); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	allMessages := queue.Receive(int(input.MaxNumberOfMessages), visibilityTimeout)
@@ -328,7 +326,7 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
-	serialize(rw, &sqs.ReceiveMessageOutput{
+	serialize(rw, req, &sqs.ReceiveMessageOutput{
 		Messages: apply(allMessages, asTypesMessage),
 	})
 }
@@ -336,29 +334,29 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.SendMessageInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err := requireQueueURL(input.QueueUrl); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err := validateMessageBodySize(input.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
-		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+		serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
 		return
 	}
 	msg, err := queue.NewMessageState(NewMessageFromSendMessageInput(input), time.Now().UTC(), int(input.DelaySeconds))
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue.Push(msg)
-	serialize(rw, &sqs.SendMessageOutput{
+	serialize(rw, req, &sqs.SendMessageOutput{
 		MessageId:              aws.String(msg.Message.MessageID.String()),
 		MD5OfMessageAttributes: aws.String(msg.Message.MD5OfMessageAttributes.Value),
 		MD5OfMessageBody:       aws.String(msg.Message.MD5OfBody.Value),
@@ -369,41 +367,41 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.SendMessageBatchInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err := requireQueueURL(input.QueueUrl); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if len(input.Entries) > 10 {
-		serialize(rw, ErrorInvalidParameterValue(fmt.Sprintf("Entries must have at most 10 entries, you provided %d", len(input.Entries))))
+		serialize(rw, req, ErrorInvalidParameterValue(fmt.Sprintf("Entries must have at most 10 entries, you provided %d", len(input.Entries))))
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	messages := make([]*MessageState, 0, len(input.Entries))
 	for _, entry := range input.Entries {
 		if err := requireEntryID(entry.Id); err != nil {
-			serialize(rw, err)
+			serialize(rw, req, err)
 			return
 		}
 		if err := validateMessageBodySize(entry.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
-			serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+			serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
 			return
 		}
 		msg, err := queue.NewMessageState(NewMessageFromSendMessageBatchEntry(entry), time.Now().UTC(), int(entry.DelaySeconds))
 		if err != nil {
-			serialize(rw, err)
+			serialize(rw, req, err)
 			return
 		}
 		messages = append(messages, msg)
 	}
 	queue.Push(messages...)
-	serialize(rw, &sqs.SendMessageBatchOutput{
+	serialize(rw, req, &sqs.SendMessageBatchOutput{
 		Successful: apply(messages, asTypesSendMessageBatchResultEntry),
 	})
 }
@@ -411,53 +409,53 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 func (s Server) deleteMessage(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.DeleteMessageInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err := requireQueueURL(input.QueueUrl); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	err = queue.Delete(*input.ReceiptHandle)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
-	serialize(rw, &sqs.DeleteMessageOutput{})
+	serialize(rw, req, &sqs.DeleteMessageOutput{})
 }
 
 func (s Server) deleteMessageBatch(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.DeleteMessageBatchInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err := requireQueueURL(input.QueueUrl); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	for _, entry := range input.Entries {
 		if err := requireEntryID(entry.Id); err != nil {
-			serialize(rw, err)
+			serialize(rw, req, err)
 			return
 		}
 		if err := requireReceiptHandle(entry.ReceiptHandle); err != nil {
-			serialize(rw, err)
+			serialize(rw, req, err)
 			return
 		}
 	}
 	successful, failed := queue.DeleteBatch(input.Entries)
-	serialize(rw, &sqs.DeleteMessageBatchOutput{
+	serialize(rw, req, &sqs.DeleteMessageBatchOutput{
 		Successful: successful,
 		Failed:     failed,
 	})
@@ -466,21 +464,21 @@ func (s Server) deleteMessageBatch(rw http.ResponseWriter, req *http.Request) {
 func (s Server) changeMessageVisibility(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.ChangeMessageVisibilityInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err := requireQueueURL(input.QueueUrl); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	visibilityTimeout := time.Duration(input.VisibilityTimeout) * time.Second
 	if err := validateVisibilityTimeout(visibilityTimeout); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	ok := queue.ChangeMessageVisibility(
@@ -488,59 +486,59 @@ func (s Server) changeMessageVisibility(rw http.ResponseWriter, req *http.Reques
 		visibilityTimeout,
 	)
 	if !ok {
-		serialize(rw, ErrorInvalidParameterValue("ReceiptHandle"))
+		serialize(rw, req, ErrorInvalidParameterValue("ReceiptHandle"))
 		return
 	}
-	serialize(rw, &sqs.ChangeMessageVisibilityOutput{})
+	serialize(rw, req, &sqs.ChangeMessageVisibilityOutput{})
 }
 
 func (s Server) changeMessageVisibilityBatch(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.ChangeMessageVisibilityBatchInput](req)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	if err := requireQueueURL(input.QueueUrl); err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
 	if err != nil {
-		serialize(rw, err)
+		serialize(rw, req, err)
 		return
 	}
 	for _, entry := range input.Entries {
 		if err := requireEntryID(entry.Id); err != nil {
-			serialize(rw, err)
+			serialize(rw, req, err)
 			return
 		}
 		if err := requireReceiptHandle(entry.ReceiptHandle); err != nil {
-			serialize(rw, err)
+			serialize(rw, req, err)
 			return
 		}
 		visibilityTimeout := time.Duration(entry.VisibilityTimeout) * time.Second
 		if err := validateVisibilityTimeout(visibilityTimeout); err != nil {
-			serialize(rw, err)
+			serialize(rw, req, err)
 			return
 		}
 	}
 	successful, failed := queue.ChangeMessageVisibilityBatch(input.Entries)
-	serialize(rw, &sqs.ChangeMessageVisibilityBatchOutput{
+	serialize(rw, req, &sqs.ChangeMessageVisibilityBatchOutput{
 		Successful: successful,
 		Failed:     failed,
 	})
 }
 
 func (s Server) unknownVerb(rw http.ResponseWriter, req *http.Request) {
-	serialize(rw, ErrorUnknownOperation(fmt.Sprintf("Expected HTTP POST as verb, you used: %v", req.Method)))
+	serialize(rw, req, ErrorUnknownOperation(fmt.Sprintf("Expected HTTP POST as verb, you used: %v", req.Method)))
 }
 
 func (s Server) unknownPath(rw http.ResponseWriter, req *http.Request) {
-	serialize(rw, ErrorUnknownOperation(fmt.Sprintf("Expected '/' as the request path, you used: %v", req.URL.Path)))
+	serialize(rw, req, ErrorUnknownOperation(fmt.Sprintf("Expected '/' as the request path, you used: %v", req.URL.Path)))
 }
 
-func (s Server) invalidMethod(rw http.ResponseWriter, action string) {
-	serialize(rw, ErrorUnknownOperation(action))
+func (s Server) invalidMethod(rw http.ResponseWriter, req *http.Request, action string) {
+	serialize(rw, req, ErrorUnknownOperation(action))
 }
 
 func requireEntryID(id *string) *Error {
@@ -600,6 +598,10 @@ func md5sum(values ...string) string {
 	return hex.EncodeToString(hf.Sum(nil))
 }
 
+const (
+	requestContentTypeJSON = "application/x-amz-json-1.0"
+)
+
 func deserialize[V any](req *http.Request) (*V, *Error) {
 	if req.Body == nil {
 		return nil, nil
@@ -617,9 +619,8 @@ func deserialize[V any](req *http.Request) (*V, *Error) {
 	return &value, nil
 }
 
-func serialize(rw http.ResponseWriter, res any) {
-	rw.Header().Set("X-Amzn-Requestid", uuid.V4().String())
-	rw.Header().Set("Content-Type", "application/x-amz-json-1.0")
+func serialize(rw http.ResponseWriter, _ *http.Request, res any) {
+	rw.Header().Set("Content-Type", requestContentTypeJSON)
 	if commonError, ok := res.(*Error); ok {
 		rw.WriteHeader(commonError.StatusCode)
 	} else {

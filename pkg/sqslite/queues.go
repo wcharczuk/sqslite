@@ -3,8 +3,8 @@ package sqslite
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
+	"time"
 )
 
 // NewQueues returns a new queues storage.
@@ -101,7 +101,6 @@ func (q *Queues) GetQueueURL(ctx context.Context, queueName string) (queueURL st
 	var authz Authorization
 	authz, ok = GetContextAuthorization(ctx)
 	if !ok {
-		slog.Debug("queues; get queue url; context authorization not found")
 		return
 	}
 	queueURL, ok = q.queueURLs[QueueName{AccountID: authz.AccountID, QueueName: queueName}]
@@ -119,12 +118,18 @@ func (q *Queues) GetQueue(ctx context.Context, queueURL string) (queue *Queue, e
 	}
 	queue, ok = q.queues[queueURL]
 	if !ok {
-		err = ErrorInvalidParameterValue("QueueURL")
+		err = ErrorQueueDoesNotExist()
 		return
 	}
 	if queue.AccountID != authz.AccountID {
 		queue = nil
-		err = ErrorInvalidParameterValue("QueueURL")
+		err = ErrorQueueDoesNotExist()
+		return
+	}
+	if time.Now().UTC().Sub(queue.Created()) < time.Second {
+		queue = nil
+		err = ErrorNotReady()
+		return
 	}
 	return
 }
