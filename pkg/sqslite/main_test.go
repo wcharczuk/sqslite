@@ -2,6 +2,7 @@ package sqslite
 
 import (
 	"testing"
+	"time"
 
 	"github.com/wcharczuk/sqslite/pkg/uuid"
 
@@ -17,7 +18,6 @@ func createTestQueue(t *testing.T) *Queue {
 		QueueName: aws.String("test-queue"),
 	})
 	require.Nil(t, err)
-	t.Cleanup(func() { q.Close() })
 	return q
 }
 
@@ -32,7 +32,7 @@ func pushTestMessages(q *Queue, count int) []*MessageState {
 	var messages []*MessageState
 	for range count {
 		msg := createTestMessage("test message body")
-		msgState, _ := q.NewMessageState(msg, 0)
+		msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
 		messages = append(messages, msgState)
 	}
 	q.Push(messages...)

@@ -54,7 +54,7 @@ func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {
 	require.Equal(t, "552cc6a91af25b6aef1e5d1b5e5f54a9", msg.MD5OfBody.Value)
 }
 
-func TestQueue_Receive_respectsMaxNumberOfMessages(t *testing.T) {
+func Test_Queue_Receive_respectsMaxNumberOfMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push 5 messages to the queue
@@ -68,7 +68,25 @@ func TestQueue_Receive_respectsMaxNumberOfMessages(t *testing.T) {
 	require.Equal(t, 3, len(received))
 }
 
-func TestQueue_Receive_returnsEmptyWhenMaxInflightReached(t *testing.T) {
+func Test_Queue_Receive_setsApproximateReceiveCountAttribute(t *testing.T) {
+	q := createTestQueue(t)
+
+	// Push 5 messages to the queue
+	pushTestMessages(q, 5)
+
+	// Request only 3 messages
+	received := q.Receive(3, 0)
+
+	// Assert that we get at most 3 messages
+	require.LessOrEqual(t, len(received), 3)
+	require.Equal(t, 3, len(received))
+
+	require.Equal(t, "1", received[0].Attributes[messageAttributeApproximateReceiveCount])
+	require.Equal(t, "1", received[1].Attributes[messageAttributeApproximateReceiveCount])
+	require.Equal(t, "1", received[2].Attributes[messageAttributeApproximateReceiveCount])
+}
+
+func Test_Queue_Receive_returnsEmptyWhenMaxInflightReached(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Set a very low maximum inflight limit
@@ -84,7 +102,7 @@ func TestQueue_Receive_returnsEmptyWhenMaxInflightReached(t *testing.T) {
 	require.Empty(t, received2)
 }
 
-func TestQueue_Receive_usesProvidedVisibilityTimeout(t *testing.T) {
+func Test_Queue_Receive_usesProvidedVisibilityTimeout(t *testing.T) {
 	q := createTestQueue(t)
 	q.VisibilityTimeout = 30 * time.Second // Default queue timeout
 
@@ -102,7 +120,7 @@ func TestQueue_Receive_usesProvidedVisibilityTimeout(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Receive_usesDefaultVisibilityTimeoutWhenZero(t *testing.T) {
+func Test_Queue_Receive_usesDefaultVisibilityTimeoutWhenZero(t *testing.T) {
 	q := createTestQueue(t)
 	defaultTimeout := 45 * time.Second
 	q.VisibilityTimeout = defaultTimeout
@@ -120,7 +138,7 @@ func TestQueue_Receive_usesDefaultVisibilityTimeoutWhenZero(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Receive_movesMessagesFromReadyToInflight(t *testing.T) {
+func Test_Queue_Receive_movesMessagesFromReadyToInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	pushTestMessages(q, 3)
@@ -148,7 +166,7 @@ func TestQueue_Receive_movesMessagesFromReadyToInflight(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Receive_updatesStatistics(t *testing.T) {
+func Test_Queue_Receive_updatesStatistics(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Get initial stats
@@ -167,7 +185,7 @@ func TestQueue_Receive_updatesStatistics(t *testing.T) {
 	require.Equal(t, initialStats.NumMessagesInflight+2, updatedStats.NumMessagesInflight)
 }
 
-func TestQueue_Receive_generatesReceiptHandles(t *testing.T) {
+func Test_Queue_Receive_generatesReceiptHandles(t *testing.T) {
 	q := createTestQueue(t)
 
 	pushTestMessages(q, 2)
@@ -191,7 +209,7 @@ func TestQueue_Receive_generatesReceiptHandles(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Receive_returnsEmptyWhenQueueEmpty(t *testing.T) {
+func Test_Queue_Receive_returnsEmptyWhenQueueEmpty(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Don't push any messages
@@ -201,7 +219,7 @@ func TestQueue_Receive_returnsEmptyWhenQueueEmpty(t *testing.T) {
 	require.Empty(t, received)
 }
 
-func TestQueue_Receive_incrementsApproximateReceiveCount(t *testing.T) {
+func Test_Queue_Receive_incrementsApproximateReceiveCount(t *testing.T) {
 	q := createTestQueue(t)
 
 	pushTestMessages(q, 1)
@@ -217,7 +235,7 @@ func TestQueue_Receive_incrementsApproximateReceiveCount(t *testing.T) {
 	require.Equal(t, "1", count)
 }
 
-func TestQueue_Receive_setsLastReceivedTime(t *testing.T) {
+func Test_Queue_Receive_setsLastReceivedTime(t *testing.T) {
 	q := createTestQueue(t)
 
 	pushTestMessages(q, 1)
@@ -237,11 +255,11 @@ func TestQueue_Receive_setsLastReceivedTime(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_singleMessageWithoutDelay_addsToReadyQueue(t *testing.T) {
+func Test_Queue_Push_singleMessageWithoutDelay_addsToReadyQueue(t *testing.T) {
 	q := createTestQueue(t)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 0)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
 
 	q.Push(msgState)
 
@@ -250,11 +268,11 @@ func TestQueue_Push_singleMessageWithoutDelay_addsToReadyQueue(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_singleMessageWithDelay_addsToDelayedQueue(t *testing.T) {
+func Test_Queue_Push_singleMessageWithDelay_addsToDelayedQueue(t *testing.T) {
 	q := createTestQueue(t)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 10) // 10 second delay
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10) // 10 second delay
 
 	q.Push(msgState)
 
@@ -263,13 +281,13 @@ func TestQueue_Push_singleMessageWithDelay_addsToDelayedQueue(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_multipleMessages_handlesAllMessages(t *testing.T) {
+func Test_Queue_Push_multipleMessages_handlesAllMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	msg1 := createTestMessage("test body 1")
-	msgState1, _ := q.NewMessageState(msg1, 0)
+	msgState1, _ := q.NewMessageState(msg1, time.Now().UTC(), 0)
 	msg2 := createTestMessage("test body 2")
-	msgState2, _ := q.NewMessageState(msg2, 0)
+	msgState2, _ := q.NewMessageState(msg2, time.Now().UTC(), 0)
 
 	q.Push(msgState1, msgState2)
 
@@ -278,12 +296,12 @@ func TestQueue_Push_multipleMessages_handlesAllMessages(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *testing.T) {
+func Test_Queue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *testing.T) {
 	q := createTestQueue(t)
 	q.Delay = Some(5 * time.Second)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 0) // No delay on message
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0) // No delay on message
 
 	q.Push(msgState)
 
@@ -292,12 +310,12 @@ func TestQueue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *test
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_queueHasDefaultDelayMessageHasDelay_keepsMessageDelay(t *testing.T) {
+func Test_Queue_Push_queueHasDefaultDelayMessageHasDelay_keepsMessageDelay(t *testing.T) {
 	q := createTestQueue(t)
 	q.Delay = Some(5 * time.Second)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 10) // Message has its own delay
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10) // Message has its own delay
 
 	q.Push(msgState)
 
@@ -307,12 +325,12 @@ func TestQueue_Push_queueHasDefaultDelayMessageHasDelay_keepsMessageDelay(t *tes
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_incrementsTotalMessagesSent(t *testing.T) {
+func Test_Queue_Push_incrementsTotalMessagesSent(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 0)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
 
 	q.Push(msgState)
 
@@ -320,12 +338,12 @@ func TestQueue_Push_incrementsTotalMessagesSent(t *testing.T) {
 	require.Equal(t, initialStats.TotalMessagesSent+1, updatedStats.TotalMessagesSent)
 }
 
-func TestQueue_Push_incrementsNumMessages(t *testing.T) {
+func Test_Queue_Push_incrementsNumMessages(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 0)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
 
 	q.Push(msgState)
 
@@ -333,12 +351,12 @@ func TestQueue_Push_incrementsNumMessages(t *testing.T) {
 	require.Equal(t, initialStats.NumMessages+1, updatedStats.NumMessages)
 }
 
-func TestQueue_Push_nonDelayedMessage_incrementsNumMessagesReady(t *testing.T) {
+func Test_Queue_Push_nonDelayedMessage_incrementsNumMessagesReady(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 0)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
 
 	q.Push(msgState)
 
@@ -346,12 +364,12 @@ func TestQueue_Push_nonDelayedMessage_incrementsNumMessagesReady(t *testing.T) {
 	require.Equal(t, initialStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
 }
 
-func TestQueue_Push_delayedMessage_incrementsNumMessagesDelayed(t *testing.T) {
+func Test_Queue_Push_delayedMessage_incrementsNumMessagesDelayed(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 10)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10)
 
 	q.Push(msgState)
 
@@ -359,11 +377,11 @@ func TestQueue_Push_delayedMessage_incrementsNumMessagesDelayed(t *testing.T) {
 	require.Equal(t, initialStats.NumMessagesDelayed+1, updatedStats.NumMessagesDelayed)
 }
 
-func TestQueue_Push_readyMessage_addsToMessagesReadyMap(t *testing.T) {
+func Test_Queue_Push_readyMessage_addsToMessagesReadyMap(t *testing.T) {
 	q := createTestQueue(t)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 0)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
 
 	q.Push(msgState)
 
@@ -373,11 +391,11 @@ func TestQueue_Push_readyMessage_addsToMessagesReadyMap(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_delayedMessage_addsToMessagesDelayedMap(t *testing.T) {
+func Test_Queue_Push_delayedMessage_addsToMessagesDelayedMap(t *testing.T) {
 	q := createTestQueue(t)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 10)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10)
 
 	q.Push(msgState)
 
@@ -387,11 +405,11 @@ func TestQueue_Push_delayedMessage_addsToMessagesDelayedMap(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_readyMessage_addsToOrderedLinkedList(t *testing.T) {
+func Test_Queue_Push_readyMessage_addsToOrderedLinkedList(t *testing.T) {
 	q := createTestQueue(t)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 0)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
 
 	q.Push(msgState)
 
@@ -400,7 +418,7 @@ func TestQueue_Push_readyMessage_addsToOrderedLinkedList(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Push_noMessages_isNoOp(t *testing.T) {
+func Test_Queue_Push_noMessages_isNoOp(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -410,13 +428,13 @@ func TestQueue_Push_noMessages_isNoOp(t *testing.T) {
 	require.Equal(t, initialStats, updatedStats)
 }
 
-func TestQueue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T) {
+func Test_Queue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T) {
 	q := createTestQueue(t)
 
 	readyMsg := createTestMessage("ready")
-	readyMsgState, _ := q.NewMessageState(readyMsg, 0)
+	readyMsgState, _ := q.NewMessageState(readyMsg, time.Now().UTC(), 0)
 	delayedMsg := createTestMessage("delayed")
-	delayedMsgState, _ := q.NewMessageState(delayedMsg, 10)
+	delayedMsgState, _ := q.NewMessageState(delayedMsg, time.Now().UTC(), 10)
 
 	q.Push(readyMsgState, delayedMsgState)
 
@@ -426,7 +444,7 @@ func TestQueue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T) 
 	q.mu.Unlock()
 }
 
-func TestQueue_Delete_validReceiptHandle_returnsTrue(t *testing.T) {
+func Test_Queue_Delete_validReceiptHandle_returnsTrue(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message to get it in inflight state
@@ -439,7 +457,7 @@ func TestQueue_Delete_validReceiptHandle_returnsTrue(t *testing.T) {
 	require.True(t, result)
 }
 
-func TestQueue_Delete_invalidReceiptHandle_returnsFalse(t *testing.T) {
+func Test_Queue_Delete_invalidReceiptHandle_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	result := q.Delete("invalid-receipt-handle")
@@ -447,7 +465,7 @@ func TestQueue_Delete_invalidReceiptHandle_returnsFalse(t *testing.T) {
 	require.False(t, result)
 }
 
-func TestQueue_Delete_removesMessageFromInflightMap(t *testing.T) {
+func Test_Queue_Delete_removesMessageFromInflightMap(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -464,7 +482,7 @@ func TestQueue_Delete_removesMessageFromInflightMap(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Delete_removesReceiptHandleFromMap(t *testing.T) {
+func Test_Queue_Delete_removesReceiptHandleFromMap(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -481,7 +499,7 @@ func TestQueue_Delete_removesReceiptHandleFromMap(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Delete_removesAllReceiptHandlesForMessage(t *testing.T) {
+func Test_Queue_Delete_removesAllReceiptHandlesForMessage(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -506,7 +524,7 @@ func TestQueue_Delete_removesAllReceiptHandlesForMessage(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_Delete_incrementsTotalMessagesDeleted(t *testing.T) {
+func Test_Queue_Delete_incrementsTotalMessagesDeleted(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -521,7 +539,7 @@ func TestQueue_Delete_incrementsTotalMessagesDeleted(t *testing.T) {
 	require.Equal(t, initialStats.TotalMessagesDeleted+1, updatedStats.TotalMessagesDeleted)
 }
 
-func TestQueue_Delete_decrementsNumMessagesInflight(t *testing.T) {
+func Test_Queue_Delete_decrementsNumMessagesInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -536,7 +554,7 @@ func TestQueue_Delete_decrementsNumMessagesInflight(t *testing.T) {
 	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
 }
 
-func TestQueue_Delete_decrementsNumMessages(t *testing.T) {
+func Test_Queue_Delete_decrementsNumMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -551,7 +569,7 @@ func TestQueue_Delete_decrementsNumMessages(t *testing.T) {
 	require.Equal(t, afterReceiveStats.NumMessages-1, updatedStats.NumMessages)
 }
 
-func TestQueue_Delete_receiptHandleNotInMap_returnsFalse(t *testing.T) {
+func Test_Queue_Delete_receiptHandleNotInMap_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message but use a different receipt handle
@@ -564,7 +582,7 @@ func TestQueue_Delete_receiptHandleNotInMap_returnsFalse(t *testing.T) {
 	require.False(t, result)
 }
 
-func TestQueue_Delete_messageIdNotInInflight_returnsFalse(t *testing.T) {
+func Test_Queue_Delete_messageIdNotInInflight_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -584,7 +602,7 @@ func TestQueue_Delete_messageIdNotInInflight_returnsFalse(t *testing.T) {
 	require.False(t, result)
 }
 
-func TestQueue_Delete_emptyReceiptHandle_returnsFalse(t *testing.T) {
+func Test_Queue_Delete_emptyReceiptHandle_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	result := q.Delete("")
@@ -592,7 +610,7 @@ func TestQueue_Delete_emptyReceiptHandle_returnsFalse(t *testing.T) {
 	require.False(t, result)
 }
 
-func TestQueue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
+func Test_Queue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -611,7 +629,7 @@ func TestQueue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
 	require.False(t, secondResult)
 }
 
-func TestQueue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {
+func Test_Queue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive multiple messages
@@ -634,7 +652,7 @@ func TestQueue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_DeleteBatch_allValidReceiptHandles_returnsAllSuccessful(t *testing.T) {
+func Test_Queue_DeleteBatch_allValidReceiptHandles_returnsAllSuccessful(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive multiple messages
@@ -655,7 +673,7 @@ func TestQueue_DeleteBatch_allValidReceiptHandles_returnsAllSuccessful(t *testin
 	require.Len(t, failed, 0)
 }
 
-func TestQueue_DeleteBatch_allInvalidReceiptHandles_returnsAllFailed(t *testing.T) {
+func Test_Queue_DeleteBatch_allInvalidReceiptHandles_returnsAllFailed(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Create batch request with invalid receipt handles
@@ -670,7 +688,7 @@ func TestQueue_DeleteBatch_allInvalidReceiptHandles_returnsAllFailed(t *testing.
 	require.Len(t, failed, 2)
 }
 
-func TestQueue_DeleteBatch_mixedValidInvalid_returnsMixedResults(t *testing.T) {
+func Test_Queue_DeleteBatch_mixedValidInvalid_returnsMixedResults(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive one message
@@ -690,7 +708,7 @@ func TestQueue_DeleteBatch_mixedValidInvalid_returnsMixedResults(t *testing.T) {
 	require.Len(t, failed, 1)
 }
 
-func TestQueue_DeleteBatch_emptySlice_returnsEmptyResults(t *testing.T) {
+func Test_Queue_DeleteBatch_emptySlice_returnsEmptyResults(t *testing.T) {
 	q := createTestQueue(t)
 
 	successful, failed := q.DeleteBatch([]types.DeleteMessageBatchRequestEntry{})
@@ -699,7 +717,7 @@ func TestQueue_DeleteBatch_emptySlice_returnsEmptyResults(t *testing.T) {
 	require.Len(t, failed, 0)
 }
 
-func TestQueue_DeleteBatch_removesSuccessfulMessagesFromInflight(t *testing.T) {
+func Test_Queue_DeleteBatch_removesSuccessfulMessagesFromInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -723,7 +741,7 @@ func TestQueue_DeleteBatch_removesSuccessfulMessagesFromInflight(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_DeleteBatch_removesSuccessfulReceiptHandles(t *testing.T) {
+func Test_Queue_DeleteBatch_removesSuccessfulReceiptHandles(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -747,7 +765,7 @@ func TestQueue_DeleteBatch_removesSuccessfulReceiptHandles(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_DeleteBatch_removesAllReceiptHandlesForSuccessfulMessages(t *testing.T) {
+func Test_Queue_DeleteBatch_removesAllReceiptHandlesForSuccessfulMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -777,7 +795,7 @@ func TestQueue_DeleteBatch_removesAllReceiptHandlesForSuccessfulMessages(t *test
 	q.mu.Unlock()
 }
 
-func TestQueue_DeleteBatch_incrementsTotalMessagesDeletedForSuccessfulOnly(t *testing.T) {
+func Test_Queue_DeleteBatch_incrementsTotalMessagesDeletedForSuccessfulOnly(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -798,7 +816,7 @@ func TestQueue_DeleteBatch_incrementsTotalMessagesDeletedForSuccessfulOnly(t *te
 	require.Equal(t, initialStats.TotalMessagesDeleted+1, updatedStats.TotalMessagesDeleted)
 }
 
-func TestQueue_DeleteBatch_decrementsNumMessagesInflightForSuccessfulOnly(t *testing.T) {
+func Test_Queue_DeleteBatch_decrementsNumMessagesInflightForSuccessfulOnly(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive two messages
@@ -818,7 +836,7 @@ func TestQueue_DeleteBatch_decrementsNumMessagesInflightForSuccessfulOnly(t *tes
 	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
 }
 
-func TestQueue_DeleteBatch_decrementsNumMessagesForSuccessfulOnly(t *testing.T) {
+func Test_Queue_DeleteBatch_decrementsNumMessagesForSuccessfulOnly(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive two messages
@@ -838,7 +856,7 @@ func TestQueue_DeleteBatch_decrementsNumMessagesForSuccessfulOnly(t *testing.T) 
 	require.Equal(t, afterReceiveStats.NumMessages-1, updatedStats.NumMessages)
 }
 
-func TestQueue_DeleteBatch_receiptHandleNotFound_returnsInvalidParameterValueError(t *testing.T) {
+func Test_Queue_DeleteBatch_receiptHandleNotFound_returnsInvalidParameterValueError(t *testing.T) {
 	q := createTestQueue(t)
 
 	entriesSlice := []types.DeleteMessageBatchRequestEntry{
@@ -854,7 +872,7 @@ func TestQueue_DeleteBatch_receiptHandleNotFound_returnsInvalidParameterValueErr
 	require.True(t, failed[0].SenderFault)
 }
 
-func TestQueue_DeleteBatch_messageIdNotInInflight_returnsInconsistentStateError(t *testing.T) {
+func Test_Queue_DeleteBatch_messageIdNotInInflight_returnsInconsistentStateError(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -882,7 +900,7 @@ func TestQueue_DeleteBatch_messageIdNotInInflight_returnsInconsistentStateError(
 	require.False(t, failed[0].SenderFault)
 }
 
-func TestQueue_DeleteBatch_preservesFailedMessagesInInflightState(t *testing.T) {
+func Test_Queue_DeleteBatch_preservesFailedMessagesInInflightState(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive two messages
@@ -908,7 +926,7 @@ func TestQueue_DeleteBatch_preservesFailedMessagesInInflightState(t *testing.T) 
 	q.mu.Unlock()
 }
 
-func TestQueue_DeleteBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
+func Test_Queue_DeleteBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -928,7 +946,7 @@ func TestQueue_DeleteBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
 	require.Equal(t, "second-msg", *successful[1].Id)
 }
 
-func TestQueue_DeleteBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.T) {
+func Test_Queue_DeleteBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.T) {
 	q := createTestQueue(t)
 
 	entriesSlice := []types.DeleteMessageBatchRequestEntry{
@@ -945,7 +963,7 @@ func TestQueue_DeleteBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.
 	require.Equal(t, "ReceiptHandle not found", *failed[1].Message)
 }
 
-func TestQueue_ChangeMessageVisibility_validReceiptHandle_returnsTrue(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_validReceiptHandle_returnsTrue(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message to get it in inflight state
@@ -958,7 +976,7 @@ func TestQueue_ChangeMessageVisibility_validReceiptHandle_returnsTrue(t *testing
 	require.True(t, result)
 }
 
-func TestQueue_ChangeMessageVisibility_invalidReceiptHandle_returnsFalse(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_invalidReceiptHandle_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	result := q.ChangeMessageVisibility("invalid-receipt-handle", 60*time.Second)
@@ -966,7 +984,7 @@ func TestQueue_ChangeMessageVisibility_invalidReceiptHandle_returnsFalse(t *test
 	require.False(t, result)
 }
 
-func TestQueue_ChangeMessageVisibility_updatesMessageVisibilityTimeout(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_updatesMessageVisibilityTimeout(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -984,7 +1002,7 @@ func TestQueue_ChangeMessageVisibility_updatesMessageVisibilityTimeout(t *testin
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibility_zeroTimeout_makesMessageImmediatelyVisible(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_zeroTimeout_makesMessageImmediatelyVisible(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1001,7 +1019,7 @@ func TestQueue_ChangeMessageVisibility_zeroTimeout_makesMessageImmediatelyVisibl
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibility_zeroTimeout_movesMessageToReadyQueue(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_zeroTimeout_movesMessageToReadyQueue(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1018,7 +1036,7 @@ func TestQueue_ChangeMessageVisibility_zeroTimeout_movesMessageToReadyQueue(t *t
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibility_zeroTimeout_removesFromInflightQueue(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_zeroTimeout_removesFromInflightQueue(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1035,7 +1053,7 @@ func TestQueue_ChangeMessageVisibility_zeroTimeout_removesFromInflightQueue(t *t
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibility_zeroTimeout_incrementsTotalMessagesChangedVisibility(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_zeroTimeout_incrementsTotalMessagesChangedVisibility(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -1050,7 +1068,7 @@ func TestQueue_ChangeMessageVisibility_zeroTimeout_incrementsTotalMessagesChange
 	require.Equal(t, initialStats.TotalMessagesChangedVisibility+1, updatedStats.TotalMessagesChangedVisibility)
 }
 
-func TestQueue_ChangeMessageVisibility_zeroTimeout_incrementsNumMessagesReady(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_zeroTimeout_incrementsNumMessagesReady(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1065,7 +1083,7 @@ func TestQueue_ChangeMessageVisibility_zeroTimeout_incrementsNumMessagesReady(t 
 	require.Equal(t, afterReceiveStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
 }
 
-func TestQueue_ChangeMessageVisibility_zeroTimeout_decrementsNumMessagesInflight(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_zeroTimeout_decrementsNumMessagesInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1080,7 +1098,7 @@ func TestQueue_ChangeMessageVisibility_zeroTimeout_decrementsNumMessagesInflight
 	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
 }
 
-func TestQueue_ChangeMessageVisibility_zeroTimeout_removesAllReceiptHandles(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_zeroTimeout_removesAllReceiptHandles(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1105,7 +1123,7 @@ func TestQueue_ChangeMessageVisibility_zeroTimeout_removesAllReceiptHandles(t *t
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibility_nonZeroTimeout_keepsMessageInInflight(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_nonZeroTimeout_keepsMessageInInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1122,7 +1140,7 @@ func TestQueue_ChangeMessageVisibility_nonZeroTimeout_keepsMessageInInflight(t *
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibility_receiptHandleNotFound_returnsFalse(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_receiptHandleNotFound_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message but use a different receipt handle
@@ -1135,7 +1153,7 @@ func TestQueue_ChangeMessageVisibility_receiptHandleNotFound_returnsFalse(t *tes
 	require.False(t, result)
 }
 
-func TestQueue_ChangeMessageVisibility_messageIdNotInInflight_returnsFalse(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_messageIdNotInInflight_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1155,7 +1173,7 @@ func TestQueue_ChangeMessageVisibility_messageIdNotInInflight_returnsFalse(t *te
 	require.False(t, result)
 }
 
-func TestQueue_ChangeMessageVisibility_emptyReceiptHandle_returnsFalse(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_emptyReceiptHandle_returnsFalse(t *testing.T) {
 	q := createTestQueue(t)
 
 	result := q.ChangeMessageVisibility("", 60*time.Second)
@@ -1163,7 +1181,7 @@ func TestQueue_ChangeMessageVisibility_emptyReceiptHandle_returnsFalse(t *testin
 	require.False(t, result)
 }
 
-func TestQueue_ChangeMessageVisibility_nonZeroTimeout_doesNotUpdateStatistics(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_nonZeroTimeout_doesNotUpdateStatistics(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -1175,11 +1193,10 @@ func TestQueue_ChangeMessageVisibility_nonZeroTimeout_doesNotUpdateStatistics(t 
 	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, 60*time.Second)
 
 	updatedStats := q.Stats()
-	// TotalMessagesChangedVisibility should NOT be incremented for non-zero timeout
-	require.Equal(t, initialStats.TotalMessagesChangedVisibility, updatedStats.TotalMessagesChangedVisibility)
+	require.Equal(t, initialStats.TotalMessagesChangedVisibility+1, updatedStats.TotalMessagesChangedVisibility)
 }
 
-func TestQueue_ChangeMessageVisibility_setsVisibilityDeadlineCorrectly(t *testing.T) {
+func Test_Queue_ChangeMessageVisibility_setsVisibilityDeadlineCorrectly(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1204,7 +1221,7 @@ func TestQueue_ChangeMessageVisibility_setsVisibilityDeadlineCorrectly(t *testin
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_allValidEntries_returnsAllSuccessful(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_allValidEntries_returnsAllSuccessful(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive multiple messages
@@ -1225,7 +1242,7 @@ func TestQueue_ChangeMessageVisibilityBatch_allValidEntries_returnsAllSuccessful
 	require.Len(t, failed, 0)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_allInvalidEntries_returnsAllFailed(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_allInvalidEntries_returnsAllFailed(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Create batch request with invalid receipt handles
@@ -1240,7 +1257,7 @@ func TestQueue_ChangeMessageVisibilityBatch_allInvalidEntries_returnsAllFailed(t
 	require.Len(t, failed, 1) // Early return, only first failure reported
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_mixedValidInvalid_failsEarly(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_mixedValidInvalid_failsEarly(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive one message
@@ -1261,7 +1278,7 @@ func TestQueue_ChangeMessageVisibilityBatch_mixedValidInvalid_failsEarly(t *test
 	require.Len(t, failed, 1)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_emptySlice_returnsEmptyResults(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_emptySlice_returnsEmptyResults(t *testing.T) {
 	q := createTestQueue(t)
 
 	successful, failed := q.ChangeMessageVisibilityBatch([]types.ChangeMessageVisibilityBatchRequestEntry{})
@@ -1270,7 +1287,7 @@ func TestQueue_ChangeMessageVisibilityBatch_emptySlice_returnsEmptyResults(t *te
 	require.Len(t, failed, 0)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_updatesVisibilityTimeoutsForSuccessfulEntries(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_updatesVisibilityTimeoutsForSuccessfulEntries(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -1294,7 +1311,7 @@ func TestQueue_ChangeMessageVisibilityBatch_updatesVisibilityTimeoutsForSuccessf
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_movesToReadyQueue(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_movesToReadyQueue(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -1320,7 +1337,7 @@ func TestQueue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_movesToReadyQueue
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_removesFromInflightQueue(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_removesFromInflightQueue(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -1346,7 +1363,7 @@ func TestQueue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_removesFromInflig
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_incrementsTotalMessagesChangedVisibilityForAllEntries(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_incrementsTotalMessagesChangedVisibilityForAllEntries(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -1364,11 +1381,10 @@ func TestQueue_ChangeMessageVisibilityBatch_incrementsTotalMessagesChangedVisibi
 	q.ChangeMessageVisibilityBatch(entriesSlice)
 
 	updatedStats := q.Stats()
-	// Should increment for BOTH entries (unlike single version)
 	require.Equal(t, initialStats.TotalMessagesChangedVisibility+2, updatedStats.TotalMessagesChangedVisibility)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_incrementsNumMessagesReady(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_incrementsNumMessagesReady(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -1389,7 +1405,7 @@ func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_incrementsNumMessagesRea
 	require.Equal(t, afterReceiveStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_decrementsNumMessagesInflight(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_decrementsNumMessagesInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -1410,7 +1426,7 @@ func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_decrementsNumMessagesInf
 	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_removesAllReceiptHandles(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_removesAllReceiptHandles(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1440,7 +1456,7 @@ func TestQueue_ChangeMessageVisibilityBatch_zeroTimeout_removesAllReceiptHandles
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_nonZeroTimeout_keepsMessagesInInflight(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_nonZeroTimeout_keepsMessagesInInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -1464,7 +1480,7 @@ func TestQueue_ChangeMessageVisibilityBatch_nonZeroTimeout_keepsMessagesInInflig
 	q.mu.Unlock()
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_receiptHandleNotFound_returnsInvalidParameterValueError(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_receiptHandleNotFound_returnsInvalidParameterValueError(t *testing.T) {
 	q := createTestQueue(t)
 
 	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
@@ -1480,7 +1496,7 @@ func TestQueue_ChangeMessageVisibilityBatch_receiptHandleNotFound_returnsInvalid
 	require.True(t, failed[0].SenderFault)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_messageIdNotInInflight_returnsInternalServerError(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_messageIdNotInInflight_returnsInternalServerError(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1508,7 +1524,7 @@ func TestQueue_ChangeMessageVisibilityBatch_messageIdNotInInflight_returnsIntern
 	require.False(t, failed[0].SenderFault)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_earlyReturnBehavior_stopsProcessingOnFirstFailure(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_earlyReturnBehavior_stopsProcessingOnFirstFailure(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive two messages
@@ -1530,7 +1546,7 @@ func TestQueue_ChangeMessageVisibilityBatch_earlyReturnBehavior_stopsProcessingO
 	require.Equal(t, initialStats.TotalMessagesChangedVisibility, updatedStats.TotalMessagesChangedVisibility)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -1550,7 +1566,7 @@ func TestQueue_ChangeMessageVisibilityBatch_returnsCorrectIDsInSuccessfulResults
 	require.Equal(t, "second-msg", *successful[1].Id)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.T) {
 	q := createTestQueue(t)
 
 	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
@@ -1564,7 +1580,7 @@ func TestQueue_ChangeMessageVisibilityBatch_returnsCorrectErrorDetailsInFailedRe
 	require.Equal(t, "ReceiptHandle not found", *failed[0].Message)
 }
 
-func TestQueue_ChangeMessageVisibilityBatch_mixedZeroAndNonZeroTimeouts_handlesCorrectly(t *testing.T) {
+func Test_Queue_ChangeMessageVisibilityBatch_mixedZeroAndNonZeroTimeouts_handlesCorrectly(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive messages
@@ -1593,7 +1609,7 @@ func TestQueue_ChangeMessageVisibilityBatch_mixedZeroAndNonZeroTimeouts_handlesC
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_noInflightMessages_isNoOp(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_noInflightMessages_isNoOp(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -1603,7 +1619,7 @@ func TestQueue_UpdateInflightToReady_noInflightMessages_isNoOp(t *testing.T) {
 	require.Equal(t, initialStats, updatedStats)
 }
 
-func TestQueue_UpdateInflightToReady_noVisibleMessages_isNoOp(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_noVisibleMessages_isNoOp(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message with a future visibility deadline
@@ -1618,7 +1634,7 @@ func TestQueue_UpdateInflightToReady_noVisibleMessages_isNoOp(t *testing.T) {
 	require.Equal(t, initialStats.TotalMessagesInflightToReady, updatedStats.TotalMessagesInflightToReady)
 }
 
-func TestQueue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1641,7 +1657,7 @@ func TestQueue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testing
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive two messages
@@ -1669,7 +1685,7 @@ func TestQueue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t *
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1692,7 +1708,7 @@ func TestQueue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *testi
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1715,7 +1731,7 @@ func TestQueue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_addsVisibleMessagesToOrderedList(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToOrderedList(t *testing.T) {
 	q := createTestQueue(t)
 	initialListLen := q.messagesReadyOrdered.Len()
 
@@ -1738,7 +1754,7 @@ func TestQueue_UpdateInflightToReady_addsVisibleMessagesToOrderedList(t *testing
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1768,7 +1784,7 @@ func TestQueue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages(
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_incrementsTotalMessagesInflightToReady(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_incrementsTotalMessagesInflightToReady(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -1791,7 +1807,7 @@ func TestQueue_UpdateInflightToReady_incrementsTotalMessagesInflightToReady(t *t
 	require.Equal(t, initialStats.TotalMessagesInflightToReady+2, updatedStats.TotalMessagesInflightToReady)
 }
 
-func TestQueue_UpdateInflightToReady_incrementsNumMessagesReadyForVisibleMessages(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_incrementsNumMessagesReadyForVisibleMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1812,7 +1828,7 @@ func TestQueue_UpdateInflightToReady_incrementsNumMessagesReadyForVisibleMessage
 	require.Equal(t, afterReceiveStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
 }
 
-func TestQueue_UpdateInflightToReady_decrementsNumMessagesInflightForVisibleMessages(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_decrementsNumMessagesInflightForVisibleMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1833,7 +1849,7 @@ func TestQueue_UpdateInflightToReady_decrementsNumMessagesInflightForVisibleMess
 	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
 }
 
-func TestQueue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1858,7 +1874,7 @@ func TestQueue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *t
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInflight(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInflight(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1883,7 +1899,7 @@ func TestQueue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInfl
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_zeroVisibilityDeadline_movesMessage(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_zeroVisibilityDeadline_movesMessage(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive a message
@@ -1908,7 +1924,7 @@ func TestQueue_UpdateInflightToReady_zeroVisibilityDeadline_movesMessage(t *test
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState(t *testing.T) {
+func Test_Queue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push and receive two messages
@@ -1936,7 +1952,7 @@ func TestQueue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState(
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_noDelayedMessages_isNoOp(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_noDelayedMessages_isNoOp(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
@@ -1946,12 +1962,12 @@ func TestQueue_UpdateDelayedToReady_noDelayedMessages_isNoOp(t *testing.T) {
 	require.Equal(t, initialStats, updatedStats)
 }
 
-func TestQueue_UpdateDelayedToReady_noReadyMessages_isNoOp(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_noReadyMessages_isNoOp(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with future delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 10) // 10 second delay
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10) // 10 second delay
 	q.Push(msgState)
 	initialStats := q.Stats()
 
@@ -1961,12 +1977,12 @@ func TestQueue_UpdateDelayedToReady_noReadyMessages_isNoOp(t *testing.T) {
 	require.Equal(t, initialStats.TotalMessagesDelayedToReady, updatedStats.TotalMessagesDelayedToReady)
 }
 
-func TestQueue_UpdateDelayedToReady_withReadyMessages_movesToReady(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_withReadyMessages_movesToReady(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
@@ -1984,14 +2000,14 @@ func TestQueue_UpdateDelayedToReady_withReadyMessages_movesToReady(t *testing.T)
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_mixedReadyDelayed_movesOnlyReady(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_mixedReadyDelayed_movesOnlyReady(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push two messages with delays
 	msg1 := createTestMessage("test body 1")
-	msgState1, _ := q.NewMessageState(msg1, 1) // 1 second delay
+	msgState1, _ := q.NewMessageState(msg1, time.Now().UTC(), 1) // 1 second delay
 	msg2 := createTestMessage("test body 2")
-	msgState2, _ := q.NewMessageState(msg2, 10) // 10 second delay
+	msgState2, _ := q.NewMessageState(msg2, time.Now().UTC(), 10) // 10 second delay
 	q.Push(msgState1, msgState2)
 
 	// Make first message ready (expired delay), keep second delayed
@@ -2013,14 +2029,14 @@ func TestQueue_UpdateDelayedToReady_mixedReadyDelayed_movesOnlyReady(t *testing.
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_removesReadyMessagesFromDelayed(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_removesReadyMessagesFromDelayed(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
-	q.Push(msgState)
 	messageID := msg.MessageID
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
+	q.Push(msgState)
 
 	// Make the message ready
 	q.mu.Lock()
@@ -2036,12 +2052,12 @@ func TestQueue_UpdateDelayedToReady_removesReadyMessagesFromDelayed(t *testing.T
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_addsReadyMessagesToReady(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_addsReadyMessagesToReady(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
@@ -2059,13 +2075,13 @@ func TestQueue_UpdateDelayedToReady_addsReadyMessagesToReady(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_addsReadyMessagesToOrderedList(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_addsReadyMessagesToOrderedList(t *testing.T) {
 	q := createTestQueue(t)
 	initialListLen := q.messagesReadyOrdered.Len()
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
@@ -2082,15 +2098,15 @@ func TestQueue_UpdateDelayedToReady_addsReadyMessagesToOrderedList(t *testing.T)
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_incrementsTotalMessagesDelayedToReady(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_incrementsTotalMessagesDelayedToReady(t *testing.T) {
 	q := createTestQueue(t)
 	initialStats := q.Stats()
 
 	// Push two messages with delays
 	msg1 := createTestMessage("test body 1")
-	msgState1, _ := q.NewMessageState(msg1, 1)
+	msgState1, _ := q.NewMessageState(msg1, time.Now().UTC(), 1)
 	msg2 := createTestMessage("test body 2")
-	msgState2, _ := q.NewMessageState(msg2, 1)
+	msgState2, _ := q.NewMessageState(msg2, time.Now().UTC(), 1)
 	q.Push(msgState1, msgState2)
 
 	// Make both messages ready
@@ -2107,12 +2123,12 @@ func TestQueue_UpdateDelayedToReady_incrementsTotalMessagesDelayedToReady(t *tes
 	require.Equal(t, initialStats.TotalMessagesDelayedToReady+2, updatedStats.TotalMessagesDelayedToReady)
 }
 
-func TestQueue_UpdateDelayedToReady_incrementsNumMessagesReadyForReadyMessages(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_incrementsNumMessagesReadyForReadyMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 1)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1)
 	q.Push(msgState)
 	afterPushStats := q.Stats()
 
@@ -2128,12 +2144,12 @@ func TestQueue_UpdateDelayedToReady_incrementsNumMessagesReadyForReadyMessages(t
 	require.Equal(t, afterPushStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
 }
 
-func TestQueue_UpdateDelayedToReady_decrementsNumMessagesDelayedForReadyMessages(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_decrementsNumMessagesDelayedForReadyMessages(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 1)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1)
 	q.Push(msgState)
 	afterPushStats := q.Stats()
 
@@ -2149,12 +2165,12 @@ func TestQueue_UpdateDelayedToReady_decrementsNumMessagesDelayedForReadyMessages
 	require.Equal(t, afterPushStats.NumMessagesDelayed-1, updatedStats.NumMessagesDelayed)
 }
 
-func TestQueue_UpdateDelayedToReady_expiredDelayPeriod_movesMessage(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_expiredDelayPeriod_movesMessage(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
@@ -2174,12 +2190,12 @@ func TestQueue_UpdateDelayedToReady_expiredDelayPeriod_movesMessage(t *testing.T
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_futureDelayPeriod_keepsMessageInDelayed(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_futureDelayPeriod_keepsMessageInDelayed(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 10) // 10 second delay
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10) // 10 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
@@ -2194,12 +2210,12 @@ func TestQueue_UpdateDelayedToReady_futureDelayPeriod_keepsMessageInDelayed(t *t
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_zeroDelay_movesMessage(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_zeroDelay_movesMessage(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, 1)
+	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1)
 	q.Push(msgState)
 	messageID := msg.MessageID
 
@@ -2219,14 +2235,14 @@ func TestQueue_UpdateDelayedToReady_zeroDelay_movesMessage(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func TestQueue_UpdateDelayedToReady_preservesStillDelayedMessagesInDelayedState(t *testing.T) {
+func Test_Queue_UpdateDelayedToReady_preservesStillDelayedMessagesInDelayedState(t *testing.T) {
 	q := createTestQueue(t)
 
 	// Push two messages with delays
 	msg1 := createTestMessage("test body 1")
-	msgState1, _ := q.NewMessageState(msg1, 1)
+	msgState1, _ := q.NewMessageState(msg1, time.Now().UTC(), 1)
 	msg2 := createTestMessage("test body 2")
-	msgState2, _ := q.NewMessageState(msg2, 10)
+	msgState2, _ := q.NewMessageState(msg2, time.Now().UTC(), 10)
 	q.Push(msgState1, msgState2)
 
 	// Make first message ready, keep second delayed

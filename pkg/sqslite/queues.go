@@ -29,9 +29,12 @@ func (q *Queues) Close() {
 	}
 }
 
-func (q *Queues) CreateQueue(ctx context.Context, queue *Queue) (err *Error) {
+func (q *Queues) AddQueue(ctx context.Context, queue *Queue) (err *Error) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
+
+	// check if the queue exists _after_ we've acquired the write
+	// lock to prevent race conditions on create
 	if _, ok := q.queueURLs[queue.Name]; ok {
 		err = ErrorInvalidParameterValue(fmt.Sprintf("create queue; queue already exists with name: %s", queue.Name))
 		return
@@ -52,7 +55,7 @@ func (q *Queues) PurgeQueue(ctx context.Context, queueURL string) (ok bool) {
 	return
 }
 
-func (q *Queues) ListQueues(ctx context.Context, _ string) ([]*Queue, error) {
+func (q *Queues) ListQueues(ctx context.Context) ([]*Queue, error) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
 	var output []*Queue

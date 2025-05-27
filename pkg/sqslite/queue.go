@@ -2,7 +2,9 @@ package sqslite
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strconv"
 	"sync"
@@ -33,95 +35,100 @@ func NewQueueFromCreateQueueInput(baseQueueURL string, input *sqs.CreateQueueInp
 		Attributes:                      input.Attributes,
 		Tags:                            input.Tags,
 	}
-	var err *Error
-	queue.Delay, err = readAttributeDurationSeconds(input.Attributes, queueAttributeDelaySeconds)
-	if err != nil {
+	if err := applyQueueAttributes(queue, input.Attributes, true /*applyDefaults*/); err != nil {
 		return nil, err
 	}
-	if queue.Delay.IsSet {
+	return queue, nil
+}
+
+func applyQueueAttributes(queue *Queue, messageAttributes map[string]string, applyDefaults bool) *Error {
+	delay, err := readAttributeDurationSeconds(messageAttributes, queueAttributeDelaySeconds)
+	if err != nil {
+		return err
+	}
+	if delay.IsSet {
 		if err = validateDelay(queue.Delay.Value); err != nil {
-			return nil, err
+			return err
 		}
+		queue.Delay = delay
 	}
 
-	maximumMessageSizeBytes, err := readAttributeDurationInt(input.Attributes, queueAttributeMaximumMessageSize)
+	maximumMessageSizeBytes, err := readAttributeDurationInt(messageAttributes, queueAttributeMaximumMessageSize)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if maximumMessageSizeBytes.IsSet {
 		if err = validateMaximumMessageSizeBytes(maximumMessageSizeBytes.Value); err != nil {
-			return nil, err
+			return err
 		}
 		queue.MaximumMessageSizeBytes = maximumMessageSizeBytes.Value
-	} else {
+	} else if applyDefaults {
 		queue.MaximumMessageSizeBytes = 256 * 1024 // 256KiB
 	}
 
-	messageRetentionPeriod, err := readAttributeDurationSeconds(input.Attributes, queueAttributeMessageRetentionPeriod)
+	messageRetentionPeriod, err := readAttributeDurationSeconds(messageAttributes, queueAttributeMessageRetentionPeriod)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if messageRetentionPeriod.IsSet {
 		if err = validateMessageRetentionPeriod(messageRetentionPeriod.Value); err != nil {
-			return nil, err
+			return err
 		}
 		queue.MessageRetentionPeriod = messageRetentionPeriod.Value
-	} else {
+	} else if applyDefaults {
 		queue.MessageRetentionPeriod = 4 * 24 * time.Hour // 4 days
 	}
 
-	receiveMessageWaitTime, err := readAttributeDurationSeconds(input.Attributes, queueAttributeReceiveMessageWaitTimeSeconds)
+	receiveMessageWaitTime, err := readAttributeDurationSeconds(messageAttributes, queueAttributeReceiveMessageWaitTimeSeconds)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if receiveMessageWaitTime.IsSet {
 		if err = validateReceiveMessageWaitTime(receiveMessageWaitTime.Value); err != nil {
-			return nil, err
+			return err
 		}
 		queue.ReceiveMessageWaitTime = receiveMessageWaitTime.Value
-	} else {
+	} else if applyDefaults {
 		queue.ReceiveMessageWaitTime = 20 * time.Second
 	}
 
-	visibilityTimeout, err := readAttributeDurationSeconds(input.Attributes, queueAttributeVisibilityTimeout)
+	visibilityTimeout, err := readAttributeDurationSeconds(messageAttributes, queueAttributeVisibilityTimeout)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if visibilityTimeout.IsSet {
 		if err = validateVisibilityTimeout(visibilityTimeout.Value); err != nil {
-			return nil, err
+			return err
 		}
 		queue.VisibilityTimeout = visibilityTimeout.Value
-	} else {
+	} else if applyDefaults {
 		queue.VisibilityTimeout = 30 * time.Second
 	}
 
-	//
-	// start background workers(s)
-	//
+	redrivePolicy, err := readAttributeRedrivePolicy(messageAttributes)
+	if err != nil {
+		return err
+	}
+	if redrivePolicy.IsSet {
+		queue.RedrivePolicy = redrivePolicy
+	}
 
-	var retentionCtx context.Context
-	retentionCtx, queue.retentionWorkerCancel = context.WithCancel(context.Background())
-	queue.retentionWorker = &retentionWorker{queue: queue}
-	go queue.retentionWorker.Start(retentionCtx)
+	return nil
+}
 
-	var visibilityCtx context.Context
-	visibilityCtx, queue.visibilityWorkerCancel = context.WithCancel(context.Background())
-	queue.visibilityWorker = &visibilityWorker{queue: queue}
-	go queue.visibilityWorker.Start(visibilityCtx)
-
-	var delayCtx context.Context
-	delayCtx, queue.delayWorkerCancel = context.WithCancel(context.Background())
-	queue.delayWorker = &delayWorker{queue: queue}
-	go queue.delayWorker.Start(delayCtx)
-
-	return queue, nil
+type RedrivePolicy struct {
+	DeadLetterTargetArn string `json:"deadLetterTargetArn"`
+	MaxReceiveCount     int    `json:"maxReceiveCount"`
 }
 
 // Queue is an individual queue.
 type Queue struct {
 	Name string
 	URL  string
+	ARN  string
+
+	IsDLQ         bool
+	RedrivePolicy Optional[RedrivePolicy]
 
 	VisibilityTimeout       time.Duration
 	ReceiveMessageWaitTime  time.Duration
@@ -134,7 +141,10 @@ type Queue struct {
 	Tags       map[string]string
 
 	sequenceNumber uint64
+	lifecycleMu    sync.Mutex
 	mu             sync.Mutex
+
+	queueReferences map[string]RedrivePolicy
 
 	messagesReadyOrdered            *LinkedList[*MessageState]
 	messagesReady                   map[uuid.UUID]*LinkedListNode[*MessageState]
@@ -184,9 +194,29 @@ func (q *Queue) Stats() (output QueueStats) {
 	return
 }
 
+func (q *Queue) Start() {
+	defer q.lifecycleMu.Lock()
+	defer q.lifecycleMu.Unlock()
+
+	var retentionCtx context.Context
+	retentionCtx, q.retentionWorkerCancel = context.WithCancel(context.Background())
+	q.retentionWorker = &retentionWorker{queue: q}
+	go q.retentionWorker.Start(retentionCtx)
+
+	var visibilityCtx context.Context
+	visibilityCtx, q.visibilityWorkerCancel = context.WithCancel(context.Background())
+	q.visibilityWorker = &visibilityWorker{queue: q}
+	go q.visibilityWorker.Start(visibilityCtx)
+
+	var delayCtx context.Context
+	delayCtx, q.delayWorkerCancel = context.WithCancel(context.Background())
+	q.delayWorker = &delayWorker{queue: q}
+	go q.delayWorker.Start(delayCtx)
+}
+
 func (q *Queue) Close() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.lifecycleMu.Lock()
+	defer q.lifecycleMu.Unlock()
 	if q.retentionWorkerCancel != nil {
 		q.retentionWorkerCancel()
 		q.retentionWorkerCancel = nil
@@ -201,9 +231,35 @@ func (q *Queue) Close() {
 	}
 }
 
+func (q *Queue) Tag(tags map[string]string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.Tags == nil {
+		q.Tags = make(map[string]string)
+	}
+	maps.Copy(q.Tags, tags)
+}
+
+func (q *Queue) Untag(tags []string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, key := range tags {
+		delete(q.Tags, key)
+	}
+}
+
+func (q *Queue) SetQueueAttributes(attributes map[string]string) *Error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return applyQueueAttributes(q, attributes, false /*applyDefaults*/)
+
+}
+
 func (q *Queue) Push(msgs ...*MessageState) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	now := time.Now().UTC()
 
 	for _, m := range msgs {
 		// only apply the queue level default if
@@ -214,7 +270,7 @@ func (q *Queue) Push(msgs ...*MessageState) {
 		}
 		atomic.AddUint64(&q.stats.TotalMessagesSent, 1)
 		atomic.AddInt64(&q.stats.NumMessages, 1)
-		if m.IsDelayed() {
+		if m.IsDelayed(now) {
 			atomic.AddInt64(&q.stats.NumMessagesDelayed, 1)
 			q.messagesDelayed[m.Message.MessageID] = m
 			continue
@@ -242,14 +298,24 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 		atomic.AddUint64(&q.stats.TotalMessagesReceived, 1)
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
 		atomic.AddInt64(&q.stats.NumMessagesInflight, 1)
+
+		now := time.Now().UTC()
+		msg.MaybeSetFirstReceived(now)
 		msg.IncrementApproximateReceiveCount()
-		msg.UpdateVisibilityTimeout(effectiveVisibilityTimeout)
-		msg.SetLastReceived(time.Now().UTC())
+		msg.UpdateVisibilityTimeout(effectiveVisibilityTimeout, now)
+		msg.SetLastReceived(now)
+
 		messageCopy := msg.Message
 		messageCopy.ReceiptHandle = Some(uuid.V4().String())
 		msg.ReceiptHandles.Add(messageCopy.ReceiptHandle.Value)
 		q.messagesInflightByReceiptHandle[messageCopy.ReceiptHandle.Value] = messageCopy.MessageID
 		q.messagesInflight[msg.Message.MessageID] = msg
+
+		if messageCopy.Attributes == nil {
+			messageCopy.Attributes = make(map[string]string)
+		}
+		messageCopy.Attributes[messageAttributeApproximateReceiveCount] = fmt.Sprint(msg.ReceiveCount)
+
 		output = append(output, messageCopy)
 		if len(output) == int(maxNumberOfMessages) {
 			break
@@ -278,19 +344,11 @@ func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibili
 	if !ok {
 		return
 	}
-	msg.UpdateVisibilityTimeout(visibilityTimeout)
+	now := time.Now().UTC()
+	atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
+	msg.UpdateVisibilityTimeout(visibilityTimeout, now)
 	if visibilityTimeout == 0 {
-		atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
-		for receiptHandle := range msg.ReceiptHandles.Consume() {
-			delete(q.messagesInflightByReceiptHandle, receiptHandle)
-		}
-		msg.ReceiptHandles.Del(initiatingReceiptHandle)
-		delete(q.messagesInflightByReceiptHandle, initiatingReceiptHandle)
-		delete(q.messagesInflight, msg.Message.MessageID)
-		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-		atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
-		node := q.messagesReadyOrdered.Push(msg)
-		q.messagesReady[msg.Message.MessageID] = node
+		q.moveMessageFromInflightToReadyUnsafe(msg)
 	}
 	return
 }
@@ -300,7 +358,9 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	defer q.mu.Unlock()
 	var messageID uuid.UUID
 	var ok bool
+
 	var readyMessages []*MessageState
+	now := time.Now().UTC()
 	for _, entry := range entries {
 		messageID, ok = q.messagesInflightByReceiptHandle[safeDeref(entry.ReceiptHandle)]
 		if !ok {
@@ -324,26 +384,17 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 			return
 		}
 		atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
-		msgNode.UpdateVisibilityTimeout(time.Duration(entry.VisibilityTimeout) * time.Second)
+		msgNode.UpdateVisibilityTimeout(time.Duration(entry.VisibilityTimeout)*time.Second, now)
 		successful = append(successful, types.ChangeMessageVisibilityBatchResultEntry{
 			Id: entry.Id,
 		})
 		if entry.VisibilityTimeout == 0 {
-			for receiptHandle := range msgNode.ReceiptHandles.Consume() {
-				delete(q.messagesInflightByReceiptHandle, receiptHandle)
-			}
-			delete(q.messagesInflightByReceiptHandle, safeDeref(entry.ReceiptHandle))
-			msgNode.ReceiptHandles.Del(safeDeref(entry.ReceiptHandle))
 			readyMessages = append(readyMessages, msgNode)
 		}
 	}
 	if len(readyMessages) > 0 {
 		for _, msg := range readyMessages {
-			atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-			atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
-			delete(q.messagesInflight, msg.Message.MessageID)
-			node := q.messagesReadyOrdered.Push(msg)
-			q.messagesReady[msg.Message.MessageID] = node
+			q.moveMessageFromInflightToReadyUnsafe(msg)
 		}
 	}
 	return
@@ -435,10 +486,12 @@ func (q *Queue) PurgeExpired() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	now := time.Now().UTC()
+
 	deleted := make(map[uuid.UUID]struct{})
 	var toDeleteDelayed []uuid.UUID
 	for _, msg := range q.messagesDelayed {
-		if msg.IsExpired() {
+		if msg.IsExpired(now) {
 			toDeleteDelayed = append(toDeleteDelayed, msg.Message.MessageID)
 		}
 	}
@@ -449,7 +502,7 @@ func (q *Queue) PurgeExpired() {
 	}
 	var toDeleteOustanding []*MessageState
 	for _, msg := range q.messagesInflight {
-		if msg.IsExpired() {
+		if msg.IsExpired(now) {
 			toDeleteOustanding = append(toDeleteOustanding, msg)
 		}
 	}
@@ -463,7 +516,7 @@ func (q *Queue) PurgeExpired() {
 	}
 	var toDeleteNodes []*LinkedListNode[*MessageState]
 	for _, msg := range q.messagesReady {
-		if msg.Value.IsExpired() {
+		if msg.Value.IsExpired(now) {
 			toDeleteNodes = append(toDeleteNodes, msg)
 		}
 	}
@@ -483,22 +536,17 @@ func (q *Queue) UpdateInflightToReady() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	now := time.Now().UTC()
+
 	var ready []*MessageState
 	for _, msg := range q.messagesInflight {
-		if msg.IsVisible() {
+		if msg.IsVisible(now) {
 			ready = append(ready, msg)
 		}
 	}
 	atomic.AddUint64(&q.stats.TotalMessagesInflightToReady, uint64(len(ready)))
 	for _, msg := range ready {
-		for receiptHandle := range msg.ReceiptHandles.Consume() {
-			delete(q.messagesInflightByReceiptHandle, receiptHandle)
-		}
-		atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
-		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-		delete(q.messagesInflight, msg.Message.MessageID)
-		node := q.messagesReadyOrdered.Push(msg)
-		q.messagesReady[msg.Message.MessageID] = node
+		q.moveMessageFromInflightToReadyUnsafe(msg)
 	}
 }
 
@@ -507,31 +555,27 @@ func (q *Queue) UpdateDelayedToReady() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	now := time.Now().UTC()
 	var ready []*MessageState
 	for _, msg := range q.messagesDelayed {
-		if !msg.IsDelayed() {
+		if !msg.IsDelayed(now) {
 			ready = append(ready, msg)
 		}
 	}
 	atomic.AddUint64(&q.stats.TotalMessagesDelayedToReady, uint64(len(ready)))
 	for _, msg := range ready {
-		atomic.AddInt64(&q.stats.NumMessagesDelayed, -1)
-		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-		delete(q.messagesDelayed, msg.Message.MessageID)
-		node := q.messagesReadyOrdered.Push(msg)
-		q.messagesReady[msg.Message.MessageID] = node
+		q.moveMessageFromDelayedToReadyUnsafe(msg)
 	}
 }
 
 // NewMessageStateFromInput returns a new [MessageState] from a given send message input
-func (q *Queue) NewMessageState(m Message, delaySeconds int) (*MessageState, *Error) {
-	nowUTC := time.Now().UTC()
+func (q *Queue) NewMessageState(m Message, created time.Time, delaySeconds int) (*MessageState, *Error) {
 	sqsm := &MessageState{
-		Message:           m,
-		Created:           nowUTC,
-		ReceiptHandles:    &SafeSet[string]{storage: make(map[string]struct{})},
-		SequenceNumber:    atomic.AddUint64(&q.sequenceNumber, 1),
-		RetentionDeadline: nowUTC.Add(q.MessageRetentionPeriod),
+		Message:                m,
+		Created:                created,
+		MessageRetentionPeriod: q.MessageRetentionPeriod,
+		ReceiptHandles:         &SafeSet[string]{storage: make(map[string]struct{})},
+		SequenceNumber:         atomic.AddUint64(&q.sequenceNumber, 1),
 	}
 	if delaySeconds > 0 {
 		sqsm.Delay = Some(time.Duration(delaySeconds) * time.Second)
@@ -542,6 +586,27 @@ func (q *Queue) NewMessageState(m Message, delaySeconds int) (*MessageState, *Er
 //
 // internal methods
 //
+
+func (q *Queue) moveMessageFromInflightToReadyUnsafe(msg *MessageState) {
+	delete(q.messagesInflight, msg.Message.MessageID)
+	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
+	q.moveMessageReadyUnsafe(msg)
+}
+
+func (q *Queue) moveMessageFromDelayedToReadyUnsafe(msg *MessageState) {
+	delete(q.messagesDelayed, msg.Message.MessageID)
+	atomic.AddInt64(&q.stats.NumMessagesDelayed, -1)
+	q.moveMessageReadyUnsafe(msg)
+}
+
+func (q *Queue) moveMessageReadyUnsafe(msg *MessageState) {
+	for receiptHandle := range msg.ReceiptHandles.Consume() {
+		delete(q.messagesInflightByReceiptHandle, receiptHandle)
+	}
+	atomic.AddInt64(&q.stats.NumMessagesReady, 1)
+	node := q.messagesReadyOrdered.Push(msg)
+	q.messagesReady[msg.Message.MessageID] = node
+}
 
 const (
 	messageAttributeApproximateReceiveCount = "ApproximateReceiveCount"
@@ -677,10 +742,25 @@ func readAttributeDurationInt(attributes map[string]string, attributeName string
 	return
 }
 
+func readAttributeRedrivePolicy(attributes map[string]string) (output Optional[RedrivePolicy], err *Error) {
+	value, ok := attributes[queueAttributeRedrivePolicy]
+	if !ok {
+		return
+	}
+	var policy RedrivePolicy
+	if jsonErr := json.Unmarshal([]byte(value), &policy); jsonErr != nil {
+		err = ErrorInvalidAttributeValue(fmt.Sprintf("Failed to parse redrive policy: %v", jsonErr))
+		return
+	}
+	output = Some(policy)
+	return
+}
+
 const (
 	queueAttributeDelaySeconds                  = "DelaySeconds"
 	queueAttributeMaximumMessageSize            = "MaximumMessageSize"
 	queueAttributeMessageRetentionPeriod        = "MessageRetentionPeriod"
 	queueAttributeReceiveMessageWaitTimeSeconds = "ReceiveMessageWaitTimeSeconds"
 	queueAttributeVisibilityTimeout             = "VisibilityTimeout"
+	queueAttributeRedrivePolicy                 = "RedrivePolicy"
 )

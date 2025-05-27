@@ -81,7 +81,8 @@ func main() {
 	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.BaseQueueURL(), &sqs.CreateQueueInput{
 		QueueName: aws.String("default"),
 	})
-	_ = server.Queues().CreateQueue(context.Background(), defaultQueue)
+	defaultQueue.Start()
+	_ = server.Queues().AddQueue(context.Background(), defaultQueue)
 	slog.Info("created default queue with url", slog.String("queue_url", defaultQueue.URL))
 
 	httpSrv := &http.Server{

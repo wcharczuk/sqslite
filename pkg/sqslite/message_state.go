@@ -2,34 +2,28 @@ package sqslite
 
 import (
 	"fmt"
-	"strconv"
+	"sync/atomic"
 	"time"
 )
 
 type MessageState struct {
-	Message            Message
-	Created            time.Time
-	VisibilityTimeout  time.Duration
-	ReceiveCount       int
-	Delay              Optional[time.Duration]
-	ReceiptHandles     *SafeSet[string]
-	LastReceived       Optional[time.Time]
+	Message                Message
+	Created                time.Time
+	Delay                  Optional[time.Duration]
+	MessageRetentionPeriod time.Duration
+	VisibilityTimeout      time.Duration
+	ReceiptHandles         *SafeSet[string]
+	SequenceNumber         uint64
+
+	/* these require queue mutex */
 	FirstReceived      Optional[time.Time]
+	LastReceived       Optional[time.Time]
 	VisibilityDeadline Optional[time.Time]
-	RetentionDeadline  time.Time
-	SequenceNumber     uint64
+	ReceiveCount       uint32
 }
 
-func (s *MessageState) IncrementApproximateReceiveCount() {
-	if s.Message.Attributes == nil {
-		s.Message.Attributes = make(map[string]string)
-	}
-	if value, ok := s.Message.Attributes["ApproximateReceiveCount"]; ok {
-		valueParsed, _ := strconv.Atoi(value)
-		s.Message.Attributes["ApproximateReceiveCount"] = strconv.Itoa(valueParsed + 1)
-	} else {
-		s.Message.Attributes["ApproximateReceiveCount"] = "1"
-	}
+func (s *MessageState) IncrementApproximateReceiveCount() uint32 {
+	return atomic.AddUint32(&s.ReceiveCount, 1)
 }
 
 func (s *MessageState) SetLastReceived(timestamp time.Time) {
@@ -37,31 +31,37 @@ func (s *MessageState) SetLastReceived(timestamp time.Time) {
 	s.VisibilityDeadline = Some(timestamp.Add(s.VisibilityTimeout))
 }
 
-func (s *MessageState) UpdateVisibilityTimeout(timeout time.Duration) {
+func (s *MessageState) MaybeSetFirstReceived(timestamp time.Time) {
+	if s.FirstReceived.IsZero() {
+		s.FirstReceived = Some(timestamp)
+	}
+}
+
+func (s *MessageState) UpdateVisibilityTimeout(timeout time.Duration, timestamp time.Time) {
 	s.VisibilityTimeout = timeout
 	if timeout == 0 {
 		s.VisibilityDeadline = None[time.Time]()
 	} else {
-		s.VisibilityDeadline = Some(time.Now().UTC().Add(timeout))
+		s.VisibilityDeadline = Some(timestamp.Add(timeout))
 	}
 }
 
-func (s *MessageState) IsVisible() bool {
+func (s *MessageState) IsVisible(timestamp time.Time) bool {
 	if s.VisibilityDeadline.IsZero() {
 		return true
 	}
-	return time.Now().UTC().After(s.VisibilityDeadline.Value)
+	return timestamp.After(s.VisibilityDeadline.Value)
 }
 
-func (s *MessageState) IsDelayed() bool {
+func (s *MessageState) IsDelayed(timestamp time.Time) bool {
 	if s.Delay.IsZero() {
 		return false
 	}
-	return time.Now().UTC().Before(s.Created.Add(s.Delay.Value))
+	return timestamp.Before(s.Created.Add(s.Delay.Value))
 }
 
-func (s *MessageState) IsExpired() bool {
-	return time.Now().UTC().After(s.RetentionDeadline)
+func (s *MessageState) IsExpired(timestamp time.Time) bool {
+	return timestamp.After(s.Created.Add(s.MessageRetentionPeriod))
 }
 
 func (s *MessageState) String() string {

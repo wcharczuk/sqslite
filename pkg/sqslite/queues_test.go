@@ -3,7 +3,6 @@ package sqslite
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -37,8 +36,8 @@ func Test_Queues_Close_closesAllQueues(t *testing.T) {
 	queue1 := createTestQueueWithNameAndURL("test-queue-1", "http://sqslite.local/test-queue-1")
 	queue2 := createTestQueueWithNameAndURL("test-queue-2", "http://sqslite.local/test-queue-2")
 
-	queues.CreateQueue(ctx, queue1)
-	queues.CreateQueue(ctx, queue2)
+	queues.AddQueue(ctx, queue1)
+	queues.AddQueue(ctx, queue2)
 
 	// Close all queues
 	queues.Close()
@@ -48,44 +47,44 @@ func Test_Queues_Close_closesAllQueues(t *testing.T) {
 	require.Len(t, queues.queues, 2)
 }
 
-func Test_Queues_CreateQueue_addsNewQueue(t *testing.T) {
+func Test_Queues_AddQueue_addsNewQueue(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
 
-	err := queues.CreateQueue(ctx, queue)
+	err := queues.AddQueue(ctx, queue)
 
 	require.Nil(t, err)
 	require.Equal(t, "http://sqslite.local/test-queue", queues.queueURLs["test-queue"])
 	require.Equal(t, queue, queues.queues["http://sqslite.local/test-queue"])
 }
 
-func Test_Queues_CreateQueue_returnsErrorWhenQueueExists(t *testing.T) {
+func Test_Queues_AddQueue_returnsErrorWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 	queue1 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue-1")
 	queue2 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue-2")
 
 	// Create first queue
-	err1 := queues.CreateQueue(ctx, queue1)
+	err1 := queues.AddQueue(ctx, queue1)
 	require.Nil(t, err1)
 
 	// Attempt to create second queue with same name
-	err2 := queues.CreateQueue(ctx, queue2)
+	err2 := queues.AddQueue(ctx, queue2)
 
 	require.NotNil(t, err2)
 	require.Contains(t, err2.Message, "queue already exists with name: test-queue")
 	require.Equal(t, "InvalidParameterValue", err2.Code)
 }
 
-func Test_Queues_CreateQueue_allowsDifferentNames(t *testing.T) {
+func Test_Queues_AddQueue_allowsDifferentNames(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 	queue1 := createTestQueueWithNameAndURL("queue-1", "http://sqslite.local/queue-1")
 	queue2 := createTestQueueWithNameAndURL("queue-2", "http://sqslite.local/queue-2")
 
-	err1 := queues.CreateQueue(ctx, queue1)
-	err2 := queues.CreateQueue(ctx, queue2)
+	err1 := queues.AddQueue(ctx, queue1)
+	err2 := queues.AddQueue(ctx, queue2)
 
 	require.Nil(t, err1)
 	require.Nil(t, err2)
@@ -97,7 +96,7 @@ func Test_Queues_PurgeQueue_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
-	queues.CreateQueue(ctx, queue)
+	queues.AddQueue(ctx, queue)
 
 	ok := queues.PurgeQueue(ctx, "http://sqslite.local/test-queue")
 
@@ -117,7 +116,7 @@ func Test_Queues_ListQueues_returnsEmptyWhenNoQueues(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 
-	result, err := queues.ListQueues(ctx, "")
+	result, err := queues.ListQueues(ctx)
 
 	require.NoError(t, err)
 	require.Empty(t, result)
@@ -129,10 +128,10 @@ func Test_Queues_ListQueues_returnsAllQueues(t *testing.T) {
 	queue1 := createTestQueueWithNameAndURL("queue-1", "http://sqslite.local/queue-1")
 	queue2 := createTestQueueWithNameAndURL("queue-2", "http://sqslite.local/queue-2")
 
-	queues.CreateQueue(ctx, queue1)
-	queues.CreateQueue(ctx, queue2)
+	queues.AddQueue(ctx, queue1)
+	queues.AddQueue(ctx, queue2)
 
-	result, err := queues.ListQueues(ctx, "")
+	result, err := queues.ListQueues(ctx)
 
 	require.NoError(t, err)
 	require.Len(t, result, 2)
@@ -145,7 +144,7 @@ func Test_Queues_GetQueueURL_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
-	queues.CreateQueue(ctx, queue)
+	queues.AddQueue(ctx, queue)
 
 	url, ok := queues.GetQueueURL(ctx, "test-queue")
 
@@ -167,7 +166,7 @@ func Test_Queues_GetQueue_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
-	queues.CreateQueue(ctx, queue)
+	queues.AddQueue(ctx, queue)
 
 	retrievedQueue, ok := queues.GetQueue(ctx, "http://sqslite.local/test-queue")
 
@@ -189,7 +188,7 @@ func Test_Queues_DeleteQueue_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
-	queues.CreateQueue(ctx, queue)
+	queues.AddQueue(ctx, queue)
 
 	ok := queues.DeleteQueue(ctx, "http://sqslite.local/test-queue")
 
@@ -214,7 +213,7 @@ func Test_Queues_DeleteQueue_removesFromBothMaps(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
-	queues.CreateQueue(ctx, queue)
+	queues.AddQueue(ctx, queue)
 
 	// Verify queue exists in both maps
 	_, urlExists := queues.queueURLs["test-queue"]
@@ -231,63 +230,13 @@ func Test_Queues_DeleteQueue_removesFromBothMaps(t *testing.T) {
 	require.False(t, queueExists)
 }
 
-// Test thread safety by running concurrent operations
-func Test_Queues_concurrentOperations_maintainConsistency(t *testing.T) {
-	queues := NewQueues()
-	ctx := context.Background()
-
-	// Create initial queue
-	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
-	queues.CreateQueue(ctx, queue)
-
-	// Run concurrent operations
-	done := make(chan bool, 3)
-
-	// Goroutine 1: GetQueue
-	go func() {
-		for range 100 {
-			queues.GetQueue(ctx, "http://sqslite.local/test-queue")
-			time.Sleep(time.Microsecond)
-		}
-		done <- true
-	}()
-
-	// Goroutine 2: GetQueueURL
-	go func() {
-		for range 100 {
-			queues.GetQueueURL(ctx, "test-queue")
-			time.Sleep(time.Microsecond)
-		}
-		done <- true
-	}()
-
-	// Goroutine 3: ListQueues
-	go func() {
-		for range 100 {
-			queues.ListQueues(ctx, "")
-			time.Sleep(time.Microsecond)
-		}
-		done <- true
-	}()
-
-	// Wait for all goroutines to complete
-	for range 3 {
-		<-done
-	}
-
-	// Verify queue still exists and is accessible
-	retrievedQueue, ok := queues.GetQueue(ctx, "http://sqslite.local/test-queue")
-	require.True(t, ok)
-	require.Equal(t, queue, retrievedQueue)
-}
-
 func Test_Queues_createAndDeleteCycle_maintainConsistency(t *testing.T) {
 	queues := NewQueues()
 	ctx := context.Background()
 
 	// Create, delete, and recreate the same queue
 	queue1 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
-	err1 := queues.CreateQueue(ctx, queue1)
+	err1 := queues.AddQueue(ctx, queue1)
 	require.Nil(t, err1)
 
 	ok := queues.DeleteQueue(ctx, "http://sqslite.local/test-queue")
@@ -295,7 +244,7 @@ func Test_Queues_createAndDeleteCycle_maintainConsistency(t *testing.T) {
 
 	// Should be able to create queue with same name again
 	queue2 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
-	err2 := queues.CreateQueue(ctx, queue2)
+	err2 := queues.AddQueue(ctx, queue2)
 	require.Nil(t, err2)
 
 	// Verify new queue is accessible

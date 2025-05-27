@@ -77,6 +77,9 @@ func (s *Server) Close() {
 const (
 	methodCreateQueue                  = "AmazonSQS.CreateQueue"
 	methodListQueues                   = "AmazonSQS.ListQueues"
+	methodSetQueueAttributes           = "AmazonSQS.SetQueueAttributes"
+	methodTagQueue                     = "AmazonSQS.TagQueue"
+	methodUntagQueue                   = "AmazonSQS.UntagQueue"
 	methodPurgeQueue                   = "AmazonSQS.PurgeQueue"
 	methodDeleteQueue                  = "AmazonSQS.DeleteQueue"
 	methodReceiveMessage               = "AmazonSQS.ReceiveMessage"
@@ -102,6 +105,12 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	switch action {
 	case methodCreateQueue:
 		s.createQueue(rw, req)
+	case methodSetQueueAttributes:
+		s.setQueueAttributes(rw, req)
+	case methodTagQueue:
+		s.tagQueue(rw, req)
+	case methodUntagQueue:
+		s.untagQueue(rw, req)
 	case methodPurgeQueue:
 		s.purgeQueue(rw, req)
 	case methodDeleteQueue:
@@ -136,14 +145,63 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	err = s.queues.CreateQueue(req.Context(), queue)
+	err = s.queues.AddQueue(req.Context(), queue)
 	if err != nil {
 		serialize(rw, err)
 		return
 	}
+	queue.Start()
 	serialize(rw, &sqs.CreateQueueOutput{
 		QueueUrl: &queue.URL,
 	})
+}
+
+func (s Server) setQueueAttributes(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.SetQueueAttributesInput](req)
+	if err != nil {
+		serialize(rw, err)
+		return
+	}
+	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if !ok {
+		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+		return
+	}
+	if err = queue.SetQueueAttributes(input.Attributes); err != nil {
+		serialize(rw, err)
+		return
+	}
+	serialize(rw, &sqs.SetQueueAttributesOutput{})
+}
+
+func (s Server) tagQueue(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.TagQueueInput](req)
+	if err != nil {
+		serialize(rw, err)
+		return
+	}
+	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if !ok {
+		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+		return
+	}
+	queue.Tag(input.Tags)
+	serialize(rw, &sqs.TagQueueOutput{})
+}
+
+func (s Server) untagQueue(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.UntagQueueInput](req)
+	if err != nil {
+		serialize(rw, err)
+		return
+	}
+	queue, ok := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if !ok {
+		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
+		return
+	}
+	queue.Untag(input.TagKeys)
+	serialize(rw, &sqs.UntagQueueOutput{})
 }
 
 func (s Server) purgeQueue(rw http.ResponseWriter, req *http.Request) {
@@ -252,7 +310,7 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
 		return
 	}
-	msg, err := queue.NewMessageState(NewMessageFromSendMessageInput(input), int(input.DelaySeconds))
+	msg, err := queue.NewMessageState(NewMessageFromSendMessageInput(input), time.Now().UTC(), int(input.DelaySeconds))
 	if err != nil {
 		serialize(rw, err)
 		return
@@ -295,7 +353,7 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 			serialize(rw, ErrorInvalidParameterValue("QueueUrl"))
 			return
 		}
-		msg, err := queue.NewMessageState(NewMessageFromSendMessageBatchEntry(entry), int(entry.DelaySeconds))
+		msg, err := queue.NewMessageState(NewMessageFromSendMessageBatchEntry(entry), time.Now().UTC(), int(entry.DelaySeconds))
 		if err != nil {
 			serialize(rw, err)
 			return
