@@ -22,7 +22,7 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, "test-queue", q.Name)
 	require.Equal(t, "http://sqslite.local/test-account/test-queue", q.URL)
-	require.Equal(t, "arn:aws:sqs:us-east-1:test-account:test-queue", q.ARN)
+	require.Equal(t, "arn:aws:sqs:us-west-2:test-account:test-queue", q.ARN)
 	require.NotNil(t, q.messagesReadyOrdered)
 	require.NotNil(t, q.messagesReady)
 	require.NotNil(t, q.messagesDelayed)
