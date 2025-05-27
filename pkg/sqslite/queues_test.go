@@ -3,6 +3,7 @@ package sqslite
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -179,11 +180,23 @@ func Test_Queues_GetQueue_returnsTrueWhenQueueExists(t *testing.T) {
 	queues := NewQueues()
 	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
+	queue.created = time.Now().UTC().Add(-time.Minute)
 	queues.AddQueue(ctx, queue)
 
 	retrievedQueue, err := queues.GetQueue(ctx, "http://sqslite.local/test-queue")
 	require.Nil(t, err)
 	require.Equal(t, queue, retrievedQueue)
+}
+
+func Test_Queues_GetQueue_returnsFalseWhenQueueIsRecentlyCreated(t *testing.T) {
+	queues := NewQueues()
+	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
+	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
+	queues.AddQueue(ctx, queue)
+
+	retrievedQueue, err := queues.GetQueue(ctx, "http://sqslite.local/test-queue")
+	require.NotNil(t, err)
+	require.Nil(t, retrievedQueue)
 }
 
 func Test_Queues_GetQueue_returnsFalseWhenQueueNotExists(t *testing.T) {
@@ -248,6 +261,7 @@ func Test_Queues_createAndDeleteCycle_maintainConsistency(t *testing.T) {
 
 	// Create, delete, and recreate the same queue
 	queue1 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
+	queue1.created = time.Now().UTC().Add(-time.Minute)
 	err1 := queues.AddQueue(ctx, queue1)
 	require.Nil(t, err1)
 
@@ -256,6 +270,7 @@ func Test_Queues_createAndDeleteCycle_maintainConsistency(t *testing.T) {
 
 	// Should be able to create queue with same name again
 	queue2 := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")
+	queue2.created = time.Now().UTC().Add(-time.Minute)
 	err2 := queues.AddQueue(ctx, queue2)
 	require.Nil(t, err2)
 
