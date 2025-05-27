@@ -14,11 +14,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/spf13/pflag"
+	"github.com/wcharczuk/sqslite/pkg/sqslite"
 )
 
 var (
+	flagAWSRegion    = pflag.String("region", "us-west-2", "The AWS region")
 	flagEndpoint     = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
-	flagQueueURL     = pflag.String("queue-url", "http://sqslite.us-west-2.local/AKID/default", "The queue URL")
+	flagQueueURL     = pflag.String("queue-url", sqslite.QueueURL(sqslite.ServerConfig{}, sqslite.DefaultAccountID, "default"), "The queue url (optional; uses a default if unset)")
 	flagBatchSize    = pflag.Int("batch-size", 10, "The send message batch size")
 	flagPause        = pflag.Duration("pause", 0, "The time to pause between send message batches")
 	flagDelaySeconds = pflag.Int("delay-seconds", 0, "The delay seconds for each message")
@@ -27,12 +29,10 @@ var (
 func main() {
 	pflag.Parse()
 
-	awsRegion := "us-east-1"
-
 	ctx := context.Background()
 	sess, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion(awsRegion),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKID", "SECRET_KEY", "TOKEN")),
+		config.WithRegion(*flagAWSRegion),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
 	)
 	if err != nil {
 		maybeFatal(err)

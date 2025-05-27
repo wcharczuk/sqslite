@@ -34,7 +34,7 @@ func (s ServerConfig) AWSRegionOrDefault() string {
 	if s.AWSRegion != "" {
 		return s.AWSRegion
 	}
-	return "us-east-1"
+	return "us-west-2"
 }
 
 func (s ServerConfig) BaseURLOrDefault() string {

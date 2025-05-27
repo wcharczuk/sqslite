@@ -16,11 +16,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/spf13/pflag"
+	"github.com/wcharczuk/sqslite/pkg/sqslite"
 )
 
 var (
+	flagAWSRegion                = pflag.String("region", "us-west-2", "The AWS region")
 	flagEndpoint                 = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
-	flagQueueURL                 = pflag.String("queue-url", "http://sqslite.us-west-2.local/AKID/default", "The queue URL")
+	flagQueueURL                 = pflag.String("queue-url", sqslite.QueueURL(sqslite.ServerConfig{}, sqslite.DefaultAccountID, "default"), "The queue url (optional; uses a default if unset)")
 	flagNumPollers               = pflag.Int("num-pollers", runtime.NumCPU(), "The number of queue pollers")
 	flagFailurePct               = pflag.Float64("failure-pct", 0.1, "The fraction of messages to skip deletion for, triggering visibility timeouts")
 	flagMaxNumberOfMessages      = pflag.Int32("max-number-of-messages", 10, "The time in seconds to wait for the receive batch [0,10]")
@@ -31,14 +33,12 @@ var (
 func main() {
 	pflag.Parse()
 
-	awsRegion := "us-east-1"
-
 	ctx, done := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer done()
 
 	sess, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion(awsRegion),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKID", "SECRET_KEY", "TOKEN")),
+		config.WithRegion(*flagAWSRegion),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
 	)
 	if err != nil {
 		maybeFatal(err)

@@ -23,6 +23,7 @@ import (
 )
 
 var (
+	flagAWSRegion           = pflag.String("region", "us-west-2", "The AWS region of the server")
 	flagBindAddr            = pflag.String("bind-addr", ":4566", "The server bind address")
 	flagShutdownGracePeriod = pflag.Duration("shutdown-grace-period", 30*time.Second, "The server shutdown grace period")
 	flagLogFormat           = pflag.String("log-format", "json", "The log format (json|text)")
@@ -71,8 +72,9 @@ func main() {
 	// server setup
 	//
 	server := sqslite.NewServer(
-		sqslite.OptBaseURL(
-			fmt.Sprintf("http://sqslite.%s.local", "us-west-2"),
+		sqslite.OptBaseURL("http://sqslite.local"),
+		sqslite.OptAWSRegion(
+			*flagAWSRegion,
 		),
 	)
 

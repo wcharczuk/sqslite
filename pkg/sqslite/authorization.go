@@ -8,7 +8,7 @@ import (
 
 // DefaultAccountID is the default account ID I use
 // in a few places and am just keeping it consistent.
-const DefaultAccountID = "AKID"
+const DefaultAccountID = "sqslite-test-account"
 
 type Authorization struct {
 	AccountID string
