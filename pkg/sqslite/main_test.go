@@ -14,7 +14,9 @@ import (
 // Helper function to create a test queue with default settings
 func createTestQueue(t *testing.T) *Queue {
 	t.Helper()
-	q, err := NewQueueFromCreateQueueInput("http://sqslite.local", &sqs.CreateQueueInput{
+	q, err := NewQueueFromCreateQueueInput(ServerConfig{
+		BaseURL: "http://sqslite.local",
+	}, "test-account", &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
 	require.Nil(t, err)

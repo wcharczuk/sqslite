@@ -11,7 +11,9 @@ import (
 
 // Helper function to create a test queue with custom name and URL
 func createTestQueueWithNameAndURL(name, url string) *Queue {
-	q, _ := NewQueueFromCreateQueueInput("http://sqslite.local", &sqs.CreateQueueInput{
+	q, _ := NewQueueFromCreateQueueInput(ServerConfig{
+		BaseURL: "http://sqslite.local",
+	}, "test-account", &sqs.CreateQueueInput{
 		QueueName: aws.String(name),
 	})
 	q.URL = url // Override URL for testing

@@ -70,7 +70,7 @@ func main() {
 	// server setup
 	//
 	server := sqslite.NewServer(
-		sqslite.OptBaseQueueURL(
+		sqslite.OptBaseURL(
 			fmt.Sprintf("http://sqslite.%s.local", "us-west-2"),
 		),
 	)
@@ -78,7 +78,7 @@ func main() {
 	//
 	// create the default queue
 	//
-	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.BaseQueueURL(), &sqs.CreateQueueInput{
+	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Config(), "AKID", &sqs.CreateQueueInput{
 		QueueName: aws.String("default"),
 	})
 	defaultQueue.Start()

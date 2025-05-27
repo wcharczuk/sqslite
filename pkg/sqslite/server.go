@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -19,8 +20,7 @@ import (
 // NewServer returns a new server.
 func NewServer(options ...ServerOption) *Server {
 	s := Server{
-		baseQueueURL: "http://sqslite.us-west-2.localhost",
-		queues:       NewQueues(),
+		queues: NewQueues(),
 	}
 	for _, opt := range options {
 		opt(&s)
@@ -28,13 +28,41 @@ func NewServer(options ...ServerOption) *Server {
 	return &s
 }
 
+type ServerConfig struct {
+	AWSRegion string
+	BaseURL   string
+}
+
+func (s ServerConfig) AWSRegionOrDefault() string {
+	if s.AWSRegion != "" {
+		return s.AWSRegion
+	}
+	return "us-east-1"
+}
+
+func (s ServerConfig) BaseURLOrDefault() string {
+	if s.BaseURL != "" {
+		return s.BaseURL
+	}
+	return "http://sqslite.local"
+}
+
 // ServerOption is a function that mutates servers.
 type ServerOption func(*Server)
 
-// OptBaseQueueURL sets the base QueueURL for newly created queues.
-func OptBaseQueueURL(baseQueueURL string) ServerOption {
+// OptAWSRegion sets the server aws region.
+func OptAWSRegion(awsRegion string) ServerOption {
 	return func(s *Server) {
-		s.baseQueueURL = baseQueueURL
+		s.cfg.AWSRegion = awsRegion
+	}
+}
+
+// OptBaseURL sets the base url for the server.
+//
+// This is used as part of the queue url for new queues.
+func OptBaseURL(baseQueueURL string) ServerOption {
+	return func(s *Server) {
+		s.cfg.BaseURL = baseQueueURL
 	}
 }
 
@@ -42,13 +70,13 @@ var _ http.Handler = (*Server)(nil)
 
 // Server implements the http routing layer for sqslite.
 type Server struct {
-	baseQueueURL string
-	queues       *Queues
+	cfg    ServerConfig
+	queues *Queues
 }
 
-// BaseQueueURL returns the base queue url.
-func (s *Server) BaseQueueURL() string {
-	return s.baseQueueURL
+// Config returns the server config.
+func (s *Server) Config() ServerConfig {
+	return s.cfg
 }
 
 // Queues returns the underlying queues storage.
@@ -140,7 +168,14 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, err)
 		return
 	}
-	queue, err := NewQueueFromCreateQueueInput(s.baseQueueURL, input)
+
+	accountID, err := getAccountID(req)
+	if err != nil {
+		serialize(rw, err)
+		return
+	}
+
+	queue, err := NewQueueFromCreateQueueInput(s.cfg, accountID, input)
 	if err != nil {
 		serialize(rw, err)
 		return
@@ -154,6 +189,20 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	serialize(rw, &sqs.CreateQueueOutput{
 		QueueUrl: &queue.URL,
 	})
+}
+
+func getAccountID(req *http.Request) (string, *Error) {
+	authorization := req.Header.Get("Authorization")
+	if authorization == "" {
+		return "", ErrorUnauthorized()
+	}
+	fields := strings.Fields(authorization)
+	if len(fields) < 2 {
+		return "", ErrorUnauthorized()
+	}
+	credentialsField := strings.TrimPrefix(fields[1], "Credential=")
+	accountID, _, _ := strings.Cut(credentialsField, "/")
+	return accountID, nil
 }
 
 func (s Server) setQueueAttributes(rw http.ResponseWriter, req *http.Request) {

@@ -41,6 +41,15 @@ func ErrorUnknownOperation(message string) *Error {
 	}
 }
 
+func ErrorUnauthorized() *Error {
+	return &Error{
+		Code:        "Unauthorized",
+		StatusCode:  http.StatusUnauthorized,
+		SenderFault: true,
+		Message:     "Invalid Authorization",
+	}
+}
+
 func ErrorInvalidAttributeValue(message string) *Error {
 	return &Error{
 		Code:        "InvalidAttributeValue",
@@ -63,6 +72,15 @@ func ErrorInvalidParameterValue(message string) *Error {
 	return &Error{
 		Code:        "InvalidParameterValue",
 		StatusCode:  http.StatusBadRequest,
+		SenderFault: true,
+		Message:     message,
+	}
+}
+
+func ErrorInternalServer(message string) *Error {
+	return &Error{
+		Code:        "InternalServerError",
+		StatusCode:  http.StatusInternalServerError,
 		SenderFault: true,
 		Message:     message,
 	}

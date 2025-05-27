@@ -18,6 +18,7 @@ func NewQueues() *Queues {
 type Queues struct {
 	queuesMu  sync.Mutex
 	queueURLs map[string]string
+	queueARNs map[string]string
 	queues    map[string]*Queue
 }
 
@@ -36,10 +37,24 @@ func (q *Queues) AddQueue(ctx context.Context, queue *Queue) (err *Error) {
 	// check if the queue exists _after_ we've acquired the write
 	// lock to prevent race conditions on create
 	if _, ok := q.queueURLs[queue.Name]; ok {
-		err = ErrorInvalidParameterValue(fmt.Sprintf("create queue; queue already exists with name: %s", queue.Name))
+		err = ErrorInvalidParameterValue(fmt.Sprintf("QueueName: queue already exists with name: %s", queue.Name))
 		return
 	}
+	if queue.RedrivePolicy.IsSet {
+		dlqURL, ok := q.queueARNs[queue.RedrivePolicy.Value.DeadLetterTargetArn]
+		if !ok {
+			err = ErrorInvalidParameterValue(fmt.Sprintf("DeadLetterTargetArn: queue with arn not found: %s", queue.RedrivePolicy.Value.DeadLetterTargetArn))
+			return
+		}
+		dlq, ok := q.queues[dlqURL]
+		if !ok {
+			err = ErrorInternalServer(fmt.Sprintf("dlq not found with URL: %s", dlqURL))
+			return
+		}
+		queue.dlqTarget = dlq
+	}
 	q.queueURLs[queue.Name] = queue.URL
+	q.queueARNs[queue.ARN] = queue.URL
 	q.queues[queue.URL] = queue
 	return
 }

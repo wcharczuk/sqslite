@@ -19,13 +19,14 @@ import (
 )
 
 // NewQueueFromCreateQueueInput returns a new queue for a given [sqs.CreateQueueInput].
-func NewQueueFromCreateQueueInput(baseQueueURL string, input *sqs.CreateQueueInput) (*Queue, *Error) {
+func NewQueueFromCreateQueueInput(cfg ServerConfig, accountID string, input *sqs.CreateQueueInput) (*Queue, *Error) {
 	if err := validateQueueName(*input.QueueName); err != nil {
 		return nil, err
 	}
 	queue := &Queue{
 		Name:                            *input.QueueName,
-		URL:                             fmt.Sprintf("%s/%s", baseQueueURL, *input.QueueName),
+		URL:                             fmt.Sprintf("%s/%s", cfg.BaseURLOrDefault(), *input.QueueName),
+		ARN:                             fmt.Sprintf("arn:aws:sqs:%s:%s:%s", cfg.AWSRegionOrDefault(), accountID, *input.QueueName),
 		messagesReadyOrdered:            new(LinkedList[*MessageState]),
 		messagesReady:                   make(map[uuid.UUID]*LinkedListNode[*MessageState]),
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
@@ -127,7 +128,6 @@ type Queue struct {
 	URL  string
 	ARN  string
 
-	IsDLQ         bool
 	RedrivePolicy Optional[RedrivePolicy]
 
 	VisibilityTimeout       time.Duration
@@ -144,7 +144,9 @@ type Queue struct {
 	lifecycleMu    sync.Mutex
 	mu             sync.Mutex
 
-	queueReferences map[string]RedrivePolicy
+	// dlqTarget will hold where we'll move messages once
+	// we hit the redrive policy maximum number of attempts
+	dlqTarget *Queue
 
 	messagesReadyOrdered            *LinkedList[*MessageState]
 	messagesReady                   map[uuid.UUID]*LinkedListNode[*MessageState]
@@ -195,7 +197,7 @@ func (q *Queue) Stats() (output QueueStats) {
 }
 
 func (q *Queue) Start() {
-	defer q.lifecycleMu.Lock()
+	q.lifecycleMu.Lock()
 	defer q.lifecycleMu.Unlock()
 
 	var retentionCtx context.Context
@@ -546,6 +548,12 @@ func (q *Queue) UpdateInflightToReady() {
 	}
 	atomic.AddUint64(&q.stats.TotalMessagesInflightToReady, uint64(len(ready)))
 	for _, msg := range ready {
+		if q.RedrivePolicy.IsSet {
+			if msg.ReceiveCount >= uint32(q.RedrivePolicy.Value.MaxReceiveCount) {
+				q.moveMessageFromInflightToDLQUnsafe(msg)
+				continue
+			}
+		}
 		q.moveMessageFromInflightToReadyUnsafe(msg)
 	}
 }
@@ -587,22 +595,32 @@ func (q *Queue) NewMessageState(m Message, created time.Time, delaySeconds int) 
 // internal methods
 //
 
-func (q *Queue) moveMessageFromInflightToReadyUnsafe(msg *MessageState) {
+func (q *Queue) moveMessageFromInflightToDLQUnsafe(msg *MessageState) {
 	delete(q.messagesInflight, msg.Message.MessageID)
 	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
-	q.moveMessageReadyUnsafe(msg)
+	q.moveMessageToDLQUnsafe(msg)
+}
+
+func (q *Queue) moveMessageFromInflightToReadyUnsafe(msg *MessageState) {
+	for receiptHandle := range msg.ReceiptHandles.Consume() {
+		delete(q.messagesInflightByReceiptHandle, receiptHandle)
+	}
+	delete(q.messagesInflight, msg.Message.MessageID)
+	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
+	q.moveMessageToReadyUnsafe(msg)
 }
 
 func (q *Queue) moveMessageFromDelayedToReadyUnsafe(msg *MessageState) {
 	delete(q.messagesDelayed, msg.Message.MessageID)
 	atomic.AddInt64(&q.stats.NumMessagesDelayed, -1)
-	q.moveMessageReadyUnsafe(msg)
+	q.moveMessageToReadyUnsafe(msg)
 }
 
-func (q *Queue) moveMessageReadyUnsafe(msg *MessageState) {
-	for receiptHandle := range msg.ReceiptHandles.Consume() {
-		delete(q.messagesInflightByReceiptHandle, receiptHandle)
-	}
+func (q *Queue) moveMessageToDLQUnsafe(msg *MessageState) {
+	q.dlqTarget.Push(msg)
+}
+
+func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
 	atomic.AddInt64(&q.stats.NumMessagesReady, 1)
 	node := q.messagesReadyOrdered.Push(msg)
 	q.messagesReady[msg.Message.MessageID] = node
