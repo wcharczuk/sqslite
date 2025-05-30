@@ -11,24 +11,25 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wcharczuk/sqslite/pkg/uuid"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+
+	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 // NewQueueFromCreateQueueInput returns a new queue for a given [sqs.CreateQueueInput].
-func NewQueueFromCreateQueueInput(cfg ServerConfig, accountID string, input *sqs.CreateQueueInput) (*Queue, *Error) {
+func NewQueueFromCreateQueueInput(authz Authorization, input *sqs.CreateQueueInput) (*Queue, *Error) {
 	if err := validateQueueName(*input.QueueName); err != nil {
 		return nil, err
 	}
 	queue := &Queue{
 		Name:                            *input.QueueName,
-		AccountID:                       accountID,
-		URL:                             QueueURL(cfg, accountID, *input.QueueName),
-		ARN:                             QueueARN(cfg, accountID, *input.QueueName),
+		AccountID:                       authz.AccountID,
+		URL:                             QueueURL(authz, *input.QueueName),
+		ARN:                             QueueARN(authz, *input.QueueName),
 		created:                         time.Now().UTC(),
+		lastModified:                    time.Now().UTC(),
 		messagesReadyOrdered:            new(LinkedList[*MessageState]),
 		messagesReady:                   make(map[uuid.UUID]*LinkedListNode[*MessageState]),
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
@@ -45,24 +46,14 @@ func NewQueueFromCreateQueueInput(cfg ServerConfig, accountID string, input *sqs
 }
 
 // QueueURL creates a queue url from required inputs.
-func QueueURL(cfg ServerConfig, accountID, queueName string) string {
-	return fmt.Sprintf("%s/%s/%s", cfg.BaseURLOrDefault(), accountID, queueName)
+func QueueURL(authz Authorization, queueName string) string {
+	return fmt.Sprintf("http://%s/%s/%s", authz.HostOrDefault(), authz.AccountID, queueName)
 }
 
 // QueueARN creates a queue arn from required inputs.
-func QueueARN(cfg ServerConfig, accountID, queueName string) string {
-	return fmt.Sprintf("arn:aws:sqs:%s:%s:%s", cfg.AWSRegionOrDefault(), accountID, queueName)
+func QueueARN(authz Authorization, queueName string) string {
+	return fmt.Sprintf("arn:aws:sqs:%s:%s:%s", authz.Region, authz.AccountID, queueName)
 }
-
-// QueueAttributes
-const (
-	QueueAttributeDelaySeconds                  = "DelaySeconds"
-	QueueAttributeMaximumMessageSize            = "MaximumMessageSize"
-	QueueAttributeMessageRetentionPeriod        = "MessageRetentionPeriod"
-	QueueAttributeReceiveMessageWaitTimeSeconds = "ReceiveMessageWaitTimeSeconds"
-	QueueAttributeVisibilityTimeout             = "VisibilityTimeout"
-	QueueAttributeRedrivePolicy                 = "RedrivePolicy"
-)
 
 type RedrivePolicy struct {
 	DeadLetterTargetArn string `json:"deadLetterTargetArn"`
@@ -84,11 +75,13 @@ type Queue struct {
 	MessageRetentionPeriod  time.Duration
 	Delay                   Optional[time.Duration]
 	MaximumMessagesInflight int
+	Policy                  Optional[string]
 
 	Attributes map[string]string
 	Tags       map[string]string
 
-	created time.Time
+	created      time.Time
+	lastModified time.Time
 
 	sequenceNumber uint64
 	lifecycleMu    sync.Mutex
@@ -265,7 +258,12 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 		msg.SetLastReceived(now)
 
 		messageCopy := msg.Message
-		messageCopy.ReceiptHandle = Some(uuid.V4().String())
+		messageCopy.ReceiptHandle = Some(ReceiptHandle{
+			ID:           uuid.V4(),
+			QueueARN:     q.ARN,
+			MessageID:    msg.Message.MessageID.String(),
+			LastReceived: now,
+		}.String())
 		msg.ReceiptHandles.Add(messageCopy.ReceiptHandle.Value)
 		q.messagesInflightByReceiptHandle[messageCopy.ReceiptHandle.Value] = messageCopy.MessageID
 		q.messagesInflight[msg.Message.MessageID] = msg
@@ -585,8 +583,61 @@ func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
 	q.messagesReady[msg.Message.MessageID] = node
 }
 
+func (q *Queue) GetQueueAttributes(attributeNames ...types.QueueAttributeName) map[string]string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.getQueueAttributesUnsafe(attributeNames...)
+}
+
+func (q *Queue) getQueueAttributesUnsafe(attributes ...types.QueueAttributeName) map[string]string {
+	distinctAttributes := distinct(flatten(apply(attributes, func(v types.QueueAttributeName) []types.QueueAttributeName {
+		return v.Values()
+	})))
+	output := make(map[string]string)
+	for _, attribute := range distinctAttributes {
+		value := q.getQueueAttributeUnsafe(attribute)
+		if value != "" {
+			output[string(attribute)] = value
+		}
+	}
+	return output
+}
+
+func (q *Queue) getQueueAttributeUnsafe(attributeName types.QueueAttributeName) string {
+	switch attributeName {
+	case types.QueueAttributeNameApproximateNumberOfMessages:
+		return fmt.Sprint(atomic.LoadInt64(&q.stats.NumMessages))
+	case types.QueueAttributeNameApproximateNumberOfMessagesNotVisible:
+		return fmt.Sprint(atomic.LoadInt64(&q.stats.NumMessagesInflight))
+	case types.QueueAttributeNameApproximateNumberOfMessagesDelayed:
+		return fmt.Sprint(atomic.LoadInt64(&q.stats.NumMessagesDelayed))
+	case types.QueueAttributeNameCreatedTimestamp:
+		return fmt.Sprint(q.created.Unix())
+	case types.QueueAttributeNameLastModifiedTimestamp:
+		return fmt.Sprint(q.lastModified.Unix())
+	case types.QueueAttributeNameMaximumMessageSize:
+		return fmt.Sprint(q.MaximumMessageSizeBytes)
+	case types.QueueAttributeNameMessageRetentionPeriod:
+		return fmt.Sprint(q.MessageRetentionPeriod)
+	case types.QueueAttributeNamePolicy:
+		return fmt.Sprint(q.Policy)
+	case types.QueueAttributeNameQueueArn:
+		return fmt.Sprint(q.ARN)
+	case types.QueueAttributeNameReceiveMessageWaitTimeSeconds:
+		return fmt.Sprint(q.ReceiveMessageWaitTime / time.Second)
+	case types.QueueAttributeNameVisibilityTimeout:
+		return fmt.Sprint(q.VisibilityTimeout / time.Second)
+	case types.QueueAttributeNameRedrivePolicy:
+		return marshalJSON(q.RedrivePolicy)
+	default:
+		return ""
+	}
+}
+
 func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, applyDefaults bool) *Error {
-	delay, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeDelaySeconds)
+	q.lastModified = time.Now().UTC()
+
+	delay, err := readAttributeDurationSeconds(messageAttributes, types.QueueAttributeNameDelaySeconds)
 	if err != nil {
 		return err
 	}
@@ -597,7 +648,7 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		q.Delay = delay
 	}
 
-	maximumMessageSizeBytes, err := readAttributeDurationInt(messageAttributes, QueueAttributeMaximumMessageSize)
+	maximumMessageSizeBytes, err := readAttributeDurationInt(messageAttributes, types.QueueAttributeNameMaximumMessageSize)
 	if err != nil {
 		return err
 	}
@@ -610,7 +661,7 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		q.MaximumMessageSizeBytes = 256 * 1024 // 256KiB
 	}
 
-	messageRetentionPeriod, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeMessageRetentionPeriod)
+	messageRetentionPeriod, err := readAttributeDurationSeconds(messageAttributes, types.QueueAttributeNameMessageRetentionPeriod)
 	if err != nil {
 		return err
 	}
@@ -623,7 +674,7 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		q.MessageRetentionPeriod = 4 * 24 * time.Hour // 4 days
 	}
 
-	receiveMessageWaitTime, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeReceiveMessageWaitTimeSeconds)
+	receiveMessageWaitTime, err := readAttributeDurationSeconds(messageAttributes, types.QueueAttributeNameReceiveMessageWaitTimeSeconds)
 	if err != nil {
 		return err
 	}
@@ -636,7 +687,7 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		q.ReceiveMessageWaitTime = 20 * time.Second
 	}
 
-	visibilityTimeout, err := readAttributeDurationSeconds(messageAttributes, QueueAttributeVisibilityTimeout)
+	visibilityTimeout, err := readAttributeDurationSeconds(messageAttributes, types.QueueAttributeNameVisibilityTimeout)
 	if err != nil {
 		return err
 	}
@@ -656,7 +707,10 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 	if redrivePolicy.IsSet {
 		q.RedrivePolicy = redrivePolicy
 	}
-
+	policy, ok := messageAttributes[string(types.QueueAttributeNamePolicy)]
+	if ok {
+		q.Policy = Some(policy)
+	}
 	return nil
 }
 
@@ -760,8 +814,8 @@ func validateMessageBodySize(body *string, maximumMessageSizeBytes int) *Error {
 	return nil
 }
 
-func readAttributeDurationSeconds(attributes map[string]string, attributeName string) (output Optional[time.Duration], err *Error) {
-	value, ok := attributes[attributeName]
+func readAttributeDurationSeconds(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[time.Duration], err *Error) {
+	value, ok := attributes[string(attributeName)]
 	if !ok {
 		return
 	}
@@ -774,8 +828,8 @@ func readAttributeDurationSeconds(attributes map[string]string, attributeName st
 	return
 }
 
-func readAttributeDurationInt(attributes map[string]string, attributeName string) (output Optional[int], err *Error) {
-	value, ok := attributes[attributeName]
+func readAttributeDurationInt(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[int], err *Error) {
+	value, ok := attributes[string(attributeName)]
 	if !ok {
 		return
 	}
@@ -789,7 +843,7 @@ func readAttributeDurationInt(attributes map[string]string, attributeName string
 }
 
 func readAttributeRedrivePolicy(attributes map[string]string) (output Optional[RedrivePolicy], err *Error) {
-	value, ok := attributes[QueueAttributeRedrivePolicy]
+	value, ok := attributes[string(types.QueueAttributeNameRedrivePolicy)]
 	if !ok {
 		return
 	}

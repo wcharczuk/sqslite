@@ -5,21 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/stretchr/testify/require"
 )
-
-// Helper function to create a test queue with custom name and URL
-func createTestQueueWithNameAndURL(name, url string) *Queue {
-	q, _ := NewQueueFromCreateQueueInput(ServerConfig{
-		BaseURL: "http://sqslite.local",
-	}, "test-account", &sqs.CreateQueueInput{
-		QueueName: aws.String(name),
-	})
-	q.URL = url // Override URL for testing
-	return q
-}
 
 func Test_NewQueues_returnsNewInstance(t *testing.T) {
 	queues := NewQueues()
@@ -189,6 +176,7 @@ func Test_Queues_GetQueue_returnsTrueWhenQueueExists(t *testing.T) {
 }
 
 func Test_Queues_GetQueue_returnsFalseWhenQueueIsRecentlyCreated(t *testing.T) {
+	t.Skip("disabling the cooloff on created queues for now to mirror proper sqs")
 	queues := NewQueues()
 	ctx := WithContextAuthorization(context.Background(), Authorization{AccountID: "test-account"})
 	queue := createTestQueueWithNameAndURL("test-queue", "http://sqslite.local/test-queue")

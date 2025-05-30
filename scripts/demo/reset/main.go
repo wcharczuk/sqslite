@@ -10,7 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/spf13/pflag"
-	"github.com/wcharczuk/sqslite/pkg/sqslite"
+
+	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
 
 var (
@@ -33,8 +34,14 @@ func main() {
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
 		o.BaseEndpoint = flagEndpoint
 	})
-	res, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
+
+	res, err := sqsClient.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
 		QueueName: flagQueueName,
+	})
+	maybeFatal(err)
+
+	_, err = sqsClient.DeleteQueue(ctx, &sqs.DeleteQueueInput{
+		QueueUrl: res.QueueUrl,
 	})
 	maybeFatal(err)
 	fmt.Println(*res.QueueUrl)

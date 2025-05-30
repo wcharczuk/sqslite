@@ -12,9 +12,11 @@ import (
 )
 
 func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
-	q, err := NewQueueFromCreateQueueInput(ServerConfig{
-		BaseURL: "http://sqslite.local",
-	}, "test-account", &sqs.CreateQueueInput{
+	q, err := NewQueueFromCreateQueueInput(Authorization{
+		Region:    "us-west-2",
+		AccountID: "test-account",
+		Host:      "sqslite.local",
+	}, &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
 	defer q.Close()
@@ -38,21 +40,25 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 }
 
 func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
-	_, err := NewQueueFromCreateQueueInput(ServerConfig{
-		BaseURL: "http://sqslite.local",
-	}, "test-account", &sqs.CreateQueueInput{
+	_, err := NewQueueFromCreateQueueInput(Authorization{
+		Region:    "us-west-2",
+		AccountID: "test-account",
+		Host:      "sqslite.local",
+	}, &sqs.CreateQueueInput{
 		QueueName: aws.String("test!!!queue"),
 	})
-
 	require.NotNil(t, err)
 }
 
 func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {
-	q, _ := NewQueueFromCreateQueueInput(ServerConfig{
-		BaseURL: "http://sqslite.local",
-	}, "test-account", &sqs.CreateQueueInput{
+	q, _ := NewQueueFromCreateQueueInput(Authorization{
+		Region:    "us-west-2",
+		AccountID: "test-account",
+		Host:      "sqslite.local",
+	}, &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
+	defer q.Close()
 	msg := NewMessageFromSendMessageInput(&sqs.SendMessageInput{
 		QueueUrl:    aws.String(q.URL),
 		MessageBody: aws.String(`{"messageIndex":0}`),

@@ -4,22 +4,36 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wcharczuk/sqslite/pkg/uuid"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/stretchr/testify/require"
+
+	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
-// Helper function to create a test queue with default settings
 func createTestQueue(t *testing.T) *Queue {
 	t.Helper()
-	q, err := NewQueueFromCreateQueueInput(ServerConfig{
-		BaseURL: "http://sqslite.local",
-	}, "test-account", &sqs.CreateQueueInput{
+	q, err := NewQueueFromCreateQueueInput(Authorization{
+		Region:    "us-west-2",
+		AccountID: "test-account",
+		Host:      "sqslite.local",
+	}, &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
+	t.Cleanup(q.Close)
 	require.Nil(t, err)
+	return q
+}
+
+func createTestQueueWithNameAndURL(name, url string) *Queue {
+	q, _ := NewQueueFromCreateQueueInput(Authorization{
+		Region:    "us-west-2",
+		AccountID: "test-account",
+		Host:      "sqslite.local",
+	}, &sqs.CreateQueueInput{
+		QueueName: aws.String(name),
+	})
+	q.URL = url // Override URL for testing
 	return q
 }
 

@@ -15,51 +15,9 @@ import (
 )
 
 // NewServer returns a new server.
-func NewServer(options ...ServerOption) *Server {
-	s := Server{
+func NewServer() *Server {
+	return &Server{
 		queues: NewQueues(),
-	}
-	for _, opt := range options {
-		opt(&s)
-	}
-	return &s
-}
-
-type ServerConfig struct {
-	AWSRegion string
-	BaseURL   string
-}
-
-func (s ServerConfig) AWSRegionOrDefault() string {
-	if s.AWSRegion != "" {
-		return s.AWSRegion
-	}
-	return "us-west-2"
-}
-
-func (s ServerConfig) BaseURLOrDefault() string {
-	if s.BaseURL != "" {
-		return s.BaseURL
-	}
-	return "http://sqslite.local"
-}
-
-// ServerOption is a function that mutates servers.
-type ServerOption func(*Server)
-
-// OptAWSRegion sets the server aws region.
-func OptAWSRegion(awsRegion string) ServerOption {
-	return func(s *Server) {
-		s.cfg.AWSRegion = awsRegion
-	}
-}
-
-// OptBaseURL sets the base url for the server.
-//
-// This is used as part of the queue url for new queues.
-func OptBaseURL(baseQueueURL string) ServerOption {
-	return func(s *Server) {
-		s.cfg.BaseURL = baseQueueURL
 	}
 }
 
@@ -67,13 +25,7 @@ var _ http.Handler = (*Server)(nil)
 
 // Server implements the http routing layer for sqslite.
 type Server struct {
-	cfg    ServerConfig
 	queues *Queues
-}
-
-// Config returns the server config.
-func (s *Server) Config() ServerConfig {
-	return s.cfg
 }
 
 // Queues returns the underlying queues storage.
@@ -102,6 +54,7 @@ func (s *Server) Close() {
 const (
 	methodCreateQueue                  = "AmazonSQS.CreateQueue"
 	methodListQueues                   = "AmazonSQS.ListQueues"
+	methodGetQueueAttributes           = "AmazonSQS.GetQueueAttributes"
 	methodSetQueueAttributes           = "AmazonSQS.SetQueueAttributes"
 	methodTagQueue                     = "AmazonSQS.TagQueue"
 	methodUntagQueue                   = "AmazonSQS.UntagQueue"
@@ -140,6 +93,8 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	switch action {
 	case methodCreateQueue:
 		s.createQueue(rw, req)
+	case methodGetQueueAttributes:
+		s.getQueueAttributes(rw, req)
 	case methodSetQueueAttributes:
 		s.setQueueAttributes(rw, req)
 	case methodTagQueue:
@@ -180,7 +135,7 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorUnauthorized())
 		return
 	}
-	queue, err := NewQueueFromCreateQueueInput(s.cfg, authz.AccountID, input)
+	queue, err := NewQueueFromCreateQueueInput(authz, input)
 	if err != nil {
 		serialize(rw, req, err)
 		return
@@ -193,6 +148,22 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	queue.Start()
 	serialize(rw, req, &sqs.CreateQueueOutput{
 		QueueUrl: &queue.URL,
+	})
+}
+
+func (s Server) getQueueAttributes(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.GetQueueAttributesInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	serialize(rw, req, &sqs.GetQueueAttributesOutput{
+		Attributes: queue.GetQueueAttributes(input.AttributeNames...),
 	})
 }
 
@@ -570,6 +541,26 @@ func apply[Input, Output any](values []Input, fn func(Input) Output) (output []O
 	return
 }
 
+func distinct[V comparable](values []V) (output []V) {
+	lookup := map[V]struct{}{}
+	output = make([]V, 0, len(values))
+	for _, v := range values {
+		if _, ok := lookup[v]; ok {
+			continue
+		}
+		lookup[v] = struct{}{}
+		output = append(output, v)
+	}
+	return
+}
+
+func flatten[V any](values [][]V) (output []V) {
+	for _, list := range values {
+		output = append(output, list...)
+	}
+	return
+}
+
 func asTypesMessage(m Message) types.Message {
 	return types.Message{
 		Attributes:             m.Attributes,
@@ -627,4 +618,9 @@ func serialize(rw http.ResponseWriter, _ *http.Request, res any) {
 		rw.WriteHeader(http.StatusOK)
 	}
 	_ = json.NewEncoder(rw).Encode(res)
+}
+
+func marshalJSON(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
 }

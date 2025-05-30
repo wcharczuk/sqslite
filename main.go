@@ -14,12 +14,13 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/spf13/pflag"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/wcharczuk/sqslite/pkg/httputil"
-	"github.com/wcharczuk/sqslite/pkg/slant"
-	"github.com/wcharczuk/sqslite/pkg/sqslite"
+	"github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/slant"
+	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
 
 var (
@@ -27,7 +28,7 @@ var (
 	flagBindAddr            = pflag.String("bind-addr", ":4566", "The server bind address")
 	flagShutdownGracePeriod = pflag.Duration("shutdown-grace-period", 30*time.Second, "The server shutdown grace period")
 	flagLogFormat           = pflag.String("log-format", "json", "The log format (json|text)")
-	flagLogLevel            = pflag.String("log-level", slog.LevelInfo.String(),
+	flagLogLevel            = pflag.String("log-level", slog.LevelWarn.String(),
 		fmt.Sprintf(
 			"The log level (%s>%s>%s>%s) (not case sensitive, from least to most restrictive)",
 			slog.LevelDebug.String(),
@@ -35,6 +36,7 @@ var (
 			slog.LevelWarn.String(),
 			slog.LevelError.String(),
 		))
+	flagSkipGzip = pflag.Bool("skip-gzip", false, "If we should skip gzip compression on responses")
 )
 
 func main() {
@@ -71,27 +73,29 @@ func main() {
 	//
 	// server setup
 	//
-	server := sqslite.NewServer(
-		sqslite.OptBaseURL("http://sqslite.local"),
-		sqslite.OptAWSRegion(
-			*flagAWSRegion,
-		),
-	)
+
+	server := sqslite.NewServer()
 
 	//
 	// create the default queue(s)
 	//
-	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(server.Config(), sqslite.DefaultAccountID, &sqs.CreateQueueInput{
+
+	defaultAuthorization := sqslite.Authorization{
+		AccountID: sqslite.DefaultAccountID,
+		Host:      "sqslite.local",
+		Region:    *flagAWSRegion,
+	}
+	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(defaultAuthorization, &sqs.CreateQueueInput{
 		QueueName: aws.String("default-dlq"),
 	})
 	defaultQueueDLQ.Start()
 	_ = server.Queues().AddQueue(context.Background(), defaultQueueDLQ)
 	slog.Info("created default queue dlq with url", slog.String("queue_url", defaultQueueDLQ.URL))
 
-	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Config(), sqslite.DefaultAccountID, &sqs.CreateQueueInput{
+	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(defaultAuthorization, &sqs.CreateQueueInput{
 		QueueName: aws.String("default"),
 		Attributes: map[string]string{
-			sqslite.QueueAttributeRedrivePolicy: marshalJSON(sqslite.RedrivePolicy{
+			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(sqslite.RedrivePolicy{
 				DeadLetterTargetArn: defaultQueueDLQ.ARN,
 				MaxReceiveCount:     3,
 			}),
@@ -101,9 +105,18 @@ func main() {
 	_ = server.Queues().AddQueue(context.Background(), defaultQueue)
 	slog.Info("created default queue with url", slog.String("queue_url", defaultQueue.URL))
 
+	var handler http.Handler
+	if *flagSkipGzip {
+		slog.Info("skipping gzip compression on responses")
+		handler = httputil.Logged(server)
+	} else {
+		slog.Info("enabling gzip compression on responses")
+		handler = httputil.Logged(httputil.Gzipped(server))
+	}
+
 	httpSrv := &http.Server{
 		Addr:    *flagBindAddr,
-		Handler: httputil.Logged(httputil.Gzipped(server)),
+		Handler: handler,
 	}
 	group, groupCtx := errgroup.WithContext(context.Background())
 	group.Go(func() error {

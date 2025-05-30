@@ -16,13 +16,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/spf13/pflag"
-	"github.com/wcharczuk/sqslite/pkg/sqslite"
+	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
 
 var (
 	flagAWSRegion                = pflag.String("region", "us-west-2", "The AWS region")
 	flagEndpoint                 = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
-	flagQueueURL                 = pflag.String("queue-url", sqslite.QueueURL(sqslite.ServerConfig{}, sqslite.DefaultAccountID, "default"), "The queue url (optional; uses a default if unset)")
+	flagQueueURL                 = pflag.String("queue-url", sqslite.QueueURL(sqslite.Authorization{}, "default"), "The queue url (optional; uses a default if unset)")
 	flagNumPollers               = pflag.Int("num-pollers", runtime.NumCPU(), "The number of queue pollers")
 	flagFailurePct               = pflag.Float64("failure-pct", 0.1, "The fraction of messages to skip deletion for, triggering visibility timeouts")
 	flagMaxNumberOfMessages      = pflag.Int32("max-number-of-messages", 10, "The time in seconds to wait for the receive batch [0,10]")
