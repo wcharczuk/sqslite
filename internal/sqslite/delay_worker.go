@@ -3,11 +3,14 @@ package sqslite
 import (
 	"context"
 	"time"
+
+	"github.com/jonboulle/clockwork"
 )
 
 type delayWorker struct {
 	queue        *Queue
 	tickInterval time.Duration
+	clock        clockwork.Clock
 }
 
 func (d *delayWorker) TickInterval() time.Duration {
@@ -18,13 +21,13 @@ func (d *delayWorker) TickInterval() time.Duration {
 }
 
 func (d *delayWorker) Start(ctx context.Context) error {
-	tick := time.NewTicker(d.TickInterval())
+	tick := d.clock.NewTicker(d.TickInterval())
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-tick.C:
+		case <-tick.Chan():
 			d.queue.UpdateDelayedToReady()
 			continue
 		}

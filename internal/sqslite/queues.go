@@ -125,11 +125,6 @@ func (q *Queues) GetQueue(ctx context.Context, queueURL string) (queue *Queue, e
 		err = ErrorQueueDoesNotExist()
 		return
 	}
-	// if time.Now().UTC().Sub(queue.Created()) < time.Second {
-	// 	queue = nil
-	// 	err = ErrorNotReady()
-	// 	return
-	// }
 	return
 }
 

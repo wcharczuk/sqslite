@@ -85,14 +85,14 @@ func main() {
 		Host:      "sqslite.local",
 		Region:    *flagAWSRegion,
 	}
-	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(defaultAuthorization, &sqs.CreateQueueInput{
+	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
 		QueueName: aws.String("default-dlq"),
 	})
 	defaultQueueDLQ.Start()
 	_ = server.Queues().AddQueue(context.Background(), defaultQueueDLQ)
 	slog.Info("created default queue dlq with url", slog.String("queue_url", defaultQueueDLQ.URL))
 
-	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(defaultAuthorization, &sqs.CreateQueueInput{
+	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
 		QueueName: aws.String("default"),
 		Attributes: map[string]string{
 			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(sqslite.RedrivePolicy{
@@ -110,7 +110,7 @@ func main() {
 		slog.Info("skipping gzip compression on responses")
 		handler = httputil.Logged(server)
 	} else {
-		slog.Info("enabling gzip compression on responses")
+		slog.Info("using gzip compression on responses")
 		handler = httputil.Logged(httputil.Gzipped(server))
 	}
 

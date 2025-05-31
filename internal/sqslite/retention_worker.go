@@ -3,11 +3,14 @@ package sqslite
 import (
 	"context"
 	"time"
+
+	"github.com/jonboulle/clockwork"
 )
 
 type retentionWorker struct {
 	queue        *Queue
 	tickInterval time.Duration
+	clock        clockwork.Clock
 }
 
 func (r *retentionWorker) TickInterval() time.Duration {
@@ -18,13 +21,13 @@ func (r *retentionWorker) TickInterval() time.Duration {
 }
 
 func (r *retentionWorker) Start(ctx context.Context) error {
-	tick := time.NewTicker(r.TickInterval())
+	tick := r.clock.NewTicker(r.TickInterval())
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-tick.C:
+		case <-tick.Chan():
 			r.queue.PurgeExpired()
 			continue
 		}

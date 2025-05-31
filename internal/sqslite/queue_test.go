@@ -7,12 +7,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/jonboulle/clockwork"
 
 	"github.com/stretchr/testify/require"
 )
 
 func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
-	q, err := NewQueueFromCreateQueueInput(Authorization{
+	q, err := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
 		Region:    "us-west-2",
 		AccountID: "test-account",
 		Host:      "sqslite.local",
@@ -40,7 +41,7 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 }
 
 func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
-	_, err := NewQueueFromCreateQueueInput(Authorization{
+	_, err := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
 		Region:    "us-west-2",
 		AccountID: "test-account",
 		Host:      "sqslite.local",
@@ -51,7 +52,7 @@ func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
 }
 
 func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {
-	q, _ := NewQueueFromCreateQueueInput(Authorization{
+	q, _ := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
 		Region:    "us-west-2",
 		AccountID: "test-account",
 		Host:      "sqslite.local",

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jonboulle/clockwork"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
@@ -18,6 +20,7 @@ import (
 func NewServer() *Server {
 	return &Server{
 		queues: NewQueues(),
+		clock:  clockwork.NewRealClock(),
 	}
 }
 
@@ -26,6 +29,18 @@ var _ http.Handler = (*Server)(nil)
 // Server implements the http routing layer for sqslite.
 type Server struct {
 	queues *Queues
+	clock  clockwork.Clock
+}
+
+// WithClock sets the server clock and returns a reference to the same server.
+func (s *Server) WithClock(clock clockwork.Clock) *Server {
+	s.clock = clock
+	return s
+}
+
+// Clock returns the server's [clockwork.Clock] instance.
+func (s *Server) Clock() clockwork.Clock {
+	return s.clock
 }
 
 // Queues returns the underlying queues storage.
@@ -89,7 +104,7 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		WithContextAuthorization(req.Context(), authz),
 	)
 
-	action := req.Header.Get("X-Amz-Target")
+	action := req.Header.Get(HeaderAmzTarget)
 	switch action {
 	case methodCreateQueue:
 		s.createQueue(rw, req)
@@ -124,6 +139,15 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
+const (
+	// HeaderAmzTarget is the header used to indicate what rpc method we're invoking.
+	HeaderAmzTarget = "X-Amz-Target"
+	// HeaderAmzQueryMode it is unclear to me what this does yet.
+	HeaderAmzQueryMode = "X-Amzn-Query-Mode"
+	// ContentTypeAmzJSON is the amz-json-1.0 content type header value.
+	ContentTypeAmzJSON = "application/x-amz-json-1.0"
+)
+
 func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.CreateQueueInput](req)
 	if err != nil {
@@ -135,7 +159,7 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorUnauthorized())
 		return
 	}
-	queue, err := NewQueueFromCreateQueueInput(authz, input)
+	queue, err := NewQueueFromCreateQueueInput(s.clock, authz, input)
 	if err != nil {
 		serialize(rw, req, err)
 		return
@@ -268,38 +292,49 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	allMessages := queue.Receive(int(input.MaxNumberOfMessages), visibilityTimeout)
-	if len(allMessages) < int(input.MaxNumberOfMessages) {
-		var waitTime time.Duration
-		if input.WaitTimeSeconds > 0 {
-			waitTime = waitTimeout
-		} else {
-			waitTime = queue.ReceiveMessageWaitTime
-		}
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		waitDeadline := time.NewTimer(waitTime)
-		defer waitDeadline.Stop()
 
-	done:
-		for {
-			select {
-			case <-req.Context().Done():
-				return
-			case <-waitDeadline.C:
+	allMessages := queue.Receive(int(input.MaxNumberOfMessages), visibilityTimeout)
+	if len(allMessages) > 0 {
+		serialize(rw, req, &sqs.ReceiveMessageOutput{
+			Messages: apply(allMessages, asTypesMessage),
+		})
+		return
+	}
+
+	waitTime := coalesceZero(waitTimeout, queue.ReceiveMessageWaitTime)
+
+	ticker := s.clock.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	waitDeadline := s.clock.NewTimer(waitTime)
+	defer waitDeadline.Stop()
+
+done:
+	for {
+		select {
+		case <-req.Context().Done():
+			return
+		case <-waitDeadline.Chan():
+			break done
+		case <-ticker.Chan():
+			allMessages = queue.Receive(int(input.MaxNumberOfMessages), visibilityTimeout)
+			if len(allMessages) > 0 {
 				break done
-			case <-ticker.C:
-				messages := queue.Receive(int(input.MaxNumberOfMessages)-len(allMessages), visibilityTimeout)
-				allMessages = append(allMessages, messages...)
-				if len(allMessages) == int(input.MaxNumberOfMessages) {
-					break done
-				}
 			}
 		}
 	}
 	serialize(rw, req, &sqs.ReceiveMessageOutput{
 		Messages: apply(allMessages, asTypesMessage),
 	})
+}
+
+func coalesceZero[V comparable](values ...V) V {
+	var zero V
+	for _, v := range values {
+		if v != zero {
+			return v
+		}
+	}
+	return zero
 }
 
 func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
@@ -321,7 +356,7 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
 		return
 	}
-	msg, err := queue.NewMessageState(NewMessageFromSendMessageInput(input), time.Now().UTC(), int(input.DelaySeconds))
+	msg, err := queue.NewMessageState(NewMessageFromSendMessageInput(input), s.clock.Now(), int(input.DelaySeconds))
 	if err != nil {
 		serialize(rw, req, err)
 		return
@@ -364,7 +399,7 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 			serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
 			return
 		}
-		msg, err := queue.NewMessageState(NewMessageFromSendMessageBatchEntry(entry), time.Now().UTC(), int(entry.DelaySeconds))
+		msg, err := queue.NewMessageState(NewMessageFromSendMessageBatchEntry(entry), s.clock.Now(), int(entry.DelaySeconds))
 		if err != nil {
 			serialize(rw, req, err)
 			return

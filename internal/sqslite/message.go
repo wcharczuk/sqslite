@@ -29,7 +29,7 @@ func NewMessageFromSendMessageBatchEntry(input types.SendMessageBatchRequestEntr
 		MessageID:              uuid.V4(),
 		Body:                   SomePtr(input.MessageBody),
 		MD5OfBody:              Some(md5sum(safeDeref(input.MessageBody))),
-		MD5OfMessageAttributes: Some(md5sum(keysAndValues(input.MessageAttributes)...)),
+		MD5OfMessageAttributes: Some(md5OfMessageAttributes(input.MessageAttributes)),
 	}
 }
 
@@ -39,16 +39,10 @@ type Message struct {
 	ReceiptHandle           Optional[string]
 	MD5OfBody               Optional[string]
 	Body                    Optional[string]
-	Attributes              map[string]string                `json:"Attributes,omitempty"`
-	MessageAttributes       map[string]MessageAttributeValue `json:"MessageAttributes,omitempty"`
-	MessageSystemAttributes map[string]MessageAttributeValue `json:"MessageSystemAttributes,omitempty"`
+	Attributes              map[string]string                      `json:"Attributes,omitempty"`
+	MessageAttributes       map[string]types.MessageAttributeValue `json:"MessageAttributes,omitempty"`
+	MessageSystemAttributes map[string]types.MessageAttributeValue `json:"MessageSystemAttributes,omitempty"`
 	MD5OfMessageAttributes  Optional[string]
-}
-
-type MessageAttributeValue struct {
-	Type        string
-	StringValue string
-	BinaryValue []byte
 }
 
 const (
@@ -57,24 +51,23 @@ const (
 	AttributeTypeBinary = "Binary"
 )
 
-func md5OfMessageAttributes(attributes map[string]MessageAttributeValue) string {
-	names := slices.Collect(maps.Keys(attributes))
-	sort.Strings(names)
-
+// md5OfMessageAttributes performs a checksum on the message attribute values.
+//
+// This is required to function when we send messages to the queue.
+func md5OfMessageAttributes(attributes map[string]types.MessageAttributeValue) string {
+	keys := slices.Collect(maps.Keys(attributes))
+	sort.Strings(keys)
 	var buffer []byte
-	for _, name := range names {
-		attribute := attributes[name]
-
-		buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(name)))
-		buffer = append(buffer, []byte(name)...)
-
-		buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(attribute.Type)))
-		buffer = append(buffer, []byte(attribute.Type)...)
-
-		if attribute.StringValue != "" {
+	for _, key := range keys {
+		attribute := attributes[key]
+		buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(key)))
+		buffer = append(buffer, []byte(key)...)
+		buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(*attribute.DataType)))
+		buffer = append(buffer, []byte(*attribute.DataType)...)
+		if attribute.StringValue != nil && *attribute.StringValue != "" {
 			buffer = append(buffer, byte(1))
-			buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(attribute.StringValue)))
-			buffer = append(buffer, []byte(attribute.StringValue)...)
+			buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(*attribute.StringValue)))
+			buffer = append(buffer, []byte(*attribute.StringValue)...)
 		} else {
 			buffer = append(buffer, byte(2))
 			buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(attribute.BinaryValue)))
