@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -15,7 +16,56 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 	"github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/uuid"
 )
+
+func Test_Server_rejectsNonPostMethod(t *testing.T) {
+	_, testServer := startTestServer(t)
+	req, err := http.NewRequest(http.MethodGet, testServer.URL, nil)
+	require.NoError(t, err)
+	res, sendErr := testServer.Client().Do(req)
+	require.NoError(t, sendErr)
+	require.Equal(t, http.StatusNotFound, res.StatusCode)
+}
+
+func Test_Server_rejectsNonSlashPath(t *testing.T) {
+	_, testServer := startTestServer(t)
+	testServerURL := must(url.Parse(testServer.URL))
+	testServerURL.Path = "/nogood"
+	req, err := http.NewRequest(http.MethodGet, testServerURL.String(), nil)
+	require.NoError(t, err)
+	res, sendErr := testServer.Client().Do(req)
+	require.NoError(t, sendErr)
+	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+}
+
+func Test_Server_requiresAuthorization(t *testing.T) {
+	_, testServer := startTestServer(t)
+	res := testHelperDoClientMethodWithoutAuth(t, testServer, methodSendMessage, testNewSendMessageInput(testDefaultQueueURL))
+	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+}
+
+func Test_Server_handlesUnknownMethods(t *testing.T) {
+	_, testServer := startTestServer(t)
+	res := testHelperDoClientMethodWithoutAuth(t, testServer, uuid.V4().String(), testNewSendMessageInput(testDefaultQueueURL))
+	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+}
+
+func Test_Server_returnsWellFormedErrors(t *testing.T) {
+	_, testServer := startTestServer(t)
+	req, err := http.NewRequest(http.MethodGet, testServer.URL, nil)
+	require.NoError(t, err)
+	res, sendErr := testServer.Client().Do(req)
+	require.NoError(t, sendErr)
+	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+	var errResponse Error
+	err = json.NewDecoder(res.Body).Decode(&errResponse)
+	require.NoError(t, err)
+	require.Equal(t, "InvalidMethod", errResponse.Code)
+	require.Equal(t, http.StatusBadRequest, errResponse.StatusCode)
+	require.Equal(t, true, errResponse.SenderFault)
+	require.Equal(t, "The http method GET is not valid for this endpoint.", errResponse.Message)
+}
 
 func Test_Server_receiveMessage_equalMaxNumberOfMessages(t *testing.T) {
 	server, testServer := startTestServer(t)
@@ -79,15 +129,15 @@ func testNewSendMessageInput(queueURL string) *sqs.SendMessageInput {
 
 func testHelperSendMessage(t *testing.T, testServer *httptest.Server, input *sqs.SendMessageInput) *sqs.SendMessageOutput {
 	t.Helper()
-	return testHelperClientMethod[sqs.SendMessageInput, sqs.SendMessageOutput](t, testServer, methodSendMessage, input)
+	return testHelperDoClientMethod[sqs.SendMessageInput, sqs.SendMessageOutput](t, testServer, methodSendMessage, input)
 }
 
 func testHelperReceiveMessages(t *testing.T, testServer *httptest.Server, input *sqs.ReceiveMessageInput) *sqs.ReceiveMessageOutput {
 	t.Helper()
-	return testHelperClientMethod[sqs.ReceiveMessageInput, sqs.ReceiveMessageOutput](t, testServer, methodReceiveMessage, input)
+	return testHelperDoClientMethod[sqs.ReceiveMessageInput, sqs.ReceiveMessageOutput](t, testServer, methodReceiveMessage, input)
 }
 
-func testHelperClientMethod[Input, Output any](t *testing.T, testServer *httptest.Server, method string, input *Input) *Output {
+func testHelperDoClientMethod[Input, Output any](t *testing.T, testServer *httptest.Server, method string, input *Input) *Output {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
 	require.NoError(t, err)
@@ -103,6 +153,19 @@ func testHelperClientMethod[Input, Output any](t *testing.T, testServer *httptes
 	err = json.NewDecoder(res.Body).Decode(&output)
 	require.NoError(t, err)
 	return &output
+}
+
+func testHelperDoClientMethodWithoutAuth(t *testing.T, testServer *httptest.Server, method string, input any) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
+	require.NoError(t, err)
+	// req.Header.Set(httputil.HeaderAuthorization, testAuthorizationHeader)
+	req.Header.Set(httputil.HeaderContentType, ContentTypeAmzJSON)
+	req.Header.Set(HeaderAmzTarget, method)
+	req.Header.Set(HeaderAmzQueryMode, "true")
+	res, sendErr := testServer.Client().Do(req)
+	require.NoError(t, sendErr)
+	return res
 }
 
 const (

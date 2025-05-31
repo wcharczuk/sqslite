@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-// DefaultAccountID is the default account ID I use
-// in a few places and am just keeping it consistent.
 const (
 	DefaultHost      = "sqslite.local"
 	DefaultRegion    = "us-west-2"

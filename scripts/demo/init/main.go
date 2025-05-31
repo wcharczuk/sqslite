@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	flagAWSRegion = pflag.String("region", "us-west-2", "The AWS region")
+	flagAWSRegion = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
 	flagEndpoint  = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
-	flagQueueName = pflag.String("queue-name", "default", "The queue name")
+	flagQueueName = pflag.String("queue-name", sqslite.DefaultQueueName, "The queue name")
 )
 
 func main() {

@@ -3,6 +3,7 @@ package sqslite
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -117,10 +118,16 @@ func (q *Queues) GetQueue(ctx context.Context, queueURL string) (queue *Queue, e
 	}
 	queue, ok = q.queues[queueURL]
 	if !ok {
+		slog.Error("get queue; queue not found", slog.String("queueURL", queueURL))
 		err = ErrorQueueDoesNotExist()
 		return
 	}
 	if queue.AccountID != authz.AccountID {
+		slog.Error("get queue; accountID mismatch",
+			slog.String("queueURL", queueURL),
+			slog.String("requestAccountID", authz.AccountID),
+			slog.String("queueAccountID", queue.AccountID),
+		)
 		queue = nil
 		err = ErrorQueueDoesNotExist()
 		return

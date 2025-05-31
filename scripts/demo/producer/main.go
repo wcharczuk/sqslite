@@ -19,9 +19,9 @@ import (
 )
 
 var (
-	flagAWSRegion    = pflag.String("region", "us-west-2", "The AWS region")
-	flagEndpoint     = pflag.String("endpoint", "http://localhost:4567", "The endpoint URL")
-	flagQueueURL     = pflag.String("queue-url", sqslite.QueueURL(sqslite.Authorization{}, "default"), "The queue url (optional; uses a default if unset)")
+	flagAWSRegion    = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
+	flagEndpoint     = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
+	flagQueueURL     = pflag.String("queue-url", sqslite.QueueURL(sqslite.Authorization{}, sqslite.DefaultQueueName), "The queue url (optional; uses a default if unset)")
 	flagBatchSize    = pflag.Int("batch-size", 10, "The send message batch size")
 	flagPause        = pflag.Duration("pause", 0, "The time to pause between send message batches")
 	flagDelaySeconds = pflag.Int("delay-seconds", 0, "The delay seconds for each message")

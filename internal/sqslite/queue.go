@@ -26,7 +26,7 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 	}
 	queue := &Queue{
 		Name:                            *input.QueueName,
-		AccountID:                       authz.AccountID,
+		AccountID:                       authz.AccountIDOrDefault(),
 		URL:                             QueueURL(authz, *input.QueueName),
 		ARN:                             QueueARN(authz, *input.QueueName),
 		created:                         clock.Now(),
@@ -47,14 +47,24 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 	return queue, nil
 }
 
+const (
+	DefaultQueueName    = "default"
+	DefaultDLQQueueName = "default-dlq"
+
+	DefaultQueueMaximumMessageSizeBytes = 256 * 1024         // 256KiB
+	DefaultQueueMessageRetentionPeriod  = 4 * 24 * time.Hour // 4 days
+	DefaultQueueReceiveMessageWaitTime  = 20 * time.Second
+	DefaultQueueVisibilityTimeout       = 30 * time.Second
+)
+
 // QueueURL creates a queue url from required inputs.
 func QueueURL(authz Authorization, queueName string) string {
-	return fmt.Sprintf("http://%s/%s/%s", authz.HostOrDefault(), authz.AccountID, queueName)
+	return fmt.Sprintf("http://%s/%s/%s", authz.HostOrDefault(), authz.AccountIDOrDefault(), queueName)
 }
 
 // QueueARN creates a queue arn from required inputs.
 func QueueARN(authz Authorization, queueName string) string {
-	return fmt.Sprintf("arn:aws:sqs:%s:%s:%s", authz.Region, authz.AccountID, queueName)
+	return fmt.Sprintf("arn:aws:sqs:%s:%s:%s", authz.RegionOrDefault(), authz.AccountIDOrDefault(), queueName)
 }
 
 // RedrivePolicy is the json data in the [types.QueueAttributeNameRedrivePolicy] attribute field.
@@ -722,13 +732,6 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 	}
 	return nil
 }
-
-const (
-	DefaultQueueMaximumMessageSizeBytes = 256 * 1024         // 256KiB
-	DefaultQueueMessageRetentionPeriod  = 4 * 24 * time.Hour // 4 days
-	DefaultQueueReceiveMessageWaitTime  = 20 * time.Second
-	DefaultQueueVisibilityTimeout       = 30 * time.Second
-)
 
 func keysAndValues[K comparable, V any](m map[K]V) (output []string) {
 	output = make([]string, 0, len(m)<<1)

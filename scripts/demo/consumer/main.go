@@ -20,9 +20,9 @@ import (
 )
 
 var (
-	flagAWSRegion                = pflag.String("region", "us-west-2", "The AWS region")
+	flagAWSRegion                = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
 	flagEndpoint                 = pflag.String("endpoint", "http://localhost:4566", "The endpoint URL")
-	flagQueueURL                 = pflag.String("queue-url", sqslite.QueueURL(sqslite.Authorization{}, "default"), "The queue url (optional; uses a default if unset)")
+	flagQueueURL                 = pflag.String("queue-url", sqslite.QueueURL(sqslite.Authorization{}, sqslite.DefaultQueueName), "The queue url (optional; uses a default if unset)")
 	flagNumPollers               = pflag.Int("num-pollers", runtime.NumCPU(), "The number of queue pollers")
 	flagFailurePct               = pflag.Float64("failure-pct", 0.1, "The fraction of messages to skip deletion for, triggering visibility timeouts")
 	flagMaxNumberOfMessages      = pflag.Int32("max-number-of-messages", 10, "The time in seconds to wait for the receive batch [0,10]")
@@ -43,6 +43,15 @@ func main() {
 	if err != nil {
 		maybeFatal(err)
 	}
+
+	slog.Info("using",
+		slog.String("queueURL", *flagQueueURL),
+		slog.String("endpoint", *flagEndpoint),
+		slog.Float64("failurePct", *flagFailurePct),
+		slog.Int("maxNumberOfMessages", int(*flagMaxNumberOfMessages)),
+		slog.Int("waitTimeSeconds", int(*flagWaitTimeSeconds)),
+		slog.Int("visibilityTimeoutSeconds", int(*flagVisibilityTimeoutSeconds)),
+	)
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	poll := func(_ int) func() error {

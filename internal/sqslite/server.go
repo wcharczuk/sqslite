@@ -1,8 +1,6 @@
 package sqslite
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -86,8 +84,8 @@ const (
 
 // ServeHTTP implements [http.Handler].
 func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if req.Method != "POST" {
-		s.unknownVerb(rw, req)
+	if req.Method != http.MethodPost {
+		s.unknownMethod(rw, req)
 		return
 	}
 	if req.URL.Path != "/" {
@@ -535,8 +533,8 @@ func (s Server) changeMessageVisibilityBatch(rw http.ResponseWriter, req *http.R
 	})
 }
 
-func (s Server) unknownVerb(rw http.ResponseWriter, req *http.Request) {
-	serialize(rw, req, ErrorUnknownOperation(fmt.Sprintf("Expected HTTP POST as verb, you used: %v", req.Method)))
+func (s Server) unknownMethod(rw http.ResponseWriter, req *http.Request) {
+	serialize(rw, req, ErrorResponseInvalidMethod(req.Method))
 }
 
 func (s Server) unknownPath(rw http.ResponseWriter, req *http.Request) {
@@ -568,34 +566,6 @@ func requireQueueURL(queueURL *string) *Error {
 	return nil
 }
 
-func apply[Input, Output any](values []Input, fn func(Input) Output) (output []Output) {
-	output = make([]Output, len(values))
-	for index, input := range values {
-		output[index] = fn(input)
-	}
-	return
-}
-
-func distinct[V comparable](values []V) (output []V) {
-	lookup := map[V]struct{}{}
-	output = make([]V, 0, len(values))
-	for _, v := range values {
-		if _, ok := lookup[v]; ok {
-			continue
-		}
-		lookup[v] = struct{}{}
-		output = append(output, v)
-	}
-	return
-}
-
-func flatten[V any](values [][]V) (output []V) {
-	for _, list := range values {
-		output = append(output, list...)
-	}
-	return
-}
-
 func asTypesMessage(m Message) types.Message {
 	return types.Message{
 		Attributes:             m.Attributes,
@@ -616,18 +586,6 @@ func asTypesSendMessageBatchResultEntry(m *MessageState) types.SendMessageBatchR
 	}
 }
 
-func md5sum(values ...string) string {
-	hf := md5.New()
-	for _, v := range values {
-		hf.Write([]byte(v))
-	}
-	return hex.EncodeToString(hf.Sum(nil))
-}
-
-const (
-	requestContentTypeJSON = "application/x-amz-json-1.0"
-)
-
 func deserialize[V any](req *http.Request) (*V, *Error) {
 	if req.Body == nil {
 		return nil, nil
@@ -646,7 +604,7 @@ func deserialize[V any](req *http.Request) (*V, *Error) {
 }
 
 func serialize(rw http.ResponseWriter, _ *http.Request, res any) {
-	rw.Header().Set("Content-Type", requestContentTypeJSON)
+	rw.Header().Set("Content-Type", ContentTypeAmzJSON)
 	if commonError, ok := res.(*Error); ok {
 		rw.WriteHeader(commonError.StatusCode)
 	} else {

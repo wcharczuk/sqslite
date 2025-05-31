@@ -51,6 +51,11 @@ func main() {
 	maybeFatal(script())
 }
 
+type Scenario struct {
+	ID string
+	Script func() error
+}
+
 func script() error {
 	ctx := context.Background()
 	sess, err := config.LoadDefaultConfig(ctx)

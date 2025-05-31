@@ -36,7 +36,8 @@ var (
 			slog.LevelWarn.String(),
 			slog.LevelError.String(),
 		))
-	flagSkipGzip = pflag.Bool("skip-gzip", false, "If we should skip gzip compression on responses")
+	flagSkipGzip  = pflag.Bool("skip-gzip", false, "If we should skip gzip compression on responses")
+	flagSkipStats = pflag.Bool("skip-stats", false, "If we should skip outputing queue stats")
 )
 
 func main() {
@@ -81,19 +82,17 @@ func main() {
 	//
 
 	defaultAuthorization := sqslite.Authorization{
-		AccountID: sqslite.DefaultAccountID,
-		Host:      "sqslite.local",
-		Region:    *flagAWSRegion,
+		Region: *flagAWSRegion,
 	}
 	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
-		QueueName: aws.String("default-dlq"),
+		QueueName: aws.String(sqslite.DefaultDLQQueueName),
 	})
 	defaultQueueDLQ.Start()
 	_ = server.Queues().AddQueue(context.Background(), defaultQueueDLQ)
 	slog.Info("created default queue dlq with url", slog.String("queue_url", defaultQueueDLQ.URL))
 
 	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
-		QueueName: aws.String("default"),
+		QueueName: aws.String(sqslite.DefaultQueueName),
 		Attributes: map[string]string{
 			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(sqslite.RedrivePolicy{
 				DeadLetterTargetArn: defaultQueueDLQ.ARN,
@@ -119,21 +118,23 @@ func main() {
 		Handler: handler,
 	}
 	group, groupCtx := errgroup.WithContext(context.Background())
-	group.Go(func() error {
-		t := time.NewTicker(10 * time.Second)
-		prevTimestamp := time.Now()
-		defer t.Stop()
-		prevStats := make(map[string]sqslite.QueueStats)
-		for {
-			select {
-			case <-groupCtx.Done():
-				return nil
-			case <-t.C:
-				prevStats = printStatistics(server, time.Since(prevTimestamp), prevStats)
-				prevTimestamp = time.Now()
+	if !*flagSkipStats {
+		group.Go(func() error {
+			t := time.NewTicker(10 * time.Second)
+			prevTimestamp := time.Now()
+			defer t.Stop()
+			prevStats := make(map[string]sqslite.QueueStats)
+			for {
+				select {
+				case <-groupCtx.Done():
+					return nil
+				case <-t.C:
+					prevStats = printStatistics(server, time.Since(prevTimestamp), prevStats)
+					prevTimestamp = time.Now()
+				}
 			}
-		}
-	})
+		})
+	}
 	group.Go(func() error {
 		slog.Info("server listening", slog.String("addr", *flagBindAddr))
 		return httpSrv.ListenAndServe()
