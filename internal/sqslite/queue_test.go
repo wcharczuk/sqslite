@@ -14,9 +14,9 @@ import (
 
 func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	q, err := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
-		Region:    "us-west-2",
+		Region:    Some("us-west-2"),
+		Host:      Some("sqslite.local"),
 		AccountID: "test-account",
-		Host:      "sqslite.local",
 	}, &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
@@ -42,9 +42,9 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 
 func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
 	_, err := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
-		Region:    "us-west-2",
+		Region:    Some("us-west-2"),
+		Host:      Some("sqslite.local"),
 		AccountID: "test-account",
-		Host:      "sqslite.local",
 	}, &sqs.CreateQueueInput{
 		QueueName: aws.String("test!!!queue"),
 	})
@@ -53,9 +53,9 @@ func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
 
 func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {
 	q, _ := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
-		Region:    "us-west-2",
+		Region:    Some("us-west-2"),
+		Host:      Some("sqslite.local"),
 		AccountID: "test-account",
-		Host:      "sqslite.local",
 	}, &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})

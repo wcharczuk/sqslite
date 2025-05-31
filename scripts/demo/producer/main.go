@@ -43,6 +43,7 @@ func main() {
 		o.BaseEndpoint = flagEndpoint
 		o.AppID = "sqslite-demo-producer"
 	})
+
 	var ordinal uint64
 	for {
 		var messages []types.SendMessageBatchRequestEntry

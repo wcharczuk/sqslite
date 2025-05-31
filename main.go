@@ -82,13 +82,14 @@ func main() {
 	//
 
 	defaultAuthorization := sqslite.Authorization{
-		Region: *flagAWSRegion,
+		Region:    sqslite.Some(*flagAWSRegion),
+		AccountID: sqslite.DefaultAccountID,
 	}
 	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
 		QueueName: aws.String(sqslite.DefaultDLQQueueName),
 	})
 	defaultQueueDLQ.Start()
-	_ = server.Queues().AddQueue(context.Background(), defaultQueueDLQ)
+	_ = server.Accounts().EnsureQueues(sqslite.DefaultAccountID).AddQueue(defaultQueueDLQ)
 	slog.Info("created default queue dlq with url", slog.String("queue_url", defaultQueueDLQ.URL))
 
 	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
@@ -101,7 +102,7 @@ func main() {
 		},
 	})
 	defaultQueue.Start()
-	_ = server.Queues().AddQueue(context.Background(), defaultQueue)
+	_ = server.Accounts().EnsureQueues(sqslite.DefaultAccountID).AddQueue(defaultQueue)
 	slog.Info("created default queue with url", slog.String("queue_url", defaultQueue.URL))
 
 	var handler http.Handler

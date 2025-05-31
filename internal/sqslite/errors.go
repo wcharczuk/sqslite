@@ -14,6 +14,15 @@ func ErrorResponseInvalidAddress() *Error {
 	}
 }
 
+func ErrorResponseInvalidSecurity() *Error {
+	return &Error{
+		Code:        " InvalidSecurity ",
+		StatusCode:  http.StatusBadRequest,
+		SenderFault: true,
+		Message:     "The request was not made over HTTPS or did not use SigV4 for signing.",
+	}
+}
+
 func ErrorResponseInvalidMethod(method string) *Error {
 	return &Error{
 		Code:        "InvalidMethod",
@@ -38,15 +47,6 @@ func ErrorUnknownOperation(message string) *Error {
 		StatusCode:  http.StatusNotFound,
 		SenderFault: true,
 		Message:     message,
-	}
-}
-
-func ErrorUnauthorized() *Error {
-	return &Error{
-		Code:        "InvalidSecurity",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     "The request was not made over HTTPS or did not use SigV4 for signing.",
 	}
 }
 

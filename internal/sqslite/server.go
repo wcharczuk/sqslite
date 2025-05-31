@@ -1,10 +1,12 @@
 package sqslite
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"iter"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jonboulle/clockwork"
@@ -17,8 +19,8 @@ import (
 // NewServer returns a new server.
 func NewServer() *Server {
 	return &Server{
-		queues: NewQueues(),
-		clock:  clockwork.NewRealClock(),
+		accounts: NewAccounts(),
+		clock:    clockwork.NewRealClock(),
 	}
 }
 
@@ -26,8 +28,8 @@ var _ http.Handler = (*Server)(nil)
 
 // Server implements the http routing layer for sqslite.
 type Server struct {
-	queues *Queues
-	clock  clockwork.Clock
+	accounts *Accounts
+	clock    clockwork.Clock
 }
 
 // WithClock sets the server clock and returns a reference to the same server.
@@ -42,17 +44,17 @@ func (s *Server) Clock() clockwork.Clock {
 }
 
 // Queues returns the underlying queues storage.
-func (s *Server) Queues() *Queues {
-	return s.queues
+func (s *Server) Accounts() *Accounts {
+	return s.accounts
 }
 
-// EachQueue returns an iterator for the queues in the server.
+// EachQueue returns an iterator for every queue in the server across all accounts.
 func (s *Server) EachQueue() iter.Seq[*Queue] {
 	return func(yield func(*Queue) bool) {
-		s.queues.queuesMu.Lock()
-		defer s.queues.queuesMu.Unlock()
-		for _, q := range s.queues.queues {
-			if !yield(q) {
+		s.accounts.mu.Lock()
+		defer s.accounts.mu.Unlock()
+		for _, accountQueues := range s.accounts.accounts {
+			if !s.eachQueueInAccount(accountQueues, yield) {
 				return
 			}
 		}
@@ -61,26 +63,8 @@ func (s *Server) EachQueue() iter.Seq[*Queue] {
 
 // Close shuts down the server.
 func (s *Server) Close() {
-	s.queues.Close()
+	s.accounts.Close()
 }
-
-const (
-	methodCreateQueue                  = "AmazonSQS.CreateQueue"
-	methodListQueues                   = "AmazonSQS.ListQueues"
-	methodGetQueueAttributes           = "AmazonSQS.GetQueueAttributes"
-	methodSetQueueAttributes           = "AmazonSQS.SetQueueAttributes"
-	methodTagQueue                     = "AmazonSQS.TagQueue"
-	methodUntagQueue                   = "AmazonSQS.UntagQueue"
-	methodPurgeQueue                   = "AmazonSQS.PurgeQueue"
-	methodDeleteQueue                  = "AmazonSQS.DeleteQueue"
-	methodReceiveMessage               = "AmazonSQS.ReceiveMessage"
-	methodSendMessage                  = "AmazonSQS.SendMessage"
-	methodDeleteMessage                = "AmazonSQS.DeleteMessage"
-	methodChangeMessageVisibility      = "AmazonSQS.ChangeMessageVisibility"
-	methodSendMessageBatch             = "AmazonSQS.SendMessageBatch"
-	methodDeleteMessageBatch           = "AmazonSQS.DeleteMessageBatch"
-	methodChangeMessageVisibilityBatch = "AmazonSQS.ChangeMessageVisibilityBatch"
-)
 
 // ServeHTTP implements [http.Handler].
 func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -104,47 +88,46 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	action := req.Header.Get(HeaderAmzTarget)
 	switch action {
-	case methodCreateQueue:
+	case MethodCreateQueue:
 		s.createQueue(rw, req)
-	case methodGetQueueAttributes:
+	case MethodListQueues:
+		s.listQueues(rw, req)
+	case MethodGetQueueAttributes:
 		s.getQueueAttributes(rw, req)
-	case methodSetQueueAttributes:
+	case MethodSetQueueAttributes:
 		s.setQueueAttributes(rw, req)
-	case methodTagQueue:
+	case MethodTagQueue:
 		s.tagQueue(rw, req)
-	case methodUntagQueue:
+	case MethodUntagQueue:
 		s.untagQueue(rw, req)
-	case methodPurgeQueue:
+	case MethodPurgeQueue:
 		s.purgeQueue(rw, req)
-	case methodDeleteQueue:
+	case MethodDeleteQueue:
 		s.deleteQueue(rw, req)
-	case methodReceiveMessage:
+	case MethodReceiveMessage:
 		s.receiveMessage(rw, req)
-	case methodSendMessage:
+	case MethodSendMessage:
 		s.sendMessage(rw, req)
-	case methodSendMessageBatch:
+	case MethodSendMessageBatch:
 		s.sendMessageBatch(rw, req)
-	case methodDeleteMessage:
+	case MethodDeleteMessage:
 		s.deleteMessage(rw, req)
-	case methodDeleteMessageBatch:
+	case MethodDeleteMessageBatch:
 		s.deleteMessageBatch(rw, req)
-	case methodChangeMessageVisibility:
+	case MethodChangeMessageVisibility:
 		s.changeMessageVisibility(rw, req)
-	case methodChangeMessageVisibilityBatch:
+	case MethodChangeMessageVisibilityBatch:
 		s.changeMessageVisibilityBatch(rw, req)
+	case MethodStartMessageMoveTask:
+		s.startMessageMoveTask(rw, req)
+	case MethodCancelMessageMoveTask:
+		s.cancelMoveMessageTask(rw, req)
+	case MethodListMessageMoveTasks:
+		s.listMoveMessageTasks(rw, req)
 	default:
 		s.invalidMethod(rw, req, action)
 	}
 }
-
-const (
-	// HeaderAmzTarget is the header used to indicate what rpc method we're invoking.
-	HeaderAmzTarget = "X-Amz-Target"
-	// HeaderAmzQueryMode it is unclear to me what this does yet.
-	HeaderAmzQueryMode = "X-Amzn-Query-Mode"
-	// ContentTypeAmzJSON is the amz-json-1.0 content type header value.
-	ContentTypeAmzJSON = "application/x-amz-json-1.0"
-)
 
 func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.CreateQueueInput](req)
@@ -154,7 +137,7 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	}
 	authz, ok := GetContextAuthorization(req.Context())
 	if !ok {
-		serialize(rw, req, ErrorUnauthorized())
+		serialize(rw, req, ErrorResponseInvalidSecurity())
 		return
 	}
 	queue, err := NewQueueFromCreateQueueInput(s.clock, authz, input)
@@ -162,7 +145,7 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	err = s.queues.AddQueue(req.Context(), queue)
+	err = s.accounts.EnsureQueues(authz.AccountID).AddQueue(queue)
 	if err != nil {
 		serialize(rw, req, err)
 		return
@@ -173,15 +156,91 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 	})
 }
 
+func (s Server) listQueues(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.ListQueuesInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	if input.MaxResults != nil && (*input.MaxResults < 0 || *input.MaxResults > 1000) {
+		serialize(rw, req, ErrorInvalidParameterValue("MaxResults: must be greater than 0 and less than 1000"))
+	}
+	if input.NextToken != nil && input.MaxResults == nil {
+		serialize(rw, req, ErrorInvalidParameterValue("NextToken: must also set MaxResults"))
+	}
+
+	queues := s.accounts.EnsureQueues(authz.AccountID)
+
+	var inputNextToken nextPageToken
+	if input.NextToken != nil && *input.NextToken != "" {
+		inputNextToken = parseNextPageToken(*input.NextToken)
+	}
+
+	var maxResults = 1000
+	if input.MaxResults != nil {
+		maxResults = int(*input.MaxResults)
+	}
+
+	var nextToken *string
+	var queueURLs []string
+	var index int
+	for q := range queues.EachQueue() {
+		if inputNextToken.Offset > 0 && inputNextToken.Offset > index {
+			index++
+			continue
+		}
+		index++
+		if input.QueueNamePrefix != nil && *input.QueueNamePrefix != "" {
+			if !strings.HasPrefix(q.Name, *input.QueueNamePrefix) {
+				continue
+			}
+		}
+		queueURLs = append(queueURLs, q.URL)
+		if len(queueURLs) == maxResults {
+			nextToken = aws.String(nextPageToken{Offset: index}.String())
+			break
+		}
+	}
+	serialize(rw, req, &sqs.ListQueuesOutput{
+		NextToken: nextToken,
+		QueueUrls: queueURLs,
+	})
+}
+
+func parseNextPageToken(token string) (output nextPageToken) {
+	d, _ := hex.DecodeString(token)
+	_ = json.Unmarshal(d, &output)
+	return
+}
+
+type nextPageToken struct {
+	Offset int
+}
+
+func (npt nextPageToken) String() string {
+	data, _ := json.Marshal(npt)
+	return hex.EncodeToString(data)
+}
+
 func (s Server) getQueueAttributes(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.GetQueueAttributesInput](req)
 	if err != nil {
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	serialize(rw, req, &sqs.GetQueueAttributesOutput{
@@ -195,9 +254,14 @@ func (s Server) setQueueAttributes(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	if err = queue.SetQueueAttributes(input.Attributes); err != nil {
@@ -213,9 +277,14 @@ func (s Server) tagQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	queue.Tag(input.Tags)
@@ -228,9 +297,14 @@ func (s Server) untagQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	queue.Untag(input.TagKeys)
@@ -243,9 +317,14 @@ func (s Server) purgeQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	ok := s.queues.PurgeQueue(req.Context(), *input.QueueUrl)
+	authz, ok := GetContextAuthorization(req.Context())
 	if !ok {
-		serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	ok = s.accounts.EnsureQueues(authz.AccountID).PurgeQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	serialize(rw, req, &sqs.PurgeQueueOutput{})
@@ -257,7 +336,12 @@ func (s Server) deleteQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	ok := s.queues.DeleteQueue(req.Context(), *input.QueueUrl)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	ok = s.accounts.EnsureQueues(authz.AccountID).DeleteQueue(*input.QueueUrl)
 	if !ok {
 		serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
 		return
@@ -285,9 +369,14 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 
@@ -325,16 +414,6 @@ done:
 	})
 }
 
-func coalesceZero[V comparable](values ...V) V {
-	var zero V
-	for _, v := range values {
-		if v != zero {
-			return v
-		}
-	}
-	return zero
-}
-
 func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 	input, err := deserialize[sqs.SendMessageInput](req)
 	if err != nil {
@@ -345,9 +424,14 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	if err := validateMessageBodySize(input.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
@@ -382,9 +466,14 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorInvalidParameterValue(fmt.Sprintf("Entries must have at most 10 entries, you provided %d", len(input.Entries))))
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	messages := make([]*MessageState, 0, len(input.Entries))
@@ -420,9 +509,14 @@ func (s Server) deleteMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	err = queue.Delete(*input.ReceiptHandle)
@@ -443,9 +537,14 @@ func (s Server) deleteMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	for _, entry := range input.Entries {
@@ -480,12 +579,17 @@ func (s Server) changeMessageVisibility(rw http.ResponseWriter, req *http.Reques
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
 		return
 	}
-	ok := queue.ChangeMessageVisibility(
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
+		return
+	}
+	ok = queue.ChangeMessageVisibility(
 		safeDeref(input.ReceiptHandle),
 		visibilityTimeout,
 	)
@@ -506,9 +610,14 @@ func (s Server) changeMessageVisibilityBatch(rw http.ResponseWriter, req *http.R
 		serialize(rw, req, err)
 		return
 	}
-	queue, err := s.queues.GetQueue(req.Context(), *input.QueueUrl)
-	if err != nil {
-		serialize(rw, req, err)
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	for _, entry := range input.Entries {
@@ -533,6 +642,115 @@ func (s Server) changeMessageVisibilityBatch(rw http.ResponseWriter, req *http.R
 	})
 }
 
+func (s Server) startMessageMoveTask(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.StartMessageMoveTaskInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	if input.SourceArn == nil || *input.SourceArn == "" {
+		serialize(rw, req, ErrorMissingRequiredParameter("SourceArn"))
+		return
+	}
+	if input.DestinationArn == nil || *input.DestinationArn == "" {
+		serialize(rw, req, ErrorMissingRequiredParameter("DestinationArn"))
+		return
+	}
+	if input.MaxNumberOfMessagesPerSecond != nil && *input.MaxNumberOfMessagesPerSecond > 500 {
+		serialize(rw, req, ErrorInvalidParameterValue("MaxNumberOfMessagesPerSecond: must be less than 500"))
+		return
+	}
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queues := s.accounts.EnsureQueues(authz.AccountID)
+	mmt, err := queues.StartMoveMessageTask(s.clock, *input.SourceArn, *input.DestinationArn, safeDeref(input.MaxNumberOfMessagesPerSecond))
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	serialize(rw, req, &sqs.StartMessageMoveTaskOutput{
+		TaskHandle: aws.String(mmt.TaskHandle),
+	})
+}
+
+func (s Server) cancelMoveMessageTask(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.CancelMessageMoveTaskInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	if input.TaskHandle == nil || *input.TaskHandle == "" {
+		serialize(rw, req, ErrorMissingRequiredParameter("TaskHandle"))
+		return
+	}
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queues := s.accounts.EnsureQueues(authz.AccountID)
+	task, err := queues.CancelMoveMessageTask(*input.TaskHandle)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	serialize(rw, req, &sqs.CancelMessageMoveTaskOutput{
+		ApproximateNumberOfMessagesMoved: int64(task.Stats().ApproximateNumberOfMessagesMoved),
+	})
+}
+
+func (s Server) listMoveMessageTasks(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.ListMessageMoveTasksInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	if input.SourceArn == nil || *input.SourceArn == "" {
+		serialize(rw, req, ErrorMissingRequiredParameter("SourceArn"))
+		return
+	}
+	if input.MaxResults != nil && (*input.MaxResults < 0 || *input.MaxResults > 10) {
+		serialize(rw, req, ErrorInvalidParameterValue("MaxResults: must be greater than 0 and less than 10"))
+		return
+	}
+
+	// if unset, max results defaults to 1
+	// otherwise the user can provide a max results [1,10]
+	var maxResults = 1
+	if input.MaxResults != nil && *input.MaxResults > 0 {
+		maxResults = int(*input.MaxResults)
+	}
+
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queues := s.accounts.EnsureQueues(authz.AccountID)
+	var results []types.ListMessageMoveTasksResultEntry
+	for mmt := range queues.EachMoveMessageTasks(*input.SourceArn) {
+		mmtStats := mmt.Stats()
+		results = append(results, types.ListMessageMoveTasksResultEntry{
+			StartedTimestamp:                  mmt.Started().Unix(),
+			SourceArn:                         aws.String(mmt.SourceQueue.ARN),
+			DestinationArn:                    aws.String(mmt.DestinationQueue.ARN),
+			MaxNumberOfMessagesPerSecond:      aws.Int32(int32(mmt.MaxNumberOfMessagesPerSecond)),
+			Status:                            aws.String(mmt.Status().String()),
+			ApproximateNumberOfMessagesMoved:  int64(mmtStats.ApproximateNumberOfMessagesMoved),
+			ApproximateNumberOfMessagesToMove: aws.Int64(int64(mmtStats.ApproximateNumberOfMessagesToMove)),
+		})
+		if len(results) == maxResults {
+			break
+		}
+	}
+	serialize(rw, req, &sqs.ListMessageMoveTasksOutput{
+		Results: results,
+	})
+}
+
 func (s Server) unknownMethod(rw http.ResponseWriter, req *http.Request) {
 	serialize(rw, req, ErrorResponseInvalidMethod(req.Method))
 }
@@ -543,6 +761,17 @@ func (s Server) unknownPath(rw http.ResponseWriter, req *http.Request) {
 
 func (s Server) invalidMethod(rw http.ResponseWriter, req *http.Request, action string) {
 	serialize(rw, req, ErrorUnknownOperation(action))
+}
+
+func (s Server) eachQueueInAccount(queues *Queues, yield func(*Queue) bool) bool {
+	queues.queuesMu.Lock()
+	defer queues.queuesMu.Unlock()
+	for _, queue := range queues.queues {
+		if !yield(queue) {
+			return false
+		}
+	}
+	return true
 }
 
 func requireEntryID(id *string) *Error {

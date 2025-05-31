@@ -15,30 +15,23 @@ const (
 )
 
 type Authorization struct {
-	Host      string
-	Region    string
+	Host      Optional[string]
+	Region    Optional[string]
 	AccountID string
 }
 
 func (a Authorization) HostOrDefault() string {
-	if a.Host != "" {
-		return a.Host
+	if a.Host.IsSet {
+		return a.Host.Value
 	}
 	return DefaultHost
 }
 
 func (a Authorization) RegionOrDefault() string {
-	if a.Region != "" {
-		return a.Region
+	if a.Region.IsSet {
+		return a.Region.Value
 	}
 	return DefaultRegion
-}
-
-func (a Authorization) AccountIDOrDefault() string {
-	if a.AccountID != "" {
-		return a.AccountID
-	}
-	return DefaultAccountID
 }
 
 type authorizationKey struct{}
@@ -65,63 +58,63 @@ func getRequestAuthorization(req *http.Request) (auth Authorization, err *Error)
 	if err != nil {
 		return
 	}
-	auth.Host = req.Host
+	auth.Host = Some(req.Host)
 	return
 }
 
 func getRequestAuthorizationAccountID(req *http.Request) (accountID string, err *Error) {
 	authorizationHeader := req.Header.Get("Authorization")
 	if authorizationHeader == "" {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	if !strings.HasPrefix(authorizationHeader, knownGoodSignatureType) {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	fields := strings.Fields(authorizationHeader)
 	if len(fields) < 2 {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	credentialsField := strings.TrimPrefix(fields[1], "Credential=")
 	if credentialsField == "" {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	accountID, _, _ = strings.Cut(credentialsField, "/")
 	if accountID == "" {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	return
 }
 
-func getRequestAuthorizationRegion(req *http.Request) (region string, err *Error) {
+func getRequestAuthorizationRegion(req *http.Request) (region Optional[string], err *Error) {
 	authorizationHeader := req.Header.Get("Authorization")
 	if authorizationHeader == "" {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	if !strings.HasPrefix(authorizationHeader, knownGoodSignatureType) {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	fields := strings.Fields(authorizationHeader)
 	if len(fields) < 2 {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	credentialsField := strings.TrimPrefix(fields[1], "Credential=")
 	if credentialsField == "" {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
 	parts := strings.Split(credentialsField, "/")
 	if len(parts) < 3 {
-		err = ErrorUnauthorized()
+		err = ErrorResponseInvalidSecurity()
 		return
 	}
-	region = parts[2]
+	region = Some(parts[2])
 	return
 }

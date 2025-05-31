@@ -3,32 +3,31 @@ package sqslite
 import (
 	"context"
 	"fmt"
-	"log/slog"
+	"iter"
 	"sync"
+
+	"github.com/jonboulle/clockwork"
 )
 
 // NewQueues returns a new queues storage.
 func NewQueues() *Queues {
 	return &Queues{
-		queueURLs: make(map[QueueName]string),
-		queueARNs: make(map[string]string),
-		queues:    make(map[string]*Queue),
+		queueURLs:                   make(map[string]string),
+		queueARNs:                   make(map[string]string),
+		queues:                      make(map[string]*Queue),
+		moveMessageTasks:            make(map[string]*MessageMoveTask),
+		moveMessageTasksBySourceArn: make(map[string]*OrderedSet[string]),
 	}
 }
 
 // Queues holds all the queue
 type Queues struct {
-	queuesMu  sync.Mutex
-	queueURLs map[QueueName]string
-	queueARNs map[string]string
-	queues    map[string]*Queue
-}
-
-// QueueName is a pair of AccountID and QueueName
-// because queue names are only unique within an account.
-type QueueName struct {
-	AccountID string
-	QueueName string
+	queuesMu                    sync.Mutex
+	queueURLs                   map[string]string
+	queueARNs                   map[string]string
+	queues                      map[string]*Queue
+	moveMessageTasks            map[string]*MessageMoveTask
+	moveMessageTasksBySourceArn map[string]*OrderedSet[string]
 }
 
 func (q *Queues) Close() {
@@ -39,13 +38,10 @@ func (q *Queues) Close() {
 	}
 }
 
-func (q *Queues) AddQueue(ctx context.Context, queue *Queue) (err *Error) {
+func (q *Queues) AddQueue(queue *Queue) (err *Error) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
-
-	// note(wc): we do a lot of checks after the lock acquisition
-	// to prevent race conditions with concurrent creates
-	if _, ok := q.queueURLs[QueueName{AccountID: queue.AccountID, QueueName: queue.Name}]; ok {
+	if _, ok := q.queueURLs[queue.Name]; ok {
 		err = ErrorInvalidParameterValue(fmt.Sprintf("QueueName: queue already exists with name: %s", queue.Name))
 		return
 	}
@@ -61,14 +57,15 @@ func (q *Queues) AddQueue(ctx context.Context, queue *Queue) (err *Error) {
 			return
 		}
 		queue.dlqTarget = dlq
+		dlq.AddDLQSources(queue)
 	}
-	q.queueURLs[QueueName{AccountID: queue.AccountID, QueueName: queue.Name}] = queue.URL
+	q.queueURLs[queue.Name] = queue.URL
 	q.queueARNs[queue.ARN] = queue.URL
 	q.queues[queue.URL] = queue
 	return
 }
 
-func (q *Queues) PurgeQueue(ctx context.Context, queueURL string) (ok bool) {
+func (q *Queues) PurgeQueue(queueURL string) (ok bool) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
 	queue, ok := q.queues[queueURL]
@@ -79,82 +76,112 @@ func (q *Queues) PurgeQueue(ctx context.Context, queueURL string) (ok bool) {
 	return
 }
 
-func (q *Queues) ListQueues(ctx context.Context) ([]*Queue, error) {
-	q.queuesMu.Lock()
-	defer q.queuesMu.Unlock()
-	authz, ok := GetContextAuthorization(ctx)
-	if !ok {
-		return nil, ErrorUnauthorized()
-	}
-	var output []*Queue
-	for _, queue := range q.queues {
-		if queue.AccountID == authz.AccountID {
-			output = append(output, queue)
+func (q *Queues) EachQueue() iter.Seq[*Queue] {
+	return func(yield func(*Queue) bool) {
+		q.queuesMu.Lock()
+		defer q.queuesMu.Unlock()
+		for _, queue := range q.queues {
+			if !yield(queue) {
+				return
+			}
 		}
 	}
-	return output, nil
 }
 
-func (q *Queues) GetQueueURL(ctx context.Context, queueName string) (queueURL string, ok bool) {
+func (q *Queues) StartMoveMessageTask(clock clockwork.Clock, sourceArn, destinationArn string, rateLimit int32) (*MessageMoveTask, *Error) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
-	var authz Authorization
-	authz, ok = GetContextAuthorization(ctx)
+	sourceQueueURL, ok := q.queueARNs[sourceArn]
 	if !ok {
-		return
+		return nil, ErrorInvalidParameterValue("SourceArn: queueURL for arn not found")
 	}
-	queueURL, ok = q.queueURLs[QueueName{AccountID: authz.AccountID, QueueName: queueName}]
+	sourceQueue, ok := q.queues[sourceQueueURL]
+	if !ok {
+		return nil, ErrorInvalidParameterValue("SourceArn: queue not found for queueURL")
+	}
+	destinationQueueURL, ok := q.queueARNs[destinationArn]
+	if !ok {
+		return nil, ErrorInvalidParameterValue("DestinationArn: queueURL for arn not found")
+	}
+	destinationQueue, ok := q.queues[destinationQueueURL]
+	if !ok {
+		return nil, ErrorInvalidParameterValue("DestinationArn: queue not found for queueURL")
+	}
+	mmt := NewMoveMessageTask(clock, sourceQueue, destinationQueue, int(rateLimit))
+	mmt.Start(context.Background())
+	q.moveMessageTasks[mmt.TaskHandle] = mmt
+	if _, ok := q.moveMessageTasksBySourceArn[sourceArn]; !ok {
+		q.moveMessageTasksBySourceArn[sourceArn] = NewOrderedSet[string]()
+	}
+	q.moveMessageTasksBySourceArn[sourceArn].Add(mmt.TaskHandle)
+	return mmt, nil
+}
+
+func (q *Queues) CancelMoveMessageTask(taskHandle string) (*MessageMoveTask, *Error) {
+	q.queuesMu.Lock()
+	defer q.queuesMu.Unlock()
+
+	task, ok := q.moveMessageTasks[taskHandle]
+	if !ok {
+		return nil, ErrorInvalidParameterValue("TaskHandle: not found")
+	}
+	if task.Status() != MessageMoveStatusRunning {
+		return nil, ErrorInvalidParameterValue("TaskHandle: task status is not RUNNING")
+	}
+	task.Close()
+	return task, nil
+}
+
+func (q *Queues) EachMoveMessageTasks(sourceArn string) iter.Seq[*MessageMoveTask] {
+	return func(yield func(*MessageMoveTask) bool) {
+		q.queuesMu.Lock()
+		defer q.queuesMu.Unlock()
+		orderedTasks, ok := q.moveMessageTasksBySourceArn[sourceArn]
+		if !ok {
+			return
+		}
+		for taskHandle := range orderedTasks.InOrder() {
+			mmt, ok := q.moveMessageTasks[taskHandle]
+			if !ok {
+				continue
+			}
+			if !yield(mmt) {
+				return
+			}
+		}
+	}
+}
+
+func (q *Queues) GetQueueURL(queueName string) (queueURL string, ok bool) {
+	q.queuesMu.Lock()
+	defer q.queuesMu.Unlock()
+	queueURL, ok = q.queueURLs[queueName]
 	return
 }
 
-func (q *Queues) GetQueue(ctx context.Context, queueURL string) (queue *Queue, err *Error) {
+func (q *Queues) GetQueue(queueURL string) (queue *Queue, ok bool) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
-
-	authz, ok := GetContextAuthorization(ctx)
-	if !ok {
-		err = ErrorUnauthorized()
-		return
-	}
 	queue, ok = q.queues[queueURL]
-	if !ok {
-		slog.Error("get queue; queue not found", slog.String("queueURL", queueURL))
-		err = ErrorQueueDoesNotExist()
-		return
-	}
-	if queue.AccountID != authz.AccountID {
-		slog.Error("get queue; accountID mismatch",
-			slog.String("queueURL", queueURL),
-			slog.String("requestAccountID", authz.AccountID),
-			slog.String("queueAccountID", queue.AccountID),
-		)
-		queue = nil
-		err = ErrorQueueDoesNotExist()
-		return
-	}
 	return
 }
 
-func (q *Queues) DeleteQueue(ctx context.Context, queueURL string) (ok bool) {
+func (q *Queues) DeleteQueue(queueURL string) (ok bool) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
-
-	var authz Authorization
-	authz, ok = GetContextAuthorization(ctx)
-	if !ok {
-		return
-	}
 	var queue *Queue
 	queue, ok = q.queues[queueURL]
 	if !ok {
 		return
 	}
-	if queue.AccountID != authz.AccountID {
-		ok = false
-		return
-	}
 	queue.Close()
-	delete(q.queueURLs, QueueName{AccountID: queue.AccountID, QueueName: queue.Name})
+
+	if queue.dlqTarget != nil {
+		queue.dlqTarget.RemoveDLQSource(queueURL)
+	}
+
+	// cancel move message tasks ...
+	delete(q.queueURLs, queue.Name)
 	delete(q.queues, queueURL)
 	return
 }

@@ -1,5 +1,7 @@
 package sqslite
 
+import "fmt"
+
 func must[V any](v V, err error) V {
 	if err != nil {
 		panic(err)
@@ -41,6 +43,21 @@ func distinct[V comparable](values []V) (output []V) {
 func flatten[V any](values [][]V) (output []V) {
 	for _, list := range values {
 		output = append(output, list...)
+	}
+	return
+}
+
+func keysAndValues[K comparable, V any](m map[K]V) (output []string) {
+	output = make([]string, 0, len(m)<<1)
+	for k, v := range m {
+		output = append(output, fmt.Sprint(k), fmt.Sprint(v))
+	}
+	return
+}
+
+func safeDeref[T any](valuePtr *T) (output T) {
+	if valuePtr != nil {
+		output = *valuePtr
 	}
 	return
 }

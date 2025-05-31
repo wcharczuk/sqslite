@@ -25,8 +25,9 @@ func md5sum(values ...string) string {
 func md5OfMessageAttributes(attributes map[string]types.MessageAttributeValue) string {
 	keys := slices.Collect(maps.Keys(attributes))
 	sort.Strings(keys)
-	var buffer []byte
+	wr := md5.New()
 	for _, key := range keys {
+		var buffer []byte
 		attribute := attributes[key]
 		buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(key)))
 		buffer = append(buffer, []byte(key)...)
@@ -41,6 +42,7 @@ func md5OfMessageAttributes(attributes map[string]types.MessageAttributeValue) s
 			buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(attribute.BinaryValue)))
 			buffer = append(buffer, attribute.BinaryValue...)
 		}
+		wr.Write(buffer)
 	}
-	return hex.EncodeToString(md5.New().Sum(buffer))
+	return hex.EncodeToString(wr.Sum(nil))
 }

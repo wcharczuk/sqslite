@@ -26,7 +26,7 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 	}
 	queue := &Queue{
 		Name:                            *input.QueueName,
-		AccountID:                       authz.AccountIDOrDefault(),
+		AccountID:                       authz.AccountID,
 		URL:                             QueueURL(authz, *input.QueueName),
 		ARN:                             QueueARN(authz, *input.QueueName),
 		created:                         clock.Now(),
@@ -36,6 +36,7 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
 		messagesInflight:                make(map[uuid.UUID]*MessageState),
 		messagesInflightByReceiptHandle: make(map[string]uuid.UUID),
+		dlqSources:                      make(map[string]*Queue),
 		MaximumMessagesInflight:         120000,
 		Attributes:                      input.Attributes,
 		Tags:                            input.Tags,
@@ -47,24 +48,14 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 	return queue, nil
 }
 
-const (
-	DefaultQueueName    = "default"
-	DefaultDLQQueueName = "default-dlq"
-
-	DefaultQueueMaximumMessageSizeBytes = 256 * 1024         // 256KiB
-	DefaultQueueMessageRetentionPeriod  = 4 * 24 * time.Hour // 4 days
-	DefaultQueueReceiveMessageWaitTime  = 20 * time.Second
-	DefaultQueueVisibilityTimeout       = 30 * time.Second
-)
-
 // QueueURL creates a queue url from required inputs.
 func QueueURL(authz Authorization, queueName string) string {
-	return fmt.Sprintf("http://%s/%s/%s", authz.HostOrDefault(), authz.AccountIDOrDefault(), queueName)
+	return fmt.Sprintf("http://%s/%s/%s", authz.HostOrDefault(), authz.AccountID, queueName)
 }
 
 // QueueARN creates a queue arn from required inputs.
 func QueueARN(authz Authorization, queueName string) string {
-	return fmt.Sprintf("arn:aws:sqs:%s:%s:%s", authz.RegionOrDefault(), authz.AccountIDOrDefault(), queueName)
+	return fmt.Sprintf("arn:aws:sqs:%s:%s:%s", authz.RegionOrDefault(), authz.AccountID, queueName)
 }
 
 // RedrivePolicy is the json data in the [types.QueueAttributeNameRedrivePolicy] attribute field.
@@ -102,7 +93,10 @@ type Queue struct {
 
 	clock clockwork.Clock
 
-	dlqTarget                       *Queue
+	isDLQ      uint32
+	dlqTarget  *Queue
+	dlqSources map[string]*Queue
+
 	messagesReadyOrdered            *LinkedList[*MessageState]
 	messagesReady                   map[uuid.UUID]*LinkedListNode[*MessageState]
 	messagesDelayed                 map[uuid.UUID]*MessageState
@@ -119,6 +113,29 @@ type Queue struct {
 	stats QueueStats
 }
 
+func (q *Queue) AddDLQSources(sources ...*Queue) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, queue := range sources {
+		atomic.StoreUint32(&q.isDLQ, 1)
+		q.dlqSources[queue.URL] = queue
+	}
+}
+
+func (q *Queue) RemoveDLQSource(queueURL string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.dlqSources, queueURL)
+	if len(q.dlqSources) == 0 {
+		atomic.StoreUint32(&q.isDLQ, 0)
+	}
+}
+
+// IsDLQ indicates if a queue is a dlq.
+func (q *Queue) IsDLQ() bool {
+	return atomic.LoadUint32(&q.isDLQ) == 1
+}
+
 // Stats are basic statistics about the queue.
 type QueueStats struct {
 	NumMessages         int64
@@ -128,6 +145,7 @@ type QueueStats struct {
 
 	TotalMessagesSent              uint64
 	TotalMessagesReceived          uint64
+	TotalMessagesMoved             uint64
 	TotalMessagesDeleted           uint64
 	TotalMessagesChangedVisibility uint64
 	TotalMessagesPurged            uint64
@@ -144,6 +162,7 @@ func (q *Queue) Stats() (output QueueStats) {
 
 	output.TotalMessagesSent = atomic.LoadUint64(&q.stats.TotalMessagesSent)
 	output.TotalMessagesReceived = atomic.LoadUint64(&q.stats.TotalMessagesReceived)
+	output.TotalMessagesMoved = atomic.LoadUint64(&q.stats.TotalMessagesMoved)
 	output.TotalMessagesDeleted = atomic.LoadUint64(&q.stats.TotalMessagesDeleted)
 	output.TotalMessagesChangedVisibility = atomic.LoadUint64(&q.stats.TotalMessagesChangedVisibility)
 	output.TotalMessagesPurged = atomic.LoadUint64(&q.stats.TotalMessagesPurged)
@@ -302,6 +321,19 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 	for _, m := range output {
 		delete(q.messagesReady, m.MessageID)
 	}
+	return
+}
+
+func (q *Queue) PopMessageForMove() (msg *MessageState, ok bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	msg, ok = q.messagesReadyOrdered.Pop()
+	if !ok {
+		return
+	}
+	atomic.AddUint64(&q.stats.TotalMessagesMoved, 1)
+	atomic.AddInt64(&q.stats.NumMessagesReady, -1)
+	delete(q.messagesReady, msg.Message.MessageID)
 	return
 }
 
@@ -555,7 +587,7 @@ func (q *Queue) NewMessageState(m Message, created time.Time, delaySeconds int) 
 		Message:                m,
 		Created:                created,
 		MessageRetentionPeriod: q.MessageRetentionPeriod,
-		ReceiptHandles:         &SafeSet[string]{storage: make(map[string]struct{})},
+		ReceiptHandles:         NewSafeSet[string](),
 		SequenceNumber:         atomic.AddUint64(&q.sequenceNumber, 1),
 	}
 	if delaySeconds > 0 {
@@ -731,21 +763,6 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		q.Policy = Some(policy)
 	}
 	return nil
-}
-
-func keysAndValues[K comparable, V any](m map[K]V) (output []string) {
-	output = make([]string, 0, len(m)<<1)
-	for k, v := range m {
-		output = append(output, fmt.Sprint(k), fmt.Sprint(v))
-	}
-	return
-}
-
-func safeDeref[T any](valuePtr *T) (output T) {
-	if valuePtr != nil {
-		output = *valuePtr
-	}
-	return
 }
 
 var validQueueNameRegexp = regexp.MustCompile("^[0-9,a-z,A-Z,_,-]+$")

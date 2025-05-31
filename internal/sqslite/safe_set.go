@@ -5,6 +5,10 @@ import (
 	"sync"
 )
 
+func NewSafeSet[T comparable]() *SafeSet[T] {
+	return &SafeSet[T]{storage: make(map[T]struct{})}
+}
+
 type SafeSet[T comparable] struct {
 	storageMu sync.Mutex
 	storage   map[T]struct{}
