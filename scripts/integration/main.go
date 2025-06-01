@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -29,8 +32,11 @@ import (
 
 var (
 	flagAWSRegion = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
-	flagScenarios = pflag.StringSlice("scenario", []string{"messages-move"}, "The integration test scenarios to run")
 	flagLocal     = pflag.Bool("local", false, "If we should target a local sqslite instance")
+	flagScenarios = pflag.StringSlice("scenario", []string{"messages-move"}, fmt.Sprintf(
+		"The integration test scenarios to run (%s)",
+		strings.Join(slices.Collect(maps.Keys(scenarios)), "|"),
+	))
 )
 
 // assertions
@@ -136,14 +142,18 @@ func messagesMove(it *IntegrationTest) {
 		for _, msg := range messages {
 			it.ChangeMessageVisibility(mainQueue, msg, 0)
 		}
-		it.Sleep(time.Second)
 	}
+
+	it.Sleep(time.Second)
 
 	_ = it.StartMessagesMoveTask(dlq, mainQueue)
 
 done:
 	for {
 		tasks := it.ListMessagesMoveTasks(dlq)
+		if len(tasks) == 0 {
+			panic("expect at least one task")
+		}
 		for _, t := range tasks {
 			if t.Status != "RUNNING" {
 				break done

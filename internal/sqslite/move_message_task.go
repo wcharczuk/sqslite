@@ -2,6 +2,7 @@ package sqslite
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -64,6 +65,8 @@ type MessageMoveTask struct {
 	DestinationQueue             *Queue
 	MaxNumberOfMessagesPerSecond int
 
+	FailureReason string
+
 	mu      sync.Mutex
 	limiter *rate.Limiter
 	cancel  func()
@@ -118,15 +121,43 @@ func (m *MessageMoveTask) moveMessages(ctx context.Context) {
 				return
 			}
 		}
+		// handle the queue being deleted
+		if m.DestinationQueue.IsDeleted() {
+			m.markFailedByDestinationDeleted()
+			return
+		}
 		msg, ok := m.SourceQueue.PopMessageForMove()
 		if !ok {
-			atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCompleted))
+			m.markCompleted()
 			return
 		}
 		m.DestinationQueue.Push(msg)
 		atomic.AddUint64(&m.stats.ApproximateNumberOfMessagesMoved, 1)
 		atomic.StoreInt64(&m.stats.ApproximateNumberOfMessagesToMove, m.SourceQueue.Stats().NumMessagesReady)
 	}
+}
+
+func (m *MessageMoveTask) markFailedByDestinationDeleted() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status != uint32(MessageMoveStatusRunning) {
+		return
+	}
+	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCompleted))
+	m.cancel() // clear the goroutine here
+	m.cancel = nil
+}
+
+func (m *MessageMoveTask) markCompleted() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status != uint32(MessageMoveStatusRunning) {
+		return
+	}
+	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusFailed))
+	m.cancel() // clear the goroutine here
+	m.cancel = nil
+	m.FailureReason = fmt.Sprintf("destination queue %q has been deleted", m.DestinationQueue.ARN)
 }
 
 func (m *MessageMoveTask) Close() {
