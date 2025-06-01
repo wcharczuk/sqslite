@@ -1047,6 +1047,30 @@ func Test_Queue_ChangeMessageVisibility_zeroTimeout_makesMessageImmediatelyVisib
 	q.mu.Unlock()
 }
 
+func Test_Queue_ChangeMessageVisibility_zeroTimeout_makesMessageImmediatelyDLQd(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	dlq := createTestQueue(t, clock)
+	q := createTestQueue(t, clock)
+	q.dlqTarget = dlq
+	q.RedrivePolicy = Some(RedrivePolicy{
+		DeadLetterTargetArn: dlq.ARN,
+		MaxReceiveCount:     testMaxReceiveCount,
+	})
+
+	pushTestMessages(q, 5)
+
+	// Receive message(s) and update visibility
+	for range testMaxReceiveCount {
+		received := q.Receive(5, 0)
+		require.Len(t, received, 5)
+		for _, msg := range received {
+			q.ChangeMessageVisibility(msg.ReceiptHandle.Value, 0)
+		}
+	}
+
+	require.EqualValues(t, 5, dlq.Stats().NumMessages)
+}
+
 func Test_Queue_ChangeMessageVisibility_zeroTimeout_movesMessageToReadyQueue(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
@@ -1637,17 +1661,17 @@ func Test_Queue_ChangeMessageVisibilityBatch_mixedZeroAndNonZeroTimeouts_handles
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_noInflightMessages_isNoOp(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_noInflightMessages_isNoOp(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	updatedStats := q.Stats()
 	require.Equal(t, initialStats, updatedStats)
 }
 
-func Test_Queue_UpdateInflightToReady_noVisibleMessages_isNoOp(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_noVisibleMessages_isNoOp(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message with a future visibility deadline
@@ -1656,13 +1680,13 @@ func Test_Queue_UpdateInflightToReady_noVisibleMessages_isNoOp(t *testing.T) {
 	require.Len(t, received, 1)
 	initialStats := q.Stats()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	updatedStats := q.Stats()
 	require.Equal(t, initialStats.TotalMessagesInflightToReady, updatedStats.TotalMessagesInflightToReady)
 }
 
-func Test_Queue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_withVisibleMessages_movesToReady(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1677,7 +1701,7 @@ func Test_Queue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testin
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	_, exists := q.messagesReady[messageID]
@@ -1685,7 +1709,7 @@ func Test_Queue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testin
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_mixedVisibleNonVisible_movesOnlyVisible(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive two messages
@@ -1701,7 +1725,7 @@ func Test_Queue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t 
 	msgState2.VisibilityDeadline = Some(q.Clock().Now().Add(60 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	// First message should be in ready
@@ -1713,7 +1737,7 @@ func Test_Queue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t 
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_removesVisibleMessagesFromInflight(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1728,7 +1752,7 @@ func Test_Queue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *test
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	_, exists := q.messagesInflight[messageID]
@@ -1736,7 +1760,7 @@ func Test_Queue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *test
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_addsVisibleMessagesToReady(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1751,7 +1775,7 @@ func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	_, exists := q.messagesReady[messageID]
@@ -1759,7 +1783,7 @@ func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToOrderedList(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_addsVisibleMessagesToOrderedList(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialListLen := q.messagesReadyOrdered.Len()
 
@@ -1775,14 +1799,14 @@ func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToOrderedList(t *testin
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	require.Equal(t, initialListLen+1, q.messagesReadyOrdered.Len())
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_removesAllReceiptHandlesForVisibleMessages(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1802,7 +1826,7 @@ func Test_Queue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	_, exists1 := q.messagesInflightByReceiptHandle[receiptHandle]
@@ -1812,7 +1836,7 @@ func Test_Queue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_incrementsTotalMessagesInflightToReady(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_incrementsTotalMessagesInflightToReady(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
@@ -1829,13 +1853,13 @@ func Test_Queue_UpdateInflightToReady_incrementsTotalMessagesInflightToReady(t *
 	msgState2.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	updatedStats := q.Stats()
 	require.Equal(t, initialStats.TotalMessagesInflightToReady+2, updatedStats.TotalMessagesInflightToReady)
 }
 
-func Test_Queue_UpdateInflightToReady_incrementsNumMessagesReadyForVisibleMessages(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_incrementsNumMessagesReadyForVisibleMessages(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1850,13 +1874,13 @@ func Test_Queue_UpdateInflightToReady_incrementsNumMessagesReadyForVisibleMessag
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	updatedStats := q.Stats()
 	require.Equal(t, afterReceiveStats.NumMessagesReady+1, updatedStats.NumMessagesReady)
 }
 
-func Test_Queue_UpdateInflightToReady_decrementsNumMessagesInflightForVisibleMessages(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_decrementsNumMessagesInflightForVisibleMessages(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1871,13 +1895,13 @@ func Test_Queue_UpdateInflightToReady_decrementsNumMessagesInflightForVisibleMes
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	updatedStats := q.Stats()
 	require.Equal(t, afterReceiveStats.NumMessagesInflight-1, updatedStats.NumMessagesInflight)
 }
 
-func Test_Queue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_expiredVisibilityDeadline_movesMessage(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1892,7 +1916,7 @@ func Test_Queue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	_, inInflight := q.messagesInflight[messageID]
@@ -1902,7 +1926,7 @@ func Test_Queue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInflight(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_futureVisibilityDeadline_keepsMessageInInflight(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1917,7 +1941,7 @@ func Test_Queue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInf
 	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(60 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	_, inInflight := q.messagesInflight[messageID]
@@ -1927,7 +1951,7 @@ func Test_Queue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInf
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_zeroVisibilityDeadline_movesMessage(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_zeroVisibilityDeadline_movesMessage(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
@@ -1942,7 +1966,7 @@ func Test_Queue_UpdateInflightToReady_zeroVisibilityDeadline_movesMessage(t *tes
 	msgState.VisibilityDeadline = None[time.Time]()
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	_, inInflight := q.messagesInflight[messageID]
@@ -1952,7 +1976,7 @@ func Test_Queue_UpdateInflightToReady_zeroVisibilityDeadline_movesMessage(t *tes
 	q.mu.Unlock()
 }
 
-func Test_Queue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState(t *testing.T) {
+func Test_Queue_UpdateInflightToReadyOrMoveToDLQ_preservesNonVisibleMessagesInInflightState(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive two messages
@@ -1968,7 +1992,7 @@ func Test_Queue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState
 	msgState2.VisibilityDeadline = Some(q.Clock().Now().Add(60 * time.Second))
 	q.mu.Unlock()
 
-	q.UpdateInflightToReady()
+	q.UpdateInflightVisibility()
 
 	q.mu.Lock()
 	// Second message should remain unchanged in inflight

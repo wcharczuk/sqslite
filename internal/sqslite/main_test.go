@@ -56,6 +56,16 @@ func testHelperReceiveMessages(t *testing.T, testServer *httptest.Server, input 
 	return testHelperDoClientMethod[sqs.ReceiveMessageInput, sqs.ReceiveMessageOutput](t, testServer, MethodReceiveMessage, input)
 }
 
+func testHelperChangeMessageVisibility(t *testing.T, testServer *httptest.Server, input *sqs.ChangeMessageVisibilityInput) *sqs.ChangeMessageVisibilityOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.ChangeMessageVisibilityInput, sqs.ChangeMessageVisibilityOutput](t, testServer, MethodChangeMessageVisibility, input)
+}
+
+func testHelperDeleteMessage(t *testing.T, testServer *httptest.Server, input *sqs.DeleteMessageInput) *sqs.DeleteMessageOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.DeleteMessageInput, sqs.DeleteMessageOutput](t, testServer, MethodDeleteMessage, input)
+}
+
 func testHelperDoClientMethod[Input, Output any](t *testing.T, testServer *httptest.Server, method string, input *Input) *Output {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
@@ -116,6 +126,7 @@ func testHelperDoClientMethodWithoutAuth(t *testing.T, testServer *httptest.Serv
 
 const (
 	testAccountID           = "test-account"
+	testMaxReceiveCount     = 3
 	testDefaultQueueURL     = "http://sqslite.local/test-account/default"
 	testDefaultDLQQueueURL  = "http://sqslite.local/test-account/default-dlq"
 	testAuthorizationHeader = "AWS4-HMAC-SHA256 Credential=test-account/20250522/us-east-1/sqs/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-date;x-amz-security-token;x-amz-target;x-amzn-query-mode, Signature=DEADBEEF"
@@ -137,7 +148,7 @@ func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 		Attributes: map[string]string{
 			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(RedrivePolicy{
 				DeadLetterTargetArn: dlq.ARN,
-				MaxReceiveCount:     10,
+				MaxReceiveCount:     testMaxReceiveCount,
 			}),
 		},
 	})

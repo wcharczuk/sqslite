@@ -100,7 +100,26 @@ func main() {
 }
 
 var scenarios = map[string]func(*IntegrationTest){
+	"fill-dlq":      fillDLQ,
 	"messages-move": messagesMove,
+}
+
+func fillDLQ(it *IntegrationTest) {
+	dlq := it.CreateQueue()
+	mainQueue := it.CreateQueueWithDLQ(dlq)
+
+	for range 5 {
+		it.SendMessage(mainQueue)
+	}
+
+	// transfer messages to the dlq
+	for range 5 {
+		messages := it.ReceiveMessages(mainQueue)
+		for _, msg := range messages {
+			it.ChangeMessageVisibility(mainQueue, msg, 0)
+		}
+		it.Sleep(time.Second)
+	}
 }
 
 func messagesMove(it *IntegrationTest) {
@@ -117,9 +136,9 @@ func messagesMove(it *IntegrationTest) {
 		for _, msg := range messages {
 			it.ChangeMessageVisibility(mainQueue, msg, 0)
 		}
+		it.Sleep(time.Second)
 	}
 
-	it.Sleep(time.Second)
 	_ = it.StartMessagesMoveTask(dlq, mainQueue)
 
 done:

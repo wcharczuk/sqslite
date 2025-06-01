@@ -295,3 +295,54 @@ func Test_Server_receiveMessage_belowMaxNumberOfMessages(t *testing.T) {
 	})
 	require.Len(t, received.Messages, 2)
 }
+
+func Test_Server_receive_delete(t *testing.T) {
+	server, testServer := startTestServer(t)
+
+	for range 3 {
+		for range 10 {
+			_ = testHelperSendMessage(t, testServer, testNewSendMessageInput(testDefaultQueueURL))
+		}
+		messages := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
+			QueueUrl:          aws.String(testDefaultQueueURL),
+			VisibilityTimeout: 10,
+		})
+		for _, msg := range messages.Messages {
+			testHelperDeleteMessage(t, testServer, &sqs.DeleteMessageInput{
+				QueueUrl:      aws.String(testDefaultQueueURL),
+				ReceiptHandle: msg.ReceiptHandle,
+			})
+		}
+	}
+
+	defaultQueue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
+	defaultDLQ := server.accounts.accounts[testAccountID].queues[testDefaultDLQQueueURL]
+
+	defaultQueue.UpdateInflightVisibility()
+	require.EqualValues(t, 0, defaultQueue.Stats().NumMessages)
+	require.EqualValues(t, 0, defaultDLQ.Stats().NumMessages)
+}
+
+func Test_Server_transfersToDLQ(t *testing.T) {
+	server, testServer := startTestServer(t)
+	for range 10 {
+		_ = testHelperSendMessage(t, testServer, testNewSendMessageInput(testDefaultQueueURL))
+	}
+	for range testMaxReceiveCount {
+		messages := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
+			QueueUrl:          aws.String(testDefaultQueueURL),
+			VisibilityTimeout: 10,
+		})
+		for _, msg := range messages.Messages {
+			testHelperChangeMessageVisibility(t, testServer, &sqs.ChangeMessageVisibilityInput{
+				QueueUrl:          aws.String(testDefaultQueueURL),
+				ReceiptHandle:     msg.ReceiptHandle,
+				VisibilityTimeout: 0,
+			})
+		}
+	}
+	defaultQueue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
+	defaultDLQ := server.accounts.accounts[testAccountID].queues[testDefaultDLQQueueURL]
+	defaultQueue.UpdateInflightVisibility()
+	require.EqualValues(t, 10, defaultDLQ.Stats().NumMessages)
+}

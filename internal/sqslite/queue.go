@@ -2,15 +2,11 @@ package sqslite
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
-	"regexp"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -373,7 +369,7 @@ func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibili
 	atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
 	msg.UpdateVisibilityTimeout(visibilityTimeout, now)
 	if visibilityTimeout == 0 {
-		q.moveMessageFromInflightToReadyUnsafe(msg)
+		q.moveMessageFromInflightUnsafe(msg)
 	}
 	return
 }
@@ -417,7 +413,7 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	}
 	if len(readyMessages) > 0 {
 		for _, msg := range readyMessages {
-			q.moveMessageFromInflightToReadyUnsafe(msg)
+			q.moveMessageFromInflightUnsafe(msg)
 		}
 	}
 	return
@@ -552,9 +548,9 @@ func (q *Queue) PurgeExpired() {
 	atomic.AddInt64(&q.stats.NumMessages, -int64(len(deleted)))
 }
 
-// UpdateInflightToReady returns messages that are currently
+// UpdateInflightVisibility returns messages that are currently
 // in flight to the ready queue.
-func (q *Queue) UpdateInflightToReady() {
+func (q *Queue) UpdateInflightVisibility() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -567,13 +563,7 @@ func (q *Queue) UpdateInflightToReady() {
 		}
 	}
 	for _, msg := range ready {
-		if q.RedrivePolicy.IsSet {
-			if msg.ReceiveCount >= uint32(q.RedrivePolicy.Value.MaxReceiveCount) {
-				q.moveMessageFromInflightToDLQUnsafe(msg)
-				continue
-			}
-		}
-		q.moveMessageFromInflightToReadyUnsafe(msg)
+		q.moveMessageFromInflightUnsafe(msg)
 	}
 }
 
@@ -595,6 +585,13 @@ func (q *Queue) UpdateDelayedToReady() {
 	}
 }
 
+// GetQueueAttributes gets queue attribute values for a given list of queue attribute names.
+func (q *Queue) GetQueueAttributes(attributeNames ...types.QueueAttributeName) map[string]string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.getQueueAttributesUnsafe(attributeNames...)
+}
+
 // NewMessageState returns a new [MessageState] from a given send message input
 func (q *Queue) NewMessageState(m Message, created time.Time, delaySeconds int) (*MessageState, *Error) {
 	sqsm := &MessageState{
@@ -613,6 +610,16 @@ func (q *Queue) NewMessageState(m Message, created time.Time, delaySeconds int) 
 //
 // internal methods
 //
+
+func (q *Queue) moveMessageFromInflightUnsafe(msg *MessageState) {
+	if q.RedrivePolicy.IsSet {
+		if msg.ReceiveCount >= uint32(q.RedrivePolicy.Value.MaxReceiveCount) {
+			q.moveMessageFromInflightToDLQUnsafe(msg)
+			return
+		}
+	}
+	q.moveMessageFromInflightToReadyUnsafe(msg)
+}
 
 func (q *Queue) moveMessageFromInflightToDLQUnsafe(msg *MessageState) {
 	delete(q.messagesInflight, msg.Message.MessageID)
@@ -646,12 +653,6 @@ func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
 	atomic.AddInt64(&q.stats.NumMessagesReady, 1)
 	node := q.messagesReadyOrdered.Push(msg)
 	q.messagesReady[msg.Message.MessageID] = node
-}
-
-func (q *Queue) GetQueueAttributes(attributeNames ...types.QueueAttributeName) map[string]string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.getQueueAttributesUnsafe(attributeNames...)
 }
 
 func (q *Queue) getQueueAttributesUnsafe(attributes ...types.QueueAttributeName) map[string]string {
@@ -784,188 +785,4 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		q.Policy = policy
 	}
 	return nil
-}
-
-var validQueueNameRegexp = regexp.MustCompile("^[0-9,a-z,A-Z,_,-]+$")
-
-func validateQueueName(queueName string) *Error {
-	if queueName == "" {
-		return ErrorInvalidParameterValueException().WithMessage("Queue name cannot be empty")
-	}
-	if len(queueName) > 80 {
-		return ErrorInvalidParameterValueException().WithMessage("Can only include alphanumeric characters, hyphens, or underscores. 1 to 80 in length")
-	}
-	if !validQueueNameRegexp.MatchString(queueName) {
-		return ErrorInvalidParameterValueException().WithMessage("Can only include alphanumeric characters, hyphens, or underscores. 1 to 80 in length")
-	}
-	return nil
-}
-
-func validateDelay(delay time.Duration) *Error {
-	if delay < 0 {
-		return ErrorInvalidParameterValueException().WithMessagef("DelaySeconds must be greater than or equal to 0, you put: %v", delay)
-	}
-	if delay > 90*time.Second {
-		return ErrorInvalidParameterValueException().WithMessagef("DelaySeconds must be less than or equal to 90 seconds, you put: %v", delay)
-	}
-	return nil
-}
-
-func validateMaximumMessageSizeBytes(maximumMessageSizeBytes int) *Error {
-	if maximumMessageSizeBytes < 1024 {
-		return ErrorInvalidParameterValueException().WithMessagef("MaximumMessageSizeBytes must be greater than or equal to 1024, you put: %v", maximumMessageSizeBytes)
-	}
-	if maximumMessageSizeBytes > 256*1024 {
-		return ErrorInvalidParameterValueException().WithMessagef("MaximumMessageSizeBytes must be less than or equal to 256KiB, you put: %v", maximumMessageSizeBytes)
-	}
-	return nil
-}
-
-func validateMessageRetentionPeriod(messageRetentionPeriod time.Duration) *Error {
-	if messageRetentionPeriod < 60*time.Second {
-		return ErrorInvalidParameterValueException().WithMessagef("MessageRetentionPeriod must be greater than or equal to 60 seconds, you put: %v", messageRetentionPeriod)
-	}
-	if messageRetentionPeriod > 14*24*time.Hour {
-		return ErrorInvalidParameterValueException().WithMessagef("MessageRetentionPeriod must be less than or equal to 14 days, you put: %v", messageRetentionPeriod)
-	}
-	return nil
-}
-
-func validateReceiveMessageWaitTime(receiveMessageWaitTime time.Duration) *Error {
-	if receiveMessageWaitTime < 0 {
-		return ErrorInvalidParameterValueException().WithMessagef("ReceiveMessageWaitTime must be greater than or equal to 0, you put: %v", receiveMessageWaitTime)
-	}
-	if receiveMessageWaitTime > 20*time.Second {
-		return ErrorInvalidParameterValueException().WithMessagef("ReceiveMessageWaitTime must be less than or equal to 20 seconds, you put: %v", receiveMessageWaitTime)
-	}
-	return nil
-}
-
-func validateWaitTimeSeconds(waitTime time.Duration) *Error {
-	if waitTime < 0 {
-		return ErrorInvalidParameterValueException().WithMessagef("WaitTimeSeconds must be greater than or equal to 0, you put: %v", waitTime)
-	}
-	if waitTime > 20*time.Second {
-		return ErrorInvalidParameterValueException().WithMessagef("WaitTimeSeconds must be less than or equal to 20 seconds, you put: %v", waitTime)
-	}
-	return nil
-}
-
-func validateVisibilityTimeout(visibilityTimeout time.Duration) *Error {
-	if visibilityTimeout < 0 {
-		return ErrorInvalidParameterValueException().WithMessagef("VisibilityTimeout must be greater than or equal to 0, you put: %v", visibilityTimeout)
-	}
-	if visibilityTimeout > 12*time.Hour {
-		return ErrorInvalidParameterValueException().WithMessagef("VisibilityTimeout must be less than or equal to 12 hours, you put: %v", visibilityTimeout)
-	}
-	return nil
-}
-
-func validateRedrivePolicy(redrivePolicy RedrivePolicy) *Error {
-	if redrivePolicy.MaxReceiveCount < 0 || redrivePolicy.MaxReceiveCount > 1000 {
-		return ErrorInvalidParameterValueException().WithMessagef("%s for parameter RedrivePolicy is invalid; Reason: Invalid value for maxReceiveCount: %d, valid values are from 1 to 1000 both inclusive.", marshalJSON(redrivePolicy), redrivePolicy.MaxReceiveCount)
-	}
-	return nil
-}
-
-func validateMessageBody(body *string, maximumMessageSizeBytes int) *Error {
-	if body == nil || *body == "" {
-		return nil
-	}
-	if len([]byte(*body)) > maximumMessageSizeBytes {
-		return ErrorInvalidParameterValueException().WithMessage("One or more parameters are invalid. Reason: Message must be shorter than 262144 bytes.")
-	}
-	if isMessageBodyExclusivelyInvalidCharacters(*body) {
-		return ErrorInvalidParameterValueException().WithMessagef("Message body must contain at least one valid character")
-	}
-	return nil
-}
-
-func isMessageBodyExclusivelyInvalidCharacters(body string) bool {
-	for _, r := range body {
-		if utf8.ValidRune(r) {
-			return false
-		}
-	}
-	return true
-}
-
-func validateBatchEntryIDs(entryIDs []string) *Error {
-	if len(distinct(entryIDs)) != len(entryIDs) {
-		return ErrorBatchEntryIdsNotDistinct()
-	}
-	for _, id := range entryIDs {
-		if err := validateBatchEntryID(id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-var validBatchEntryIDRegexp = regexp.MustCompile("^[0-9,a-z,A-Z,_,-]+$")
-
-func validateBatchEntryID(entryID string) *Error {
-	if len(entryID) > 80 {
-		return ErrorInvalidBatchEntryID().WithMessagef("Id must be fewer than 80 characters; you put %d", len(entryID))
-	}
-	if !validBatchEntryIDRegexp.MatchString(entryID) {
-		return ErrorInvalidBatchEntryID().WithMessagef("Id must be a valid string; regexp used %q", validBatchEntryIDRegexp.String())
-	}
-	return nil
-}
-
-func readAttributeDurationSeconds(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[time.Duration], err *Error) {
-	value, ok := attributes[string(attributeName)]
-	if !ok {
-		return
-	}
-	parsed, parseErr := strconv.Atoi(value)
-	if parseErr != nil {
-		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse as duration seconds: %v", attributeName, parseErr)
-		return
-	}
-	output = Some(time.Duration(parsed) * time.Second)
-	return
-}
-
-func readAttributeDurationInt(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[int], err *Error) {
-	value, ok := attributes[string(attributeName)]
-	if !ok {
-		return
-	}
-	parsed, parseErr := strconv.Atoi(value)
-	if parseErr != nil {
-		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse as integer: %v", attributeName, parseErr)
-		return
-	}
-	output = Some(parsed)
-	return
-}
-
-func readAttributeRedrivePolicy(attributes map[string]string) (output Optional[RedrivePolicy], err *Error) {
-	value, ok := attributes[string(types.QueueAttributeNameRedrivePolicy)]
-	if !ok {
-		return
-	}
-	var policy RedrivePolicy
-	if jsonErr := json.Unmarshal([]byte(value), &policy); jsonErr != nil {
-		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse redrive policy: %v", string(types.QueueAttributeNameRedrivePolicy), jsonErr)
-		return
-	}
-	output = Some(policy)
-	return
-}
-
-func readAttributePolicy(attributes map[string]string) (output Optional[Policy], err *Error) {
-	value, ok := attributes[string(types.QueueAttributeNamePolicy)]
-	if !ok {
-		return
-	}
-	var policy Policy
-	if jsonErr := json.Unmarshal([]byte(value), &policy); jsonErr != nil {
-		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse policy: %v", string(types.QueueAttributeNamePolicy), jsonErr)
-		return
-	}
-	output = Some(policy)
-	return
 }

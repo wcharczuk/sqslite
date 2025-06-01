@@ -28,7 +28,7 @@ func (v *visibilityWorker) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-tick.Chan():
-			v.queue.UpdateInflightToReady()
+			v.queue.UpdateInflightVisibility()
 			continue
 		}
 	}
