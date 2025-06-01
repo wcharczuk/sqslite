@@ -30,7 +30,7 @@ func Test_MessageMoveStatus_String(t *testing.T) {
 	require.Equal(t, "RUNNING", MessageMoveStatusRunning.String())
 	require.Equal(t, "COMPLETED", MessageMoveStatusCompleted.String())
 	require.Equal(t, "FAILED", MessageMoveStatusFailed.String())
-	require.Equal(t, "CANCELLING", MessageMoveStatusCancelling.String())
-	require.Equal(t, "CANCELLED", MessageMoveStatusCancelled.String())
+	require.Equal(t, "CANCELLING", MessageMoveStatusCanceling.String())
+	require.Equal(t, "CANCELLED", MessageMoveStatusCanceled.String())
 	require.Equal(t, "UNKNOWN", MessageMoveStatus(127).String())
 }

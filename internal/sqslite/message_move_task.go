@@ -31,12 +31,12 @@ func NewMessagesMoveTask(clock clockwork.Clock, source, destination *Queue, maxN
 type MessageMoveStatus uint32
 
 const (
-	MessageMoveStatusUnknown    MessageMoveStatus = iota
-	MessageMoveStatusRunning    MessageMoveStatus = iota
-	MessageMoveStatusCompleted  MessageMoveStatus = iota
-	MessageMoveStatusFailed     MessageMoveStatus = iota
-	MessageMoveStatusCancelling MessageMoveStatus = iota
-	MessageMoveStatusCancelled  MessageMoveStatus = iota
+	MessageMoveStatusUnknown   MessageMoveStatus = iota
+	MessageMoveStatusRunning   MessageMoveStatus = iota
+	MessageMoveStatusCompleted MessageMoveStatus = iota
+	MessageMoveStatusFailed    MessageMoveStatus = iota
+	MessageMoveStatusCanceling MessageMoveStatus = iota
+	MessageMoveStatusCanceled  MessageMoveStatus = iota
 )
 
 func (m MessageMoveStatus) String() string {
@@ -49,9 +49,11 @@ func (m MessageMoveStatus) String() string {
 		return "COMPLETED"
 	case MessageMoveStatusFailed:
 		return "FAILED"
-	case MessageMoveStatusCancelling:
+	case MessageMoveStatusCanceling:
+		//nolint:misspell
 		return "CANCELLING"
-	case MessageMoveStatusCancelled:
+	case MessageMoveStatusCanceled:
+		//nolint:misspell
 		return "CANCELLED"
 	default:
 		return "UNKNOWN"
@@ -111,13 +113,13 @@ func (m *MessageMoveTask) moveMessages(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCancelled))
+			atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCanceled))
 			return
 		default:
 		}
 		if m.limiter != nil {
 			if err := m.limiter.Wait(ctx); err != nil {
-				atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCancelled))
+				atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCanceled))
 				return
 			}
 		}
