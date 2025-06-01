@@ -238,6 +238,7 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 			"queue statistics",
 			slog.String("queue_name", q.Name),
 			slog.String("queue_url", q.URL),
+			slog.Bool("is_dlq", q.IsDLQ()),
 			slog.Duration("created", time.Since(q.Created())),
 			slog.Duration("last_modified", time.Since(q.LastModified())),
 			slog.Duration("deleted", deleted),
