@@ -166,7 +166,7 @@ func (m *MessageMoveTask) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cancel != nil {
-		atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCancelling))
+		atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCanceling))
 		m.cancel()
 		m.cancel = nil
 	}
