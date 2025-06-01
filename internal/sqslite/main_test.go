@@ -187,6 +187,41 @@ func createTestQueueWithName(t *testing.T, clock clockwork.Clock, name string) *
 	return queue
 }
 
+func createTestQueueWithNameWithRedriveAllowPolicy(t *testing.T, clock clockwork.Clock, name string, rap RedriveAllowPolicy) *Queue {
+	t.Helper()
+	queue, err := NewQueueFromCreateQueueInput(clock, Authorization{
+		Region:    Some("us-west-2"),
+		Host:      Some("sqslite.local"),
+		AccountID: testAccountID,
+	}, &sqs.CreateQueueInput{
+		QueueName: aws.String(name),
+		Attributes: map[string]string{
+			string(types.QueueAttributeNameRedriveAllowPolicy): marshalJSON(rap),
+		},
+	})
+	require.Nil(t, err)
+	return queue
+}
+
+func createTestQueueWithNameWithDLQ(t *testing.T, clock clockwork.Clock, name string, dlq *Queue) *Queue {
+	t.Helper()
+	queue, err := NewQueueFromCreateQueueInput(clock, Authorization{
+		Region:    Some("us-west-2"),
+		Host:      Some("sqslite.local"),
+		AccountID: testAccountID,
+	}, &sqs.CreateQueueInput{
+		QueueName: aws.String(name),
+		Attributes: map[string]string{
+			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(RedrivePolicy{
+				DeadLetterTargetArn: dlq.ARN,
+				MaxReceiveCount:     3,
+			}),
+		},
+	})
+	require.Nil(t, err)
+	return queue
+}
+
 func createTestMessage(body string) Message {
 	return Message{
 		MessageID: uuid.V4(),

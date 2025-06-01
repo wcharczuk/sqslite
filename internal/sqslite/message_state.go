@@ -21,7 +21,7 @@ type MessageState struct {
 	VisibilityTimeout      time.Duration
 	ReceiptHandles         *SafeSet[string]
 	SequenceNumber         uint64
-
+	OriginalSourceQueue    *Queue
 	/* these require the parent queue mutex */
 	FirstReceived      Optional[time.Time]
 	LastReceived       Optional[time.Time]

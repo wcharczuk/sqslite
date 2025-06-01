@@ -138,6 +138,18 @@ func validateBatchEntryID(entryID string) *Error {
 	return nil
 }
 
+func validateRedriveAllowPolicy(redriveAllowPolicy RedriveAllowPolicy) *Error {
+	if len(redriveAllowPolicy.SourceQueueARNs) > 10 {
+		return ErrorInvalidParameterValueException().WithMessagef("sourceQueueARNs must have fewer than 10 elements; you put %d", len(redriveAllowPolicy.SourceQueueARNs))
+	}
+	switch redriveAllowPolicy.RedrivePermission {
+	case RedrivePermissionAllowAll, RedrivePermissionDenyAll, RedrivePermissionByQueue:
+		return nil
+	default:
+		return ErrorInvalidParameterValueException().WithMessagef("redrivePermission invalid")
+	}
+}
+
 func readAttributeDurationSeconds(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[time.Duration], err *Error) {
 	value, ok := attributes[string(attributeName)]
 	if !ok {
@@ -180,12 +192,26 @@ func readAttributeRedrivePolicy(attributes map[string]string) (output Optional[R
 	return
 }
 
-func readAttributePolicy(attributes map[string]string) (output Optional[Policy], err *Error) {
+func readAttributeRedriveAllowPolicy(attributes map[string]string) (output Optional[RedriveAllowPolicy], err *Error) {
+	value, ok := attributes[string(types.QueueAttributeNameRedriveAllowPolicy)]
+	if !ok {
+		return
+	}
+	var policy RedriveAllowPolicy
+	if jsonErr := json.Unmarshal([]byte(value), &policy); jsonErr != nil {
+		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse redrive allow policy: %v", string(types.QueueAttributeNameRedriveAllowPolicy), jsonErr)
+		return
+	}
+	output = Some(policy)
+	return
+}
+
+func readAttributePolicy(attributes map[string]string) (output Optional[any], err *Error) {
 	value, ok := attributes[string(types.QueueAttributeNamePolicy)]
 	if !ok {
 		return
 	}
-	var policy Policy
+	var policy any
 	if jsonErr := json.Unmarshal([]byte(value), &policy); jsonErr != nil {
 		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse policy: %v", string(types.QueueAttributeNamePolicy), jsonErr)
 		return

@@ -419,6 +419,18 @@ func Test_Queue_Push_readyMessage_addsToMessagesReadyMap(t *testing.T) {
 	q.mu.Unlock()
 }
 
+func Test_Queue_Push_setsOriginalSourceQueue(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+
+	msg := createTestMessage("test body")
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
+	require.Nil(t, msgState.OriginalSourceQueue)
+
+	q.Push(msgState)
+	require.NotNil(t, msgState.OriginalSourceQueue)
+	require.EqualValues(t, q.URL, msgState.OriginalSourceQueue.URL)
+}
+
 func Test_Queue_Push_delayedMessage_addsToMessagesDelayedMap(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
 

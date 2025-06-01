@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewQueues_CreatesInstanceWithEmptyMaps(t *testing.T) {
+func Test_NewQueues_createsInstanceWithEmptyMaps(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 
@@ -19,14 +19,14 @@ func TestNewQueues_CreatesInstanceWithEmptyMaps(t *testing.T) {
 	require.Equal(t, testAccountID, queues.AccountID())
 }
 
-func TestNewQueues_SetsProvidedClock(t *testing.T) {
+func Test_NewQueues_setsProvidedClock(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 
 	require.Equal(t, clock, queues.clock)
 }
 
-func TestNewQueues_InitializesQueueURLsMap(t *testing.T) {
+func Test_NewQueues_initializesQueueURLsMap(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 
@@ -34,7 +34,7 @@ func TestNewQueues_InitializesQueueURLsMap(t *testing.T) {
 	require.Equal(t, 0, len(queues.queueURLs))
 }
 
-func TestNewQueues_InitializesQueuesMap(t *testing.T) {
+func Test_NewQueues_initializesQueuesMap(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 
@@ -42,7 +42,7 @@ func TestNewQueues_InitializesQueuesMap(t *testing.T) {
 	require.Equal(t, 0, len(queues.queues))
 }
 
-func TestNewQueues_InitializesMoveMessageTasksMap(t *testing.T) {
+func Test_NewQueues_initializesMoveMessageTasksMap(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 
@@ -50,7 +50,7 @@ func TestNewQueues_InitializesMoveMessageTasksMap(t *testing.T) {
 	assert.Equal(t, 0, len(queues.moveMessageTasks))
 }
 
-func TestQueues_Start_InitializesWorker(t *testing.T) {
+func Test_Queues_Start_initializesWorker(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -60,7 +60,7 @@ func TestQueues_Start_InitializesWorker(t *testing.T) {
 	require.NotNil(t, queues.deletedQueueWorker)
 }
 
-func TestQueues_Start_SetsCancelFunction(t *testing.T) {
+func Test_Queues_Start_setsCancelFunction(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -70,7 +70,7 @@ func TestQueues_Start_SetsCancelFunction(t *testing.T) {
 	require.NotNil(t, queues.deletedQueueWorkerCancel)
 }
 
-func TestQueues_Close_ClearsWorkerReference(t *testing.T) {
+func Test_Queues_Close_clearsWorkerReference(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	queues.Start(t.Context())
@@ -80,7 +80,7 @@ func TestQueues_Close_ClearsWorkerReference(t *testing.T) {
 	require.Nil(t, queues.deletedQueueWorker)
 }
 
-func TestQueues_Close_ClearsCancelFunction(t *testing.T) {
+func Test_Queues_Close_clearsCancelFunction(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	queues.Start(t.Context())
@@ -90,7 +90,7 @@ func TestQueues_Close_ClearsCancelFunction(t *testing.T) {
 	require.Nil(t, queues.deletedQueueWorkerCancel)
 }
 
-func TestQueues_AddQueue_AddsQueueSuccessfully(t *testing.T) {
+func Test_Queues_AddQueue_addsQueueSuccessfully(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -102,7 +102,7 @@ func TestQueues_AddQueue_AddsQueueSuccessfully(t *testing.T) {
 	require.Nil(t, err)
 }
 
-func TestQueues_AddQueue_ReturnsErrorForDuplicateNameWithDifferentAttributes(t *testing.T) {
+func Test_Queues_AddQueue_returnsErrorForDuplicateNameWithDifferentAttributes(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -125,7 +125,7 @@ func TestQueues_AddQueue_ReturnsErrorForDuplicateNameWithDifferentAttributes(t *
 	require.NotNil(t, err)
 }
 
-func TestQueues_AddQueue_SucceedsForDuplicateNameWithSameAttributes(t *testing.T) {
+func Test_Queues_AddQueue_succeedsForDuplicateNameWithSameAttributes(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, DefaultAccountID)
 	defer queues.Close()
@@ -140,7 +140,7 @@ func TestQueues_AddQueue_SucceedsForDuplicateNameWithSameAttributes(t *testing.T
 	require.Nil(t, err)
 }
 
-func TestQueues_PurgeQueue_ReturnsTrueForExistingQueue(t *testing.T) {
+func Test_Queues_PurgeQueue_returnsTrueForExistingQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -153,7 +153,7 @@ func TestQueues_PurgeQueue_ReturnsTrueForExistingQueue(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestQueues_PurgeQueue_ReturnsFalseForNonExistentQueue(t *testing.T) {
+func Test_Queues_PurgeQueue_returnsFalseForNonExistentQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -163,7 +163,7 @@ func TestQueues_PurgeQueue_ReturnsFalseForNonExistentQueue(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestQueues_GetQueueURL_ReturnsURLForExistingQueue(t *testing.T) {
+func Test_Queues_GetQueueURL_returnsURLForExistingQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -177,7 +177,7 @@ func TestQueues_GetQueueURL_ReturnsURLForExistingQueue(t *testing.T) {
 	require.Equal(t, queue.URL, url)
 }
 
-func TestQueues_GetQueueURL_ReturnsFalseForNonExistentQueue(t *testing.T) {
+func Test_Queues_GetQueueURL_returnsFalseForNonExistentQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -187,7 +187,7 @@ func TestQueues_GetQueueURL_ReturnsFalseForNonExistentQueue(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestQueues_GetQueue_ReturnsQueueForExistingURL(t *testing.T) {
+func Test_Queues_GetQueue_returnsQueueForExistingURL(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -201,7 +201,7 @@ func TestQueues_GetQueue_ReturnsQueueForExistingURL(t *testing.T) {
 	require.Equal(t, queue, retrievedQueue)
 }
 
-func TestQueues_GetQueue_ReturnsFalseForNonExistentURL(t *testing.T) {
+func Test_Queues_GetQueue_returnsFalseForNonExistentURL(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -211,7 +211,7 @@ func TestQueues_GetQueue_ReturnsFalseForNonExistentURL(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestQueues_DeleteQueue_ReturnsTrueForExistingQueue(t *testing.T) {
+func Test_Queues_DeleteQueue_returnsTrueForExistingQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -224,7 +224,7 @@ func TestQueues_DeleteQueue_ReturnsTrueForExistingQueue(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestQueues_DeleteQueue_ReturnsFalseForNonExistentQueue(t *testing.T) {
+func Test_Queues_DeleteQueue_returnsFalseForNonExistentQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -234,7 +234,7 @@ func TestQueues_DeleteQueue_ReturnsFalseForNonExistentQueue(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestQueues_DeleteQueue_MarksQueueAsDeleted(t *testing.T) {
+func Test_Queues_DeleteQueue_marksQueueAsDeleted(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -250,7 +250,7 @@ func TestQueues_DeleteQueue_MarksQueueAsDeleted(t *testing.T) {
 	require.True(t, queue.IsDeleted())
 }
 
-func TestQueues_PurgeDeletedQueues_RemovesQueuesDeletedOver60Seconds(t *testing.T) {
+func Test_Queues_PurgeDeletedQueues_removesQueuesDeletedOver60Seconds(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -266,7 +266,7 @@ func TestQueues_PurgeDeletedQueues_RemovesQueuesDeletedOver60Seconds(t *testing.
 	require.False(t, ok)
 }
 
-func TestQueues_PurgeDeletedQueues_KeepsQueuesDeletedUnder60Seconds(t *testing.T) {
+func Test_Queues_PurgeDeletedQueues_keepsQueuesDeletedUnder60Seconds(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -282,7 +282,7 @@ func TestQueues_PurgeDeletedQueues_KeepsQueuesDeletedUnder60Seconds(t *testing.T
 	require.True(t, ok)
 }
 
-func TestQueues_EachQueue_IteratesOverActiveQueues(t *testing.T) {
+func Test_Queues_EachQueue_iteratesOverActiveQueues(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -298,7 +298,7 @@ func TestQueues_EachQueue_IteratesOverActiveQueues(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-func TestQueues_EachQueue_SkipsDeletedQueues(t *testing.T) {
+func Test_Queues_EachQueue_skipsDeletedQueues(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -315,7 +315,7 @@ func TestQueues_EachQueue_SkipsDeletedQueues(t *testing.T) {
 	require.Equal(t, 0, count)
 }
 
-func TestQueues_StartMoveMessageTask_ReturnsErrorForNonExistentSourceArn(t *testing.T) {
+func Test_Queues_StartMoveMessageTask_returnsErrorForNonExistentSourceArn(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -325,27 +325,26 @@ func TestQueues_StartMoveMessageTask_ReturnsErrorForNonExistentSourceArn(t *test
 	require.NotNil(t, err)
 }
 
-func TestQueues_StartMoveMessageTask_ReturnsErrorForNonExistentDestinationArn(t *testing.T) {
+func Test_Queues_StartMoveMessageTask_returnsErrorForNonExistentDestinationArn(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
 	defer sourceQueue.Close()
 	queues.AddQueue(sourceQueue)
-
 	_, err := queues.StartMoveMessageTask(clock, sourceQueue.ARN, "non-existent-arn", 10)
-
 	require.NotNil(t, err)
 }
 
-func TestQueues_StartMoveMessageTask_ReturnsTaskForValidQueues(t *testing.T) {
+func Test_Queues_StartMoveMessageTask_returnsTaskForValidQueues(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
 	defer sourceQueue.Close()
-	destQueue := createTestQueueWithName(t, clock, "dest-queue")
+	destQueue := createTestQueueWithNameWithDLQ(t, clock, "dest-queue", sourceQueue)
 	defer destQueue.Close()
+
 	queues.AddQueue(sourceQueue)
 	queues.AddQueue(destQueue)
 
@@ -356,7 +355,43 @@ func TestQueues_StartMoveMessageTask_ReturnsTaskForValidQueues(t *testing.T) {
 	require.NotNil(t, task)
 }
 
-func TestQueues_CancelMoveMessageTask_ReturnsErrorForNonExistentTask(t *testing.T) {
+func Test_Queues_StartMoveMessageTask_allowsEmptyDestinationQueue(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	queues := NewQueues(clock, testAccountID)
+	defer queues.Close()
+	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
+	defer sourceQueue.Close()
+	destQueue := createTestQueueWithNameWithDLQ(t, clock, "dest-queue", sourceQueue)
+	defer destQueue.Close()
+
+	queues.AddQueue(sourceQueue)
+	queues.AddQueue(destQueue)
+
+	task, err := queues.StartMoveMessageTask(clock, sourceQueue.ARN, "", 10)
+	defer task.Close()
+
+	require.Nil(t, err)
+	require.NotNil(t, task)
+}
+
+func Test_Queues_StartMoveMessageTask_enforcesRedriveAllowPolicy(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	queues := NewQueues(clock, testAccountID)
+	defer queues.Close()
+	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
+	defer sourceQueue.Close()
+	destQueue := createTestQueueWithNameWithRedriveAllowPolicy(t, clock, "dest-queue", RedriveAllowPolicy{
+		RedrivePermission: RedrivePermissionDenyAll,
+	})
+	defer destQueue.Close()
+	queues.AddQueue(sourceQueue)
+
+	task, err := queues.StartMoveMessageTask(clock, sourceQueue.ARN, "", 10)
+	require.NotNil(t, err)
+	require.Nil(t, task)
+}
+
+func Test_Queues_CancelMoveMessageTask_returnsErrorForNonExistentTask(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -366,13 +401,13 @@ func TestQueues_CancelMoveMessageTask_ReturnsErrorForNonExistentTask(t *testing.
 	require.NotNil(t, err)
 }
 
-func TestQueues_CancelMoveMessageTask_TracksTaskInternalMap(t *testing.T) {
+func Test_Queues_CancelMoveMessageTask_tracksTaskInternalMap(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
 	defer sourceQueue.Close()
-	destQueue := createTestQueueWithName(t, clock, "dest-queue")
+	destQueue := createTestQueueWithNameWithDLQ(t, clock, "dest-queue", sourceQueue)
 	defer destQueue.Close()
 	queues.AddQueue(sourceQueue)
 	queues.AddQueue(destQueue)
@@ -384,7 +419,7 @@ func TestQueues_CancelMoveMessageTask_TracksTaskInternalMap(t *testing.T) {
 	require.True(t, exists)
 }
 
-func TestQueues_EachMoveMessageTasks_ReturnsEmptyForNonExistentSourceArn(t *testing.T) {
+func Test_Queues_EachMoveMessageTasks_returnsEmptyForNonExistentSourceArn(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
@@ -397,17 +432,19 @@ func TestQueues_EachMoveMessageTasks_ReturnsEmptyForNonExistentSourceArn(t *test
 	require.Equal(t, 0, count)
 }
 
-func TestQueues_EachMoveMessageTasks_IteratesOverTasksForSourceArn(t *testing.T) {
+func Test_Queues_EachMoveMessageTasks_iteratesOverTasksForSourceArn(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
 	defer sourceQueue.Close()
-	destQueue := createTestQueueWithName(t, clock, "dest-queue")
+	destQueue := createTestQueueWithNameWithDLQ(t, clock, "dest-queue", sourceQueue)
 	defer destQueue.Close()
 	queues.AddQueue(sourceQueue)
 	queues.AddQueue(destQueue)
-	task, _ := queues.StartMoveMessageTask(clock, sourceQueue.ARN, destQueue.ARN, 10)
+
+	task, err := queues.StartMoveMessageTask(clock, sourceQueue.ARN, destQueue.ARN, 10)
+	require.Nil(t, err)
 	defer task.Close()
 
 	var count int

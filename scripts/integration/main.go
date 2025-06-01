@@ -45,6 +45,9 @@ var (
 // - ✅ what error is returned by sendMessage if the body is > 256KiB
 // - ✅ sendMessageBatch requires the sum of all the bodes to be < 256KiB
 // - ✅ startMessageMoveTask what happens if you put a MaxNumberOfMessagesPerSecond > 500
+// - startMessageMoveTask what happens if you put a source that isn't a dlq
+// - startMessageMoveTask what happens if you put a destination that disallows a given source with a redriveAllowPolicy
+// - startMessageMoveTask what happens if you delete the destination queue with a huge backlog
 
 func main() {
 	pflag.Parse()
@@ -106,8 +109,18 @@ func main() {
 }
 
 var scenarios = map[string]func(*IntegrationTest){
-	"fill-dlq":      fillDLQ,
-	"messages-move": messagesMove,
+	"fill-dlq":                     fillDLQ,
+	"messages-move":                messagesMove,
+	"messages-move-invalid-source": messagesMoveInvalidSource,
+}
+
+func messagesMoveInvalidSource(it *IntegrationTest) {
+	notDLQ := it.CreateQueue()
+	mainQueue := it.CreateQueue()
+
+	it.ExpectFailure(func() {
+		_ = it.StartMessagesMoveTask(notDLQ, mainQueue)
+	})
 }
 
 func fillDLQ(it *IntegrationTest) {
@@ -117,15 +130,13 @@ func fillDLQ(it *IntegrationTest) {
 	for range 5 {
 		it.SendMessage(mainQueue)
 	}
-
-	// transfer messages to the dlq
-	for range 5 {
+	for range redrivePolicyMaxReceiveCount {
 		messages := it.ReceiveMessages(mainQueue)
 		for _, msg := range messages {
 			it.ChangeMessageVisibility(mainQueue, msg, 0)
 		}
-		it.Sleep(time.Second)
 	}
+	it.Sleep(time.Second)
 }
 
 func messagesMove(it *IntegrationTest) {
@@ -136,8 +147,7 @@ func messagesMove(it *IntegrationTest) {
 		it.SendMessage(mainQueue)
 	}
 
-	// transfer messages to the dlq
-	for range 5 {
+	for range redrivePolicyMaxReceiveCount {
 		messages := it.ReceiveMessages(mainQueue)
 		for _, msg := range messages {
 			it.ChangeMessageVisibility(mainQueue, msg, 0)
@@ -146,7 +156,7 @@ func messagesMove(it *IntegrationTest) {
 
 	it.Sleep(time.Second)
 
-	_ = it.StartMessagesMoveTask(dlq, mainQueue)
+	taskHandle := it.StartMessagesMoveTask(dlq, mainQueue)
 
 done:
 	for {
@@ -154,15 +164,25 @@ done:
 		if len(tasks) == 0 {
 			panic("expect at least one task")
 		}
+		if !matchesAny(tasks, func(t MoveMessagesTask) bool {
+			return t.TaskHandle == taskHandle
+		}) {
+			panic("expect at least one task to have the correct task handle")
+		}
 		for _, t := range tasks {
-			if t.Status != "RUNNING" {
+			if t.Status == "COMPLETED" {
 				break done
+			}
+			if t.Status == "FAILED" {
+				panic(t.FailureReason)
 			}
 		}
 		it.Sleep(time.Second)
 	}
-
 	messages := it.ReceiveMessages(mainQueue)
+	if len(messages) != 5 {
+		panic("expect final moved message count to be 5")
+	}
 	for _, msg := range messages {
 		it.DeleteMessage(mainQueue, msg)
 	}
@@ -237,6 +257,8 @@ func (it *IntegrationTest) CreateQueue() (output Queue) {
 	return
 }
 
+var redrivePolicyMaxReceiveCount = 3
+
 func (it *IntegrationTest) CreateQueueWithDLQ(dlq Queue) (output Queue) {
 	queueName := fmt.Sprintf("test-queue-%s", uuid.V4())
 	queueRes, err := it.sqsClient.CreateQueue(it.ctx, &sqs.CreateQueueInput{
@@ -244,7 +266,7 @@ func (it *IntegrationTest) CreateQueueWithDLQ(dlq Queue) (output Queue) {
 		Attributes: map[string]string{
 			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(sqslite.RedrivePolicy{
 				DeadLetterTargetArn: dlq.QueueArn,
-				MaxReceiveCount:     3,
+				MaxReceiveCount:     redrivePolicyMaxReceiveCount,
 			}),
 		},
 	})
@@ -316,6 +338,15 @@ func (it *IntegrationTest) ChangeMessageVisibility(queue Queue, receiptHandle st
 	}
 }
 
+func (it *IntegrationTest) ExpectFailure(fn func()) {
+	defer func() {
+		if r := recover(); r == nil {
+			panic("expected panic to be raised by step")
+		}
+	}()
+	fn()
+}
+
 func (it *IntegrationTest) StartMessagesMoveTask(source, destination Queue) (taskHandle string) {
 	res, err := it.sqsClient.StartMessageMoveTask(it.ctx, &sqs.StartMessageMoveTaskInput{
 		SourceArn:      &source.QueueArn,
@@ -340,6 +371,7 @@ func (it *IntegrationTest) ListMessagesMoveTasks(source Queue) (tasks []MoveMess
 			TaskHandle:     safeDeref(t.TaskHandle),
 			DestinationArn: safeDeref(t.DestinationArn),
 			Status:         safeDeref(t.Status),
+			FailureReason:  safeDeref(t.FailureReason),
 		})
 	}
 	return
@@ -349,12 +381,17 @@ type MoveMessagesTask struct {
 	TaskHandle     string
 	DestinationArn string
 	Status         string
+	FailureReason  string
 }
 
 type Queue struct {
 	QueueName string
 	QueueURL  string
 	QueueArn  string
+}
+
+func matchesAny[V any](values []V, pred func(V) bool) bool {
+	return slices.ContainsFunc(values, pred)
 }
 
 func maybeFatal(err error) {

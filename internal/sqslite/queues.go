@@ -138,14 +138,28 @@ func (q *Queues) StartMoveMessageTask(clock clockwork.Clock, sourceArn, destinat
 	if !ok {
 		return nil, ErrorResourceNotFoundException().WithMessage("SourceArn")
 	}
-	destinationQueueURL, ok := q.queueARNs[destinationArn]
-	if !ok {
-		return nil, ErrorResourceNotFoundException().WithMessage("DestinationArn")
+	if !sourceQueue.IsDLQ() {
+		return nil, ErrorResourceNotFoundException().WithMessage("SourceArn")
 	}
-	destinationQueue, ok := q.getQueueUnsafe(destinationQueueURL)
-	if !ok {
-		return nil, ErrorResourceNotFoundException().WithMessage("DestinationArn")
+
+	var destinationQueue *Queue
+	if destinationArn != "" {
+		destinationQueueURL, ok := q.queueARNs[destinationArn]
+		if !ok {
+			return nil, ErrorResourceNotFoundException().WithMessage("DestinationArn")
+		}
+		destinationQueue, ok = q.getQueueUnsafe(destinationQueueURL)
+		if !ok {
+			return nil, ErrorResourceNotFoundException().WithMessage("DestinationArn")
+		}
+		if destinationQueue.RedriveAllowPolicy.IsSet {
+			if !destinationQueue.RedriveAllowPolicy.Value.AllowSource(sourceArn) {
+				// TODO(wc): what is the actual error here?
+				return nil, ErrorResourceNotFoundException().WithMessage("DestinationArn")
+			}
+		}
 	}
+
 	mmt := NewMessagesMoveTask(clock, sourceQueue, destinationQueue, int(rateLimit))
 	mmt.Start(context.Background())
 	q.moveMessageTasks[mmt.TaskHandle] = mmt

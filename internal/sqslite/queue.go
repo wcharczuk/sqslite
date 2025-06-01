@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,8 +25,8 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 	queue := &Queue{
 		Name:                            safeDeref(input.QueueName),
 		AccountID:                       authz.AccountID,
-		URL:                             QueueURL(authz, *input.QueueName),
-		ARN:                             QueueARN(authz, *input.QueueName),
+		URL:                             FormatQueueURL(authz, *input.QueueName),
+		ARN:                             FormatQueueARN(authz, *input.QueueName),
 		created:                         clock.Now(),
 		lastModified:                    clock.Now(),
 		messagesReadyOrdered:            new(LinkedList[*MessageState]),
@@ -45,13 +46,13 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 	return queue, nil
 }
 
-// QueueURL creates a queue url from required inputs.
-func QueueURL(authz Authorization, queueName string) string {
+// FormatQueueURL creates a queue url from required inputs.
+func FormatQueueURL(authz Authorization, queueName string) string {
 	return fmt.Sprintf("http://%s/%s/%s", authz.HostOrDefault(), authz.AccountID, queueName)
 }
 
-// QueueARN creates a queue arn from required inputs.
-func QueueARN(authz Authorization, queueName string) string {
+// FormatQueueARN creates a queue arn from required inputs.
+func FormatQueueARN(authz Authorization, queueName string) string {
 	return fmt.Sprintf("arn:aws:sqs:%s:%s:%s", authz.RegionOrDefault(), authz.AccountID, queueName)
 }
 
@@ -61,6 +62,37 @@ type RedrivePolicy struct {
 	MaxReceiveCount     int    `json:"maxReceiveCount"`
 }
 
+type RedrivePermission string
+
+const (
+	RedrivePermissionAllowAll RedrivePermission = "allowAll"
+	RedrivePermissionDenyAll  RedrivePermission = "denyAll "
+	RedrivePermissionByQueue  RedrivePermission = "byQueue"
+)
+
+// RedriveAllowPolicy is the json data in the [types.QueueAttributeNameRedrivePolicy] attribute field.
+type RedriveAllowPolicy struct {
+	RedrivePermission RedrivePermission `json:"redrivePermission"`
+	SourceQueueARNs   []string          `json:"sourceQueueArns"`
+}
+
+// AllowSource returns if a given destination redrive allow policy
+// allows a given source arn.
+func (r RedriveAllowPolicy) AllowSource(sourceARN string) bool {
+	if r.RedrivePermission == RedrivePermissionAllowAll {
+		return true
+	}
+	if r.RedrivePermission == RedrivePermissionDenyAll {
+		return false
+	}
+	if r.RedrivePermission == RedrivePermissionByQueue {
+		return slices.ContainsFunc(r.SourceQueueARNs, func(arn string) bool {
+			return sourceARN == arn
+		})
+	}
+	return false /*fail closed*/
+}
+
 // Queue is an individual queue.
 type Queue struct {
 	Name      string
@@ -68,7 +100,8 @@ type Queue struct {
 	URL       string
 	ARN       string
 
-	RedrivePolicy Optional[RedrivePolicy]
+	RedrivePolicy      Optional[RedrivePolicy]
+	RedriveAllowPolicy Optional[RedriveAllowPolicy]
 
 	VisibilityTimeout       time.Duration
 	ReceiveMessageWaitTime  time.Duration
@@ -77,7 +110,7 @@ type Queue struct {
 	Delay                   Optional[time.Duration]
 	MaximumMessagesInflight int
 
-	Policy Optional[Policy]
+	Policy Optional[any]
 
 	Attributes map[string]string
 	Tags       map[string]string
@@ -265,6 +298,9 @@ func (q *Queue) Push(msgs ...*MessageState) {
 
 	now := q.clock.Now()
 	for _, m := range msgs {
+		if m.OriginalSourceQueue == nil {
+			m.OriginalSourceQueue = q
+		}
 		// only apply the queue level default if
 		// - it's set
 		// - the message does not specify a delay
@@ -776,6 +812,18 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		}
 		q.RedrivePolicy = redrivePolicy
 	}
+
+	redriveAllowPolicy, err := readAttributeRedriveAllowPolicy(messageAttributes)
+	if err != nil {
+		return err
+	}
+	if redriveAllowPolicy.IsSet {
+		if err = validateRedriveAllowPolicy(redriveAllowPolicy.Value); err != nil {
+			return err
+		}
+		q.RedriveAllowPolicy = redriveAllowPolicy
+	}
+
 	policy, err := readAttributePolicy(messageAttributes)
 	if err != nil {
 		return err

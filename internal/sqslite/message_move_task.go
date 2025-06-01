@@ -13,7 +13,7 @@ import (
 )
 
 // NewMessagesMoveTask returns a new move message task.
-func NewMessagesMoveTask(clock clockwork.Clock, source, destination *Queue, maxNumberOfMessagesPerSecond int) *MessageMoveTask {
+func NewMessagesMoveTask(clock clockwork.Clock, source /*must not be nil*/, destination /*can be nil*/ *Queue, maxNumberOfMessagesPerSecond int) *MessageMoveTask {
 	mmt := &MessageMoveTask{
 		AccountID:                    source.AccountID,
 		TaskHandle:                   uuid.V4().String(),
@@ -123,17 +123,22 @@ func (m *MessageMoveTask) moveMessages(ctx context.Context) {
 				return
 			}
 		}
-		// handle the queue being deleted
-		if m.DestinationQueue.IsDeleted() {
-			m.markFailedByDestinationDeleted()
-			return
-		}
 		msg, ok := m.SourceQueue.PopMessageForMove()
 		if !ok {
 			m.markCompleted()
 			return
 		}
-		m.DestinationQueue.Push(msg)
+		var destinationQueue *Queue
+		if m.DestinationQueue != nil {
+			destinationQueue = m.DestinationQueue
+		} else {
+			destinationQueue = msg.OriginalSourceQueue
+		}
+		if destinationQueue.IsDeleted() {
+			m.markFailedByDestinationDeleted()
+			return
+		}
+		destinationQueue.Push(msg)
 		atomic.AddUint64(&m.stats.ApproximateNumberOfMessagesMoved, 1)
 		atomic.StoreInt64(&m.stats.ApproximateNumberOfMessagesToMove, m.SourceQueue.Stats().NumMessagesReady)
 	}
@@ -156,7 +161,7 @@ func (m *MessageMoveTask) markCompleted() {
 	if m.status != uint32(MessageMoveStatusRunning) {
 		return
 	}
-	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusFailed))
+	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCompleted))
 	m.cancel() // clear the goroutine here
 	m.cancel = nil
 	m.FailureReason = fmt.Sprintf("destination queue %q has been deleted", m.DestinationQueue.ARN)
