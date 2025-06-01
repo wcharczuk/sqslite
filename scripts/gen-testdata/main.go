@@ -7,21 +7,22 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/jonboulle/clockwork"
 	"github.com/spf13/pflag"
-	scenario "github.com/wcharczuk/sqslite/scripts/gen-testdata/scenarios"
+	"github.com/wcharczuk/sqslite/internal/sqslite/integration"
 )
 
 var (
 	flagSpyBindAddr       = pflag.String("spy-bind-addr", ":4567", "The bind address of the spy proxy")
 	flagSpyUpstream       = pflag.String("spy-upstream", "https://sqs.us-west-2.amazonaws.com", "The upstream url the spy proxy will forward to")
-	flagSpyBaseEndpoint   = pflag.String("spy-base-endpoint", "http://localhost:4567", "The endpoint URL (leave blank to use the default)")
 	flagEnabledScenarios  = pflag.StringArray("enable-scenario", []string{"visibility_timeouts"}, "The scenarios that are explicitly enabled")
 	flagDisabledScenarios = pflag.StringArray("disable-scenario", nil, "The scenarios that are explicitly disabled")
 )
 
-var scenarios = []scenario.Scenario{
-	scenario.Basic,
-	scenario.VisibilityTimeouts,
+var scenarios = []integration.Scenario{
+	integration.Basic,
+	integration.VisibilityTimeouts,
 }
 
 func main() {
@@ -31,12 +32,20 @@ func main() {
 			slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}),
 		),
 	)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	cfg := scenario.ScenarioConfig{
-		SpyBindAddr:  *flagSpyBindAddr,
-		SpyUpstream:  *flagSpyUpstream,
-		BaseEndpoint: *flagSpyBaseEndpoint,
+	sess, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	cfg := integration.ScenarioConfig{
+		SpyBindAddr: *flagSpyBindAddr,
+		SpyUpstream: *flagSpyUpstream,
+		AWSConfig:   sess,
+		Clock:       clockwork.NewRealClock(),
+		Mode:        integration.ModeSave,
 	}
 
 	enabled := make(map[string]struct{})
@@ -47,7 +56,6 @@ func main() {
 	for _, scenarioID := range *flagDisabledScenarios {
 		disabled[scenarioID] = struct{}{}
 	}
-
 	for _, scenario := range scenarios {
 		if _, ok := enabled[scenario.ID]; len(enabled) > 0 && !ok {
 			continue

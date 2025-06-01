@@ -21,7 +21,7 @@ func main() {
 	s := &http.Server{
 		Addr: *flagBindAddr,
 		Handler: &spy.Handler{
-			Out:  os.Stdout,
+			Do:   spy.WriteOutput(os.Stdout),
 			Next: httputil.NewSingleHostReverseProxy(must(url.Parse(*flagUpstream))),
 		},
 	}

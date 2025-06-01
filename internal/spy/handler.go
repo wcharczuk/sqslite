@@ -11,9 +11,18 @@ import (
 )
 
 type Handler struct {
-	Out   io.Writer
-	Next  http.Handler
-	outMu sync.Mutex
+	Do   func(Request)
+	Next http.Handler
+}
+
+func WriteOutput(output io.Writer) func(Request) {
+	encoderMu := &sync.Mutex{}
+	encoder := json.NewEncoder(output)
+	return func(details Request) {
+		encoderMu.Lock()
+		defer encoderMu.Unlock()
+		_ = encoder.Encode(details)
+	}
 }
 
 func (l *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -62,7 +71,7 @@ func (l *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	details.StatusCode = http.StatusText(statusWriter.statusCode)
 	details.Elapsed = time.Since(start)
 
-	l.outMu.Lock()
-	_ = json.NewEncoder(l.Out).Encode(details)
-	l.outMu.Unlock()
+	if l.Do != nil {
+		l.Do(details)
+	}
 }
