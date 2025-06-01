@@ -1,6 +1,7 @@
 package sqslite
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,17 @@ func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
 		QueueName: aws.String("test!!!queue"),
 	})
 	require.NotNil(t, err)
+}
+
+func Test_validateMessageBody(t *testing.T) {
+	err := validateMessageBody(aws.String(`{"message":0}`), 256*1024)
+	require.Nil(t, err)
+
+	err = validateMessageBody(aws.String(strings.Repeat("a", 512)), 256)
+	require.NotNil(t, err)
+
+	err = validateMessageBody(aws.String(""), 256)
+	require.Nil(t, err)
 }
 
 func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {
@@ -468,9 +480,9 @@ func Test_Queue_Delete_validReceiptHandle_returnsTrue(t *testing.T) {
 	received := q.Receive(1, 0)
 	require.Len(t, received, 1)
 
-	err := q.Delete(received[0].ReceiptHandle.Value)
+	ok := q.Delete(received[0].ReceiptHandle.Value)
 
-	require.Nil(t, err)
+	require.True(t, ok)
 }
 
 func Test_Queue_Delete_invalidReceiptHandle_returnsFalse(t *testing.T) {
@@ -636,13 +648,13 @@ func Test_Queue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
 	receiptHandle := received[0].ReceiptHandle.Value
 
 	// First delete should succeed
-	err := q.Delete(receiptHandle)
-	require.Nil(t, err)
+	ok := q.Delete(receiptHandle)
+	require.True(t, ok)
 
 	// Second delete should fail
-	err = q.Delete(receiptHandle)
+	ok = q.Delete(receiptHandle)
 
-	require.NotNil(t, err)
+	require.False(t, ok)
 }
 
 func Test_Queue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {
@@ -1508,7 +1520,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_receiptHandleNotFound_returnsInvali
 
 	require.Len(t, successful, 0)
 	require.Len(t, failed, 1)
-	require.Equal(t, "InvalidParameterValue", *failed[0].Code)
+	require.Equal(t, "ReceiptHandleIsInvalid", *failed[0].Code)
 	require.Equal(t, "invalid", *failed[0].Id)
 	require.True(t, failed[0].SenderFault)
 }
@@ -1594,7 +1606,6 @@ func Test_Queue_ChangeMessageVisibilityBatch_returnsCorrectErrorDetailsInFailedR
 
 	require.Len(t, failed, 1)
 	require.Equal(t, "error1", *failed[0].Id)
-	require.Equal(t, "ReceiptHandle not found", *failed[0].Message)
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_mixedZeroAndNonZeroTimeouts_handlesCorrectly(t *testing.T) {

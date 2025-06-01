@@ -113,7 +113,7 @@ func (q *Queues) EachQueue() iter.Seq[*Queue] {
 		q.queuesMu.Lock()
 		defer q.queuesMu.Unlock()
 		for _, queue := range q.queues {
-			if queue.deleted.IsZero() {
+			if queue.IsDeleted() {
 				continue
 			}
 			if !yield(queue) {
@@ -259,9 +259,12 @@ func (q *Queues) deleteQueueUnsafe(queueURL string) {
 	if queue.dlqTarget != nil {
 		queue.dlqTarget.RemoveDLQSource(queueURL)
 	}
-	for taskHandle := range q.moveMessageTasksBySourceArn[queue.ARN].InOrder() {
-		q.moveMessageTasks[taskHandle].Close()
-		delete(q.moveMessageTasks, taskHandle)
+
+	if taskHandles := q.moveMessageTasksBySourceArn[queue.ARN]; taskHandles != nil && taskHandles.Len() > 0 {
+		for taskHandle := range q.moveMessageTasksBySourceArn[queue.ARN].InOrder() {
+			q.moveMessageTasks[taskHandle].Close()
+			delete(q.moveMessageTasks, taskHandle)
+		}
 	}
 	delete(q.moveMessageTasksBySourceArn, queue.ARN)
 	delete(q.queueURLs, queue.Name)

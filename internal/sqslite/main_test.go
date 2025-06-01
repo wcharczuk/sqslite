@@ -3,6 +3,7 @@ package sqslite
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,8 +66,14 @@ func testHelperDoClientMethod[Input, Output any](t *testing.T, testServer *httpt
 	req.Header.Set(HeaderAmzQueryMode, "true")
 	res, sendErr := testServer.Client().Do(req)
 	require.NoError(t, sendErr)
-	require.Equal(t, http.StatusOK, res.StatusCode)
 	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		var responseErr Error
+		_ = json.NewDecoder(res.Body).Decode(&responseErr)
+		require.Equal(t, http.StatusOK, res.StatusCode, fmt.Sprintf("%s %s", responseErr.Type, responseErr.Message))
+	}
+
 	var output Output
 	err = json.NewDecoder(res.Body).Decode(&output)
 	require.NoError(t, err)

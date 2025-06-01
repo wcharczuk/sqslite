@@ -866,6 +866,15 @@ func validateMessageBody(body *string, maximumMessageSizeBytes int) *Error {
 	return nil
 }
 
+func isMessageBodyExclusivelyInvalidCharacters(body string) bool {
+	for _, r := range body {
+		if utf8.ValidRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateBatchEntryIDs(entryIDs []string) *Error {
 	if len(distinct(entryIDs)) != len(entryIDs) {
 		return ErrorBatchEntryIdsNotDistinct()
@@ -888,15 +897,6 @@ func validateBatchEntryID(entryID string) *Error {
 		return ErrorInvalidBatchEntryID().WithMessagef("Id must be a valid string; regexp used %q", validBatchEntryIDRegexp.String())
 	}
 	return nil
-}
-
-func isMessageBodyExclusivelyInvalidCharacters(body string) bool {
-	for _, r := range body {
-		if utf8.ValidRune(r) {
-			return true
-		}
-	}
-	return false
 }
 
 func readAttributeDurationSeconds(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[time.Duration], err *Error) {

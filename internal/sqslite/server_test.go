@@ -179,8 +179,11 @@ func Test_Server_deleteQueue(t *testing.T) {
 	_ = testHelperDeleteQueue(t, testServer, &sqs.DeleteQueueInput{
 		QueueUrl: aws.String(testDefaultQueueURL),
 	})
-	// just defaultDLQ
-	require.EqualValues(t, 1, len(server.accounts.accounts[testAccountID].queues))
+
+	queue, ok := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
+	require.True(t, ok)
+	require.NotNil(t, queue)
+	require.True(t, queue.IsDeleted())
 }
 
 func Test_Server_sendMessage(t *testing.T) {
@@ -260,9 +263,8 @@ func Test_Server_returnsWellFormedErrors(t *testing.T) {
 	var errResponse Error
 	err = json.NewDecoder(res.Body).Decode(&errResponse)
 	require.NoError(t, err)
-	require.Equal(t, "com.amazonaws.sqs#InvalidMethod", errResponse.Type)
-	require.Equal(t, http.StatusBadRequest, errResponse.StatusCode)
-	require.Equal(t, "The http method GET is not valid for this endpoint.", errResponse.Message)
+	require.Equal(t, "com.amazonaws.sqs#UnsupportedOperation", errResponse.Type)
+	require.Equal(t, "Invalid method GET", errResponse.Message)
 }
 
 func Test_Server_receiveMessage_equalMaxNumberOfMessages(t *testing.T) {

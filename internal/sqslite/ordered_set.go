@@ -14,6 +14,10 @@ type OrderedSet[T comparable] struct {
 	lookup  map[T]*LinkedListNode[T]
 }
 
+func (os *OrderedSet[T]) Len() int {
+	return len(os.lookup)
+}
+
 func (os *OrderedSet[T]) Add(v T) {
 	n := os.ordered.Push(v)
 	os.lookup[v] = n
