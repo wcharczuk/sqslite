@@ -1,7 +1,6 @@
 package sqslite
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -86,12 +85,16 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		s.createQueue(rw, req)
 	case MethodListQueues:
 		s.listQueues(rw, req)
+	case MethodListDeadLetterSourceQueues:
+		s.listDeadLetterSourceQueues(rw, req)
 	case MethodGetQueueAttributes:
 		s.getQueueAttributes(rw, req)
 	case MethodSetQueueAttributes:
 		s.setQueueAttributes(rw, req)
 	case MethodTagQueue:
 		s.tagQueue(rw, req)
+	case MethodListQueueTags:
+		s.listQueueTags(rw, req)
 	case MethodUntagQueue:
 		s.untagQueue(rw, req)
 	case MethodPurgeQueue:
@@ -184,16 +187,16 @@ func (s Server) listQueues(rw http.ResponseWriter, req *http.Request) {
 	var queueURLs []string
 	var index int
 	for q := range queues.EachQueue() {
-		if inputNextToken.Offset > 0 && inputNextToken.Offset > index {
-			index++
-			continue
-		}
-		index++
 		if input.QueueNamePrefix != nil && *input.QueueNamePrefix != "" {
 			if !strings.HasPrefix(q.Name, *input.QueueNamePrefix) {
 				continue
 			}
 		}
+		if inputNextToken.Offset > 0 && inputNextToken.Offset > index {
+			index++
+			continue
+		}
+		index++
 		queueURLs = append(queueURLs, q.URL)
 		if len(queueURLs) == maxResults {
 			nextToken = aws.String(nextPageToken{Offset: index}.String())
@@ -206,19 +209,58 @@ func (s Server) listQueues(rw http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func parseNextPageToken(token string) (output nextPageToken) {
-	d, _ := hex.DecodeString(token)
-	_ = json.Unmarshal(d, &output)
-	return
-}
+func (s Server) listDeadLetterSourceQueues(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.ListDeadLetterSourceQueuesInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	if input.MaxResults != nil && (*input.MaxResults < 0 || *input.MaxResults > 1000) {
+		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxResults must be greater than 0 and less than 1000, you put %d", *input.MaxResults))
+	}
+	if input.NextToken != nil && input.MaxResults == nil {
+		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxResults must be set if NextToken is set"))
+	}
 
-type nextPageToken struct {
-	Offset int
-}
+	queues := s.accounts.EnsureQueues(authz.AccountID)
 
-func (npt nextPageToken) String() string {
-	data, _ := json.Marshal(npt)
-	return hex.EncodeToString(data)
+	var inputNextToken nextPageToken
+	if input.NextToken != nil && *input.NextToken != "" {
+		inputNextToken = parseNextPageToken(*input.NextToken)
+	}
+
+	var maxResults = 1000
+	if input.MaxResults != nil {
+		maxResults = int(*input.MaxResults)
+	}
+
+	var nextToken *string
+	var queueURLs []string
+	var index int
+	for q := range queues.EachQueue() {
+		if q.dlqTarget == nil {
+			continue
+		}
+		if inputNextToken.Offset > 0 && inputNextToken.Offset > index {
+			index++
+			continue
+		}
+		index++
+		queueURLs = append(queueURLs, q.URL)
+		if len(queueURLs) == maxResults {
+			nextToken = aws.String(nextPageToken{Offset: index}.String())
+			break
+		}
+	}
+	serialize(rw, req, &sqs.ListDeadLetterSourceQueuesOutput{
+		QueueUrls: queueURLs,
+		NextToken: nextToken,
+	})
 }
 
 func (s Server) getQueueAttributes(rw http.ResponseWriter, req *http.Request) {
@@ -263,6 +305,27 @@ func (s Server) setQueueAttributes(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	serialize(rw, req, &sqs.SetQueueAttributesOutput{})
+}
+
+func (s Server) listQueueTags(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.ListQueueTagsInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+	queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
+		return
+	}
+	serialize(rw, req, &sqs.ListQueueTagsOutput{
+		Tags: queue.Tags,
+	})
 }
 
 func (s Server) tagQueue(rw http.ResponseWriter, req *http.Request) {

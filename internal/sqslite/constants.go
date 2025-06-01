@@ -27,8 +27,10 @@ const (
 const (
 	MethodCreateQueue                  = "AmazonSQS.CreateQueue"
 	MethodListQueues                   = "AmazonSQS.ListQueues"
+	MethodListDeadLetterSourceQueues   = "AmazonSQS.ListDeadLetterSourceQueues"
 	MethodGetQueueAttributes           = "AmazonSQS.GetQueueAttributes"
 	MethodSetQueueAttributes           = "AmazonSQS.SetQueueAttributes"
+	MethodListQueueTags                = "AmazonSQS.ListQueueTags"
 	MethodTagQueue                     = "AmazonSQS.TagQueue"
 	MethodUntagQueue                   = "AmazonSQS.UntagQueue"
 	MethodPurgeQueue                   = "AmazonSQS.PurgeQueue"
@@ -45,8 +47,6 @@ const (
 	MethodListMessageMoveTasks         = "AmazonSQS.ListMessageMoveTasks"
 
 	/* left to implement */
-	MethodListDeadLetterSourceQueues = "AmazonSQS.ListDeadLetterSourceQueues"
-	MethodListQueueTags              = "AmazonSQS.ListQueueTags"
-	MethodAddPermission              = "AmazonSQS.AddPermission"
-	MethodRemovePermission           = "AmazonSQS.RemovePermission"
+	MethodAddPermission    = "AmazonSQS.AddPermission"
+	MethodRemovePermission = "AmazonSQS.RemovePermission"
 )

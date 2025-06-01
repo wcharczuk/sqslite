@@ -163,6 +163,19 @@ func createTestQueue(t *testing.T, clock clockwork.Clock) *Queue {
 	return q
 }
 
+func createTestQueueWithName(t *testing.T, clock clockwork.Clock, name string) *Queue {
+	t.Helper()
+	queue, err := NewQueueFromCreateQueueInput(clock, Authorization{
+		Region:    Some("us-west-2"),
+		Host:      Some("sqslite.local"),
+		AccountID: "test-account",
+	}, &sqs.CreateQueueInput{
+		QueueName: aws.String(name),
+	})
+	require.Nil(t, err)
+	return queue
+}
+
 func createTestMessage(body string) Message {
 	return Message{
 		MessageID: uuid.V4(),
