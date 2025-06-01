@@ -68,7 +68,7 @@ func Test_Queue_NewMessageFromSendMessageInput(t *testing.T) {
 }
 
 func Test_Queue_Receive_respectsMaxNumberOfMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push 5 messages to the queue
 	pushTestMessages(q, 5)
@@ -82,7 +82,7 @@ func Test_Queue_Receive_respectsMaxNumberOfMessages(t *testing.T) {
 }
 
 func Test_Queue_Receive_setsApproximateReceiveCountAttribute(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push 5 messages to the queue
 	pushTestMessages(q, 5)
@@ -100,7 +100,7 @@ func Test_Queue_Receive_setsApproximateReceiveCountAttribute(t *testing.T) {
 }
 
 func Test_Queue_Receive_returnsEmptyWhenMaxInflightReached(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Set a very low maximum inflight limit
 	q.MaximumMessagesInflight = 2
@@ -116,7 +116,7 @@ func Test_Queue_Receive_returnsEmptyWhenMaxInflightReached(t *testing.T) {
 }
 
 func Test_Queue_Receive_usesProvidedVisibilityTimeout(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	q.VisibilityTimeout = 30 * time.Second // Default queue timeout
 
 	pushTestMessages(q, 1)
@@ -134,7 +134,7 @@ func Test_Queue_Receive_usesProvidedVisibilityTimeout(t *testing.T) {
 }
 
 func Test_Queue_Receive_usesDefaultVisibilityTimeoutWhenZero(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	defaultTimeout := 45 * time.Second
 	q.VisibilityTimeout = defaultTimeout
 
@@ -152,7 +152,7 @@ func Test_Queue_Receive_usesDefaultVisibilityTimeoutWhenZero(t *testing.T) {
 }
 
 func Test_Queue_Receive_movesMessagesFromReadyToInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	pushTestMessages(q, 3)
 
@@ -180,7 +180,7 @@ func Test_Queue_Receive_movesMessagesFromReadyToInflight(t *testing.T) {
 }
 
 func Test_Queue_Receive_updatesStatistics(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Get initial stats
 	initialStats := q.Stats()
@@ -199,7 +199,7 @@ func Test_Queue_Receive_updatesStatistics(t *testing.T) {
 }
 
 func Test_Queue_Receive_generatesReceiptHandles(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	pushTestMessages(q, 2)
 
@@ -223,7 +223,7 @@ func Test_Queue_Receive_generatesReceiptHandles(t *testing.T) {
 }
 
 func Test_Queue_Receive_returnsEmptyWhenQueueEmpty(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Don't push any messages
 	received := q.Receive(10, 0)
@@ -233,7 +233,7 @@ func Test_Queue_Receive_returnsEmptyWhenQueueEmpty(t *testing.T) {
 }
 
 func Test_Queue_Receive_incrementsApproximateReceiveCount(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	pushTestMessages(q, 1)
 
@@ -249,13 +249,16 @@ func Test_Queue_Receive_incrementsApproximateReceiveCount(t *testing.T) {
 }
 
 func Test_Queue_Receive_setsLastReceivedTime(t *testing.T) {
-	q := createTestQueue(t)
+	c := clockwork.NewFakeClock()
+	q := createTestQueue(t, c)
 
 	pushTestMessages(q, 1)
 
-	before := time.Now().UTC()
+	before := c.Now()
+	c.Advance(100 * time.Millisecond)
 	received := q.Receive(1, 0)
-	after := time.Now().UTC()
+	c.Advance(100 * time.Millisecond)
+	after := c.Now()
 
 	require.Len(t, received, 1)
 
@@ -269,10 +272,10 @@ func Test_Queue_Receive_setsLastReceivedTime(t *testing.T) {
 }
 
 func Test_Queue_Push_singleMessageWithoutDelay_addsToReadyQueue(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
 
 	q.Push(msgState)
 
@@ -282,10 +285,10 @@ func Test_Queue_Push_singleMessageWithoutDelay_addsToReadyQueue(t *testing.T) {
 }
 
 func Test_Queue_Push_singleMessageWithDelay_addsToDelayedQueue(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10) // 10 second delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 10) // 10 second delay
 
 	q.Push(msgState)
 
@@ -295,12 +298,12 @@ func Test_Queue_Push_singleMessageWithDelay_addsToDelayedQueue(t *testing.T) {
 }
 
 func Test_Queue_Push_multipleMessages_handlesAllMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	msg1 := createTestMessage("test body 1")
-	msgState1, _ := q.NewMessageState(msg1, time.Now().UTC(), 0)
+	msgState1, _ := q.NewMessageState(msg1, q.Clock().Now(), 0)
 	msg2 := createTestMessage("test body 2")
-	msgState2, _ := q.NewMessageState(msg2, time.Now().UTC(), 0)
+	msgState2, _ := q.NewMessageState(msg2, q.Clock().Now(), 0)
 
 	q.Push(msgState1, msgState2)
 
@@ -310,11 +313,11 @@ func Test_Queue_Push_multipleMessages_handlesAllMessages(t *testing.T) {
 }
 
 func Test_Queue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	q.Delay = Some(5 * time.Second)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0) // No delay on message
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0) // No delay on message
 
 	q.Push(msgState)
 
@@ -324,11 +327,11 @@ func Test_Queue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *tes
 }
 
 func Test_Queue_Push_queueHasDefaultDelayMessageHasDelay_keepsMessageDelay(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	q.Delay = Some(5 * time.Second)
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10) // Message has its own delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 10) // Message has its own delay
 
 	q.Push(msgState)
 
@@ -339,11 +342,11 @@ func Test_Queue_Push_queueHasDefaultDelayMessageHasDelay_keepsMessageDelay(t *te
 }
 
 func Test_Queue_Push_incrementsTotalMessagesSent(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
 
 	q.Push(msgState)
 
@@ -352,11 +355,11 @@ func Test_Queue_Push_incrementsTotalMessagesSent(t *testing.T) {
 }
 
 func Test_Queue_Push_incrementsNumMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
 
 	q.Push(msgState)
 
@@ -365,11 +368,11 @@ func Test_Queue_Push_incrementsNumMessages(t *testing.T) {
 }
 
 func Test_Queue_Push_nonDelayedMessage_incrementsNumMessagesReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
 
 	q.Push(msgState)
 
@@ -378,11 +381,11 @@ func Test_Queue_Push_nonDelayedMessage_incrementsNumMessagesReady(t *testing.T) 
 }
 
 func Test_Queue_Push_delayedMessage_incrementsNumMessagesDelayed(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 10)
 
 	q.Push(msgState)
 
@@ -391,10 +394,10 @@ func Test_Queue_Push_delayedMessage_incrementsNumMessagesDelayed(t *testing.T) {
 }
 
 func Test_Queue_Push_readyMessage_addsToMessagesReadyMap(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
 
 	q.Push(msgState)
 
@@ -405,10 +408,10 @@ func Test_Queue_Push_readyMessage_addsToMessagesReadyMap(t *testing.T) {
 }
 
 func Test_Queue_Push_delayedMessage_addsToMessagesDelayedMap(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 10)
 
 	q.Push(msgState)
 
@@ -419,10 +422,10 @@ func Test_Queue_Push_delayedMessage_addsToMessagesDelayedMap(t *testing.T) {
 }
 
 func Test_Queue_Push_readyMessage_addsToOrderedLinkedList(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
 
 	q.Push(msgState)
 
@@ -432,7 +435,7 @@ func Test_Queue_Push_readyMessage_addsToOrderedLinkedList(t *testing.T) {
 }
 
 func Test_Queue_Push_noMessages_isNoOp(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	q.Push() // Call with no arguments
@@ -442,12 +445,12 @@ func Test_Queue_Push_noMessages_isNoOp(t *testing.T) {
 }
 
 func Test_Queue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	readyMsg := createTestMessage("ready")
-	readyMsgState, _ := q.NewMessageState(readyMsg, time.Now().UTC(), 0)
+	readyMsgState, _ := q.NewMessageState(readyMsg, q.Clock().Now(), 0)
 	delayedMsg := createTestMessage("delayed")
-	delayedMsgState, _ := q.NewMessageState(delayedMsg, time.Now().UTC(), 10)
+	delayedMsgState, _ := q.NewMessageState(delayedMsg, q.Clock().Now(), 10)
 
 	q.Push(readyMsgState, delayedMsgState)
 
@@ -458,7 +461,7 @@ func Test_Queue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T)
 }
 
 func Test_Queue_Delete_validReceiptHandle_returnsTrue(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message to get it in inflight state
 	pushTestMessages(q, 1)
@@ -471,7 +474,7 @@ func Test_Queue_Delete_validReceiptHandle_returnsTrue(t *testing.T) {
 }
 
 func Test_Queue_Delete_invalidReceiptHandle_returnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	err := q.Delete("invalid-receipt-handle")
 
@@ -479,7 +482,7 @@ func Test_Queue_Delete_invalidReceiptHandle_returnsFalse(t *testing.T) {
 }
 
 func Test_Queue_Delete_removesMessageFromInflightMap(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -496,7 +499,7 @@ func Test_Queue_Delete_removesMessageFromInflightMap(t *testing.T) {
 }
 
 func Test_Queue_Delete_removesReceiptHandleFromMap(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -513,7 +516,7 @@ func Test_Queue_Delete_removesReceiptHandleFromMap(t *testing.T) {
 }
 
 func Test_Queue_Delete_removesAllReceiptHandlesForMessage(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -538,7 +541,7 @@ func Test_Queue_Delete_removesAllReceiptHandlesForMessage(t *testing.T) {
 }
 
 func Test_Queue_Delete_incrementsTotalMessagesDeleted(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	// Push and receive a message
@@ -553,7 +556,7 @@ func Test_Queue_Delete_incrementsTotalMessagesDeleted(t *testing.T) {
 }
 
 func Test_Queue_Delete_decrementsNumMessagesInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -568,7 +571,7 @@ func Test_Queue_Delete_decrementsNumMessagesInflight(t *testing.T) {
 }
 
 func Test_Queue_Delete_decrementsNumMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -583,7 +586,7 @@ func Test_Queue_Delete_decrementsNumMessages(t *testing.T) {
 }
 
 func Test_Queue_Delete_receiptHandleNotInMap_returnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message but use a different receipt handle
 	pushTestMessages(q, 1)
@@ -596,7 +599,7 @@ func Test_Queue_Delete_receiptHandleNotInMap_returnsFalse(t *testing.T) {
 }
 
 func Test_Queue_Delete_messageIdNotInInflight_returnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -616,7 +619,7 @@ func Test_Queue_Delete_messageIdNotInInflight_returnsFalse(t *testing.T) {
 }
 
 func Test_Queue_Delete_emptyReceiptHandle_returnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	err := q.Delete("")
 
@@ -624,7 +627,7 @@ func Test_Queue_Delete_emptyReceiptHandle_returnsFalse(t *testing.T) {
 }
 
 func Test_Queue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -643,7 +646,7 @@ func Test_Queue_Delete_sameReceiptHandleTwice_secondReturnsFalse(t *testing.T) {
 }
 
 func Test_Queue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive multiple messages
 	pushTestMessages(q, 3)
@@ -666,7 +669,7 @@ func Test_Queue_Delete_multipleMessages_deletesOnlySpecified(t *testing.T) {
 }
 
 func Test_Queue_DeleteBatch_allValidReceiptHandles_returnsAllSuccessful(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive multiple messages
 	pushTestMessages(q, 3)
@@ -687,7 +690,7 @@ func Test_Queue_DeleteBatch_allValidReceiptHandles_returnsAllSuccessful(t *testi
 }
 
 func Test_Queue_DeleteBatch_allInvalidReceiptHandles_returnsAllFailed(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Create batch request with invalid receipt handles
 	entriesSlice := []types.DeleteMessageBatchRequestEntry{
@@ -702,7 +705,7 @@ func Test_Queue_DeleteBatch_allInvalidReceiptHandles_returnsAllFailed(t *testing
 }
 
 func Test_Queue_DeleteBatch_mixedValidInvalid_returnsMixedResults(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive one message
 	pushTestMessages(q, 1)
@@ -722,7 +725,7 @@ func Test_Queue_DeleteBatch_mixedValidInvalid_returnsMixedResults(t *testing.T) 
 }
 
 func Test_Queue_DeleteBatch_emptySlice_returnsEmptyResults(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	successful, failed := q.DeleteBatch([]types.DeleteMessageBatchRequestEntry{})
 
@@ -731,7 +734,7 @@ func Test_Queue_DeleteBatch_emptySlice_returnsEmptyResults(t *testing.T) {
 }
 
 func Test_Queue_DeleteBatch_removesSuccessfulMessagesFromInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -755,7 +758,7 @@ func Test_Queue_DeleteBatch_removesSuccessfulMessagesFromInflight(t *testing.T) 
 }
 
 func Test_Queue_DeleteBatch_removesSuccessfulReceiptHandles(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -779,7 +782,7 @@ func Test_Queue_DeleteBatch_removesSuccessfulReceiptHandles(t *testing.T) {
 }
 
 func Test_Queue_DeleteBatch_removesAllReceiptHandlesForSuccessfulMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -809,7 +812,7 @@ func Test_Queue_DeleteBatch_removesAllReceiptHandlesForSuccessfulMessages(t *tes
 }
 
 func Test_Queue_DeleteBatch_incrementsTotalMessagesDeletedForSuccessfulOnly(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	// Push and receive one message
@@ -830,7 +833,7 @@ func Test_Queue_DeleteBatch_incrementsTotalMessagesDeletedForSuccessfulOnly(t *t
 }
 
 func Test_Queue_DeleteBatch_decrementsNumMessagesInflightForSuccessfulOnly(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive two messages
 	pushTestMessages(q, 2)
@@ -850,7 +853,7 @@ func Test_Queue_DeleteBatch_decrementsNumMessagesInflightForSuccessfulOnly(t *te
 }
 
 func Test_Queue_DeleteBatch_decrementsNumMessagesForSuccessfulOnly(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive two messages
 	pushTestMessages(q, 2)
@@ -870,7 +873,7 @@ func Test_Queue_DeleteBatch_decrementsNumMessagesForSuccessfulOnly(t *testing.T)
 }
 
 func Test_Queue_DeleteBatch_receiptHandleNotFound_returnsInvalidParameterValueError(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	entriesSlice := []types.DeleteMessageBatchRequestEntry{
 		{Id: aws.String("invalid"), ReceiptHandle: aws.String("not-found")},
@@ -886,7 +889,7 @@ func Test_Queue_DeleteBatch_receiptHandleNotFound_returnsInvalidParameterValueEr
 }
 
 func Test_Queue_DeleteBatch_messageIdNotInInflight_returnsInconsistentStateError(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -914,7 +917,7 @@ func Test_Queue_DeleteBatch_messageIdNotInInflight_returnsInconsistentStateError
 }
 
 func Test_Queue_DeleteBatch_preservesFailedMessagesInInflightState(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive two messages
 	pushTestMessages(q, 2)
@@ -940,7 +943,7 @@ func Test_Queue_DeleteBatch_preservesFailedMessagesInInflightState(t *testing.T)
 }
 
 func Test_Queue_DeleteBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -960,7 +963,7 @@ func Test_Queue_DeleteBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
 }
 
 func Test_Queue_DeleteBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	entriesSlice := []types.DeleteMessageBatchRequestEntry{
 		{Id: aws.String("error1"), ReceiptHandle: aws.String("invalid1")},
@@ -977,7 +980,7 @@ func Test_Queue_DeleteBatch_returnsCorrectErrorDetailsInFailedResults(t *testing
 }
 
 func Test_Queue_ChangeMessageVisibility_validReceiptHandle_returnsTrue(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message to get it in inflight state
 	pushTestMessages(q, 1)
@@ -990,7 +993,7 @@ func Test_Queue_ChangeMessageVisibility_validReceiptHandle_returnsTrue(t *testin
 }
 
 func Test_Queue_ChangeMessageVisibility_invalidReceiptHandle_returnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	result := q.ChangeMessageVisibility("invalid-receipt-handle", 60*time.Second)
 
@@ -998,7 +1001,7 @@ func Test_Queue_ChangeMessageVisibility_invalidReceiptHandle_returnsFalse(t *tes
 }
 
 func Test_Queue_ChangeMessageVisibility_updatesMessageVisibilityTimeout(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1016,7 +1019,7 @@ func Test_Queue_ChangeMessageVisibility_updatesMessageVisibilityTimeout(t *testi
 }
 
 func Test_Queue_ChangeMessageVisibility_zeroTimeout_makesMessageImmediatelyVisible(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1033,7 +1036,7 @@ func Test_Queue_ChangeMessageVisibility_zeroTimeout_makesMessageImmediatelyVisib
 }
 
 func Test_Queue_ChangeMessageVisibility_zeroTimeout_movesMessageToReadyQueue(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1050,7 +1053,7 @@ func Test_Queue_ChangeMessageVisibility_zeroTimeout_movesMessageToReadyQueue(t *
 }
 
 func Test_Queue_ChangeMessageVisibility_zeroTimeout_removesFromInflightQueue(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1067,7 +1070,7 @@ func Test_Queue_ChangeMessageVisibility_zeroTimeout_removesFromInflightQueue(t *
 }
 
 func Test_Queue_ChangeMessageVisibility_zeroTimeout_incrementsTotalMessagesChangedVisibility(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	// Push and receive a message
@@ -1082,7 +1085,7 @@ func Test_Queue_ChangeMessageVisibility_zeroTimeout_incrementsTotalMessagesChang
 }
 
 func Test_Queue_ChangeMessageVisibility_zeroTimeout_incrementsNumMessagesReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1097,7 +1100,7 @@ func Test_Queue_ChangeMessageVisibility_zeroTimeout_incrementsNumMessagesReady(t
 }
 
 func Test_Queue_ChangeMessageVisibility_zeroTimeout_decrementsNumMessagesInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1112,7 +1115,7 @@ func Test_Queue_ChangeMessageVisibility_zeroTimeout_decrementsNumMessagesInfligh
 }
 
 func Test_Queue_ChangeMessageVisibility_zeroTimeout_removesAllReceiptHandles(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1137,7 +1140,7 @@ func Test_Queue_ChangeMessageVisibility_zeroTimeout_removesAllReceiptHandles(t *
 }
 
 func Test_Queue_ChangeMessageVisibility_nonZeroTimeout_keepsMessageInInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1154,7 +1157,7 @@ func Test_Queue_ChangeMessageVisibility_nonZeroTimeout_keepsMessageInInflight(t 
 }
 
 func Test_Queue_ChangeMessageVisibility_receiptHandleNotFound_returnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message but use a different receipt handle
 	pushTestMessages(q, 1)
@@ -1167,7 +1170,7 @@ func Test_Queue_ChangeMessageVisibility_receiptHandleNotFound_returnsFalse(t *te
 }
 
 func Test_Queue_ChangeMessageVisibility_messageIdNotInInflight_returnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1187,7 +1190,7 @@ func Test_Queue_ChangeMessageVisibility_messageIdNotInInflight_returnsFalse(t *t
 }
 
 func Test_Queue_ChangeMessageVisibility_emptyReceiptHandle_returnsFalse(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	result := q.ChangeMessageVisibility("", 60*time.Second)
 
@@ -1195,7 +1198,7 @@ func Test_Queue_ChangeMessageVisibility_emptyReceiptHandle_returnsFalse(t *testi
 }
 
 func Test_Queue_ChangeMessageVisibility_nonZeroTimeout_doesNotUpdateStatistics(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	// Push and receive a message
@@ -1210,7 +1213,8 @@ func Test_Queue_ChangeMessageVisibility_nonZeroTimeout_doesNotUpdateStatistics(t
 }
 
 func Test_Queue_ChangeMessageVisibility_setsVisibilityDeadlineCorrectly(t *testing.T) {
-	q := createTestQueue(t)
+	c := clockwork.NewFakeClock()
+	q := createTestQueue(t, c)
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1219,9 +1223,9 @@ func Test_Queue_ChangeMessageVisibility_setsVisibilityDeadlineCorrectly(t *testi
 	messageID := received[0].MessageID
 	newTimeout := 90 * time.Second
 
-	before := time.Now().UTC()
+	before := c.Now()
 	q.ChangeMessageVisibility(received[0].ReceiptHandle.Value, newTimeout)
-	after := time.Now().UTC()
+	after := c.Now()
 
 	q.mu.Lock()
 	msgState := q.messagesInflight[messageID]
@@ -1235,7 +1239,7 @@ func Test_Queue_ChangeMessageVisibility_setsVisibilityDeadlineCorrectly(t *testi
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_allValidEntries_returnsAllSuccessful(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive multiple messages
 	pushTestMessages(q, 3)
@@ -1256,7 +1260,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_allValidEntries_returnsAllSuccessfu
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_allInvalidEntries_returnsAllFailed(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Create batch request with invalid receipt handles
 	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
@@ -1271,7 +1275,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_allInvalidEntries_returnsAllFailed(
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_mixedValidInvalid_failsEarly(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive one message
 	pushTestMessages(q, 1)
@@ -1292,7 +1296,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_mixedValidInvalid_failsEarly(t *tes
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_emptySlice_returnsEmptyResults(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	successful, failed := q.ChangeMessageVisibilityBatch([]types.ChangeMessageVisibilityBatchRequestEntry{})
 
@@ -1301,7 +1305,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_emptySlice_returnsEmptyResults(t *t
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_updatesVisibilityTimeoutsForSuccessfulEntries(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -1325,7 +1329,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_updatesVisibilityTimeoutsForSuccess
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_movesToReadyQueue(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -1351,7 +1355,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_movesToReadyQueu
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_removesFromInflightQueue(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -1377,7 +1381,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeoutEntries_removesFromInfli
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_incrementsTotalMessagesChangedVisibilityForAllEntries(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	// Push and receive messages
@@ -1398,7 +1402,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_incrementsTotalMessagesChangedVisib
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_incrementsNumMessagesReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -1419,7 +1423,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_incrementsNumMessagesRe
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_decrementsNumMessagesInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -1440,7 +1444,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_decrementsNumMessagesIn
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_removesAllReceiptHandles(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1470,7 +1474,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_zeroTimeout_removesAllReceiptHandle
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_nonZeroTimeout_keepsMessagesInInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -1494,7 +1498,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_nonZeroTimeout_keepsMessagesInInfli
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_receiptHandleNotFound_returnsInvalidParameterValueError(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
 		{Id: aws.String("invalid"), ReceiptHandle: aws.String("not-found"), VisibilityTimeout: 60},
@@ -1510,7 +1514,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_receiptHandleNotFound_returnsInvali
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_messageIdNotInInflight_returnsInternalServerError(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1538,7 +1542,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_messageIdNotInInflight_returnsInter
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_earlyReturnBehavior_stopsProcessingOnFirstFailure(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive two messages
 	pushTestMessages(q, 2)
@@ -1560,7 +1564,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_earlyReturnBehavior_stopsProcessing
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_returnsCorrectIDsInSuccessfulResults(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 2)
@@ -1580,7 +1584,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_returnsCorrectIDsInSuccessfulResult
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_returnsCorrectErrorDetailsInFailedResults(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	entriesSlice := []types.ChangeMessageVisibilityBatchRequestEntry{
 		{Id: aws.String("error1"), ReceiptHandle: aws.String("invalid1"), VisibilityTimeout: 60},
@@ -1594,7 +1598,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_returnsCorrectErrorDetailsInFailedR
 }
 
 func Test_Queue_ChangeMessageVisibilityBatch_mixedZeroAndNonZeroTimeouts_handlesCorrectly(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive messages
 	pushTestMessages(q, 3)
@@ -1623,7 +1627,7 @@ func Test_Queue_ChangeMessageVisibilityBatch_mixedZeroAndNonZeroTimeouts_handles
 }
 
 func Test_Queue_UpdateInflightToReady_noInflightMessages_isNoOp(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	q.UpdateInflightToReady()
@@ -1633,7 +1637,7 @@ func Test_Queue_UpdateInflightToReady_noInflightMessages_isNoOp(t *testing.T) {
 }
 
 func Test_Queue_UpdateInflightToReady_noVisibleMessages_isNoOp(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message with a future visibility deadline
 	pushTestMessages(q, 1)
@@ -1648,7 +1652,7 @@ func Test_Queue_UpdateInflightToReady_noVisibleMessages_isNoOp(t *testing.T) {
 }
 
 func Test_Queue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1659,7 +1663,7 @@ func Test_Queue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testin
 	// Make the message visible by setting visibility deadline to past
 	q.mu.Lock()
 	msgState := q.messagesInflight[messageID]
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1671,7 +1675,7 @@ func Test_Queue_UpdateInflightToReady_withVisibleMessages_movesToReady(t *testin
 }
 
 func Test_Queue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive two messages
 	pushTestMessages(q, 2)
@@ -1682,8 +1686,8 @@ func Test_Queue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t 
 	q.mu.Lock()
 	msgState1 := q.messagesInflight[received[0].MessageID]
 	msgState2 := q.messagesInflight[received[1].MessageID]
-	msgState1.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
-	msgState2.VisibilityDeadline = Some(time.Now().UTC().Add(60 * time.Second))
+	msgState1.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
+	msgState2.VisibilityDeadline = Some(q.Clock().Now().Add(60 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1699,7 +1703,7 @@ func Test_Queue_UpdateInflightToReady_mixedVisibleNonVisible_movesOnlyVisible(t 
 }
 
 func Test_Queue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1710,7 +1714,7 @@ func Test_Queue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *test
 	// Make the message visible
 	q.mu.Lock()
 	msgState := q.messagesInflight[messageID]
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1722,7 +1726,7 @@ func Test_Queue_UpdateInflightToReady_removesVisibleMessagesFromInflight(t *test
 }
 
 func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1733,7 +1737,7 @@ func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
 	// Make the message visible
 	q.mu.Lock()
 	msgState := q.messagesInflight[messageID]
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1745,7 +1749,7 @@ func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToReady(t *testing.T) {
 }
 
 func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToOrderedList(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialListLen := q.messagesReadyOrdered.Len()
 
 	// Push and receive a message
@@ -1757,7 +1761,7 @@ func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToOrderedList(t *testin
 	// Make the message visible
 	q.mu.Lock()
 	msgState := q.messagesInflight[messageID]
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1768,7 +1772,7 @@ func Test_Queue_UpdateInflightToReady_addsVisibleMessagesToOrderedList(t *testin
 }
 
 func Test_Queue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1784,7 +1788,7 @@ func Test_Queue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages
 	msgState.ReceiptHandles.Add(extraHandle)
 	q.messagesInflightByReceiptHandle[extraHandle] = messageID
 	// Make the message visible
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1798,7 +1802,7 @@ func Test_Queue_UpdateInflightToReady_removesAllReceiptHandlesForVisibleMessages
 }
 
 func Test_Queue_UpdateInflightToReady_incrementsTotalMessagesInflightToReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	// Push and receive two messages
@@ -1810,8 +1814,8 @@ func Test_Queue_UpdateInflightToReady_incrementsTotalMessagesInflightToReady(t *
 	q.mu.Lock()
 	msgState1 := q.messagesInflight[received[0].MessageID]
 	msgState2 := q.messagesInflight[received[1].MessageID]
-	msgState1.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
-	msgState2.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState1.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
+	msgState2.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1821,7 +1825,7 @@ func Test_Queue_UpdateInflightToReady_incrementsTotalMessagesInflightToReady(t *
 }
 
 func Test_Queue_UpdateInflightToReady_incrementsNumMessagesReadyForVisibleMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1832,7 +1836,7 @@ func Test_Queue_UpdateInflightToReady_incrementsNumMessagesReadyForVisibleMessag
 	// Make the message visible
 	q.mu.Lock()
 	msgState := q.messagesInflight[received[0].MessageID]
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1842,7 +1846,7 @@ func Test_Queue_UpdateInflightToReady_incrementsNumMessagesReadyForVisibleMessag
 }
 
 func Test_Queue_UpdateInflightToReady_decrementsNumMessagesInflightForVisibleMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1853,7 +1857,7 @@ func Test_Queue_UpdateInflightToReady_decrementsNumMessagesInflightForVisibleMes
 	// Make the message visible
 	q.mu.Lock()
 	msgState := q.messagesInflight[received[0].MessageID]
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1863,7 +1867,7 @@ func Test_Queue_UpdateInflightToReady_decrementsNumMessagesInflightForVisibleMes
 }
 
 func Test_Queue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1874,7 +1878,7 @@ func Test_Queue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *
 	// Set visibility deadline to 1 second ago
 	q.mu.Lock()
 	msgState := q.messagesInflight[messageID]
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1888,7 +1892,7 @@ func Test_Queue_UpdateInflightToReady_expiredVisibilityDeadline_movesMessage(t *
 }
 
 func Test_Queue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInflight(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1899,7 +1903,7 @@ func Test_Queue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInf
 	// Set visibility deadline to 60 seconds in the future
 	q.mu.Lock()
 	msgState := q.messagesInflight[messageID]
-	msgState.VisibilityDeadline = Some(time.Now().UTC().Add(60 * time.Second))
+	msgState.VisibilityDeadline = Some(q.Clock().Now().Add(60 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1913,7 +1917,7 @@ func Test_Queue_UpdateInflightToReady_futureVisibilityDeadline_keepsMessageInInf
 }
 
 func Test_Queue_UpdateInflightToReady_zeroVisibilityDeadline_movesMessage(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive a message
 	pushTestMessages(q, 1)
@@ -1938,7 +1942,7 @@ func Test_Queue_UpdateInflightToReady_zeroVisibilityDeadline_movesMessage(t *tes
 }
 
 func Test_Queue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push and receive two messages
 	pushTestMessages(q, 2)
@@ -1949,8 +1953,8 @@ func Test_Queue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState
 	q.mu.Lock()
 	msgState1 := q.messagesInflight[received[0].MessageID]
 	msgState2 := q.messagesInflight[received[1].MessageID]
-	msgState1.VisibilityDeadline = Some(time.Now().UTC().Add(-1 * time.Second))
-	msgState2.VisibilityDeadline = Some(time.Now().UTC().Add(60 * time.Second))
+	msgState1.VisibilityDeadline = Some(q.Clock().Now().Add(-1 * time.Second))
+	msgState2.VisibilityDeadline = Some(q.Clock().Now().Add(60 * time.Second))
 	q.mu.Unlock()
 
 	q.UpdateInflightToReady()
@@ -1966,7 +1970,7 @@ func Test_Queue_UpdateInflightToReady_preservesNonVisibleMessagesInInflightState
 }
 
 func Test_Queue_UpdateDelayedToReady_noDelayedMessages_isNoOp(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	q.UpdateDelayedToReady()
@@ -1976,11 +1980,11 @@ func Test_Queue_UpdateDelayedToReady_noDelayedMessages_isNoOp(t *testing.T) {
 }
 
 func Test_Queue_UpdateDelayedToReady_noReadyMessages_isNoOp(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with future delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10) // 10 second delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 10) // 10 second delay
 	q.Push(msgState)
 	initialStats := q.Stats()
 
@@ -1991,18 +1995,18 @@ func Test_Queue_UpdateDelayedToReady_noReadyMessages_isNoOp(t *testing.T) {
 }
 
 func Test_Queue_UpdateDelayedToReady_withReadyMessages_movesToReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 1) // 1 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
 	// Make the message ready by setting creation time to past
 	q.mu.Lock()
 	delayedMsg := q.messagesDelayed[messageID]
-	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second) // Created 2 seconds ago
+	delayedMsg.Created = q.Clock().Now().Add(-2 * time.Second) // Created 2 seconds ago
 	q.mu.Unlock()
 
 	q.UpdateDelayedToReady()
@@ -2014,19 +2018,19 @@ func Test_Queue_UpdateDelayedToReady_withReadyMessages_movesToReady(t *testing.T
 }
 
 func Test_Queue_UpdateDelayedToReady_mixedReadyDelayed_movesOnlyReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push two messages with delays
 	msg1 := createTestMessage("test body 1")
-	msgState1, _ := q.NewMessageState(msg1, time.Now().UTC(), 1) // 1 second delay
+	msgState1, _ := q.NewMessageState(msg1, q.Clock().Now(), 1) // 1 second delay
 	msg2 := createTestMessage("test body 2")
-	msgState2, _ := q.NewMessageState(msg2, time.Now().UTC(), 10) // 10 second delay
+	msgState2, _ := q.NewMessageState(msg2, q.Clock().Now(), 10) // 10 second delay
 	q.Push(msgState1, msgState2)
 
 	// Make first message ready (expired delay), keep second delayed
 	q.mu.Lock()
 	delayedMsg1 := q.messagesDelayed[msg1.MessageID]
-	delayedMsg1.Created = time.Now().UTC().Add(-2 * time.Second) // Created 2 seconds ago, delay expired
+	delayedMsg1.Created = q.Clock().Now().Add(-2 * time.Second) // Created 2 seconds ago, delay expired
 	// msg2 keeps its current creation time, so delay is still active
 	q.mu.Unlock()
 
@@ -2043,18 +2047,18 @@ func Test_Queue_UpdateDelayedToReady_mixedReadyDelayed_movesOnlyReady(t *testing
 }
 
 func Test_Queue_UpdateDelayedToReady_removesReadyMessagesFromDelayed(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
 	messageID := msg.MessageID
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 1) // 1 second delay
 	q.Push(msgState)
 
 	// Make the message ready
 	q.mu.Lock()
 	delayedMsg := q.messagesDelayed[messageID]
-	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg.Created = q.Clock().Now().Add(-2 * time.Second)
 	q.mu.Unlock()
 
 	q.UpdateDelayedToReady()
@@ -2066,18 +2070,18 @@ func Test_Queue_UpdateDelayedToReady_removesReadyMessagesFromDelayed(t *testing.
 }
 
 func Test_Queue_UpdateDelayedToReady_addsReadyMessagesToReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 1) // 1 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
 	// Make the message ready
 	q.mu.Lock()
 	delayedMsg := q.messagesDelayed[messageID]
-	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg.Created = q.Clock().Now().Add(-2 * time.Second)
 	q.mu.Unlock()
 
 	q.UpdateDelayedToReady()
@@ -2089,19 +2093,19 @@ func Test_Queue_UpdateDelayedToReady_addsReadyMessagesToReady(t *testing.T) {
 }
 
 func Test_Queue_UpdateDelayedToReady_addsReadyMessagesToOrderedList(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialListLen := q.messagesReadyOrdered.Len()
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 1) // 1 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
 	// Make the message ready
 	q.mu.Lock()
 	delayedMsg := q.messagesDelayed[messageID]
-	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg.Created = q.Clock().Now().Add(-2 * time.Second)
 	q.mu.Unlock()
 
 	q.UpdateDelayedToReady()
@@ -2112,22 +2116,22 @@ func Test_Queue_UpdateDelayedToReady_addsReadyMessagesToOrderedList(t *testing.T
 }
 
 func Test_Queue_UpdateDelayedToReady_incrementsTotalMessagesDelayedToReady(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	initialStats := q.Stats()
 
 	// Push two messages with delays
 	msg1 := createTestMessage("test body 1")
-	msgState1, _ := q.NewMessageState(msg1, time.Now().UTC(), 1)
+	msgState1, _ := q.NewMessageState(msg1, q.Clock().Now(), 1)
 	msg2 := createTestMessage("test body 2")
-	msgState2, _ := q.NewMessageState(msg2, time.Now().UTC(), 1)
+	msgState2, _ := q.NewMessageState(msg2, q.Clock().Now(), 1)
 	q.Push(msgState1, msgState2)
 
 	// Make both messages ready
 	q.mu.Lock()
 	delayedMsg1 := q.messagesDelayed[msg1.MessageID]
 	delayedMsg2 := q.messagesDelayed[msg2.MessageID]
-	delayedMsg1.Created = time.Now().UTC().Add(-2 * time.Second)
-	delayedMsg2.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg1.Created = q.Clock().Now().Add(-2 * time.Second)
+	delayedMsg2.Created = q.Clock().Now().Add(-2 * time.Second)
 	q.mu.Unlock()
 
 	q.UpdateDelayedToReady()
@@ -2137,18 +2141,18 @@ func Test_Queue_UpdateDelayedToReady_incrementsTotalMessagesDelayedToReady(t *te
 }
 
 func Test_Queue_UpdateDelayedToReady_incrementsNumMessagesReadyForReadyMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 1)
 	q.Push(msgState)
 	afterPushStats := q.Stats()
 
 	// Make the message ready
 	q.mu.Lock()
 	delayedMsg := q.messagesDelayed[msg.MessageID]
-	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg.Created = q.Clock().Now().Add(-2 * time.Second)
 	q.mu.Unlock()
 
 	q.UpdateDelayedToReady()
@@ -2158,18 +2162,18 @@ func Test_Queue_UpdateDelayedToReady_incrementsNumMessagesReadyForReadyMessages(
 }
 
 func Test_Queue_UpdateDelayedToReady_decrementsNumMessagesDelayedForReadyMessages(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 1)
 	q.Push(msgState)
 	afterPushStats := q.Stats()
 
 	// Make the message ready
 	q.mu.Lock()
 	delayedMsg := q.messagesDelayed[msg.MessageID]
-	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg.Created = q.Clock().Now().Add(-2 * time.Second)
 	q.mu.Unlock()
 
 	q.UpdateDelayedToReady()
@@ -2179,18 +2183,18 @@ func Test_Queue_UpdateDelayedToReady_decrementsNumMessagesDelayedForReadyMessage
 }
 
 func Test_Queue_UpdateDelayedToReady_expiredDelayPeriod_movesMessage(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1) // 1 second delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 1) // 1 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
 	// Set creation time to 2 seconds ago (delay expired)
 	q.mu.Lock()
 	delayedMsg := q.messagesDelayed[messageID]
-	delayedMsg.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg.Created = q.Clock().Now().Add(-2 * time.Second)
 	q.mu.Unlock()
 
 	q.UpdateDelayedToReady()
@@ -2204,11 +2208,11 @@ func Test_Queue_UpdateDelayedToReady_expiredDelayPeriod_movesMessage(t *testing.
 }
 
 func Test_Queue_UpdateDelayedToReady_futureDelayPeriod_keepsMessageInDelayed(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 10) // 10 second delay
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 10) // 10 second delay
 	q.Push(msgState)
 	messageID := msg.MessageID
 
@@ -2224,11 +2228,11 @@ func Test_Queue_UpdateDelayedToReady_futureDelayPeriod_keepsMessageInDelayed(t *
 }
 
 func Test_Queue_UpdateDelayedToReady_zeroDelay_movesMessage(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push a message with delay
 	msg := createTestMessage("test body")
-	msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 1)
+	msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 1)
 	q.Push(msgState)
 	messageID := msg.MessageID
 
@@ -2249,19 +2253,19 @@ func Test_Queue_UpdateDelayedToReady_zeroDelay_movesMessage(t *testing.T) {
 }
 
 func Test_Queue_UpdateDelayedToReady_preservesStillDelayedMessagesInDelayedState(t *testing.T) {
-	q := createTestQueue(t)
+	q := createTestQueue(t, clockwork.NewFakeClock())
 
 	// Push two messages with delays
 	msg1 := createTestMessage("test body 1")
-	msgState1, _ := q.NewMessageState(msg1, time.Now().UTC(), 1)
+	msgState1, _ := q.NewMessageState(msg1, q.Clock().Now(), 1)
 	msg2 := createTestMessage("test body 2")
-	msgState2, _ := q.NewMessageState(msg2, time.Now().UTC(), 10)
+	msgState2, _ := q.NewMessageState(msg2, q.Clock().Now(), 10)
 	q.Push(msgState1, msgState2)
 
 	// Make first message ready, keep second delayed
 	q.mu.Lock()
 	delayedMsg1 := q.messagesDelayed[msg1.MessageID]
-	delayedMsg1.Created = time.Now().UTC().Add(-2 * time.Second)
+	delayedMsg1.Created = q.Clock().Now().Add(-2 * time.Second)
 	// msg2 keeps its delay active
 	q.mu.Unlock()
 

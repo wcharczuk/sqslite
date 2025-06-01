@@ -136,6 +136,11 @@ func (q *Queue) IsDLQ() bool {
 	return atomic.LoadUint32(&q.isDLQ) == 1
 }
 
+// Clock returns the timesource for the queue.
+func (q *Queue) Clock() clockwork.Clock {
+	return q.clock
+}
+
 // Stats are basic statistics about the queue.
 type QueueStats struct {
 	NumMessages         int64

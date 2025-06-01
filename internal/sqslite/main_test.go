@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -116,9 +115,9 @@ func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	return server, svr
 }
 
-func createTestQueue(t *testing.T) *Queue {
+func createTestQueue(t *testing.T, clock clockwork.Clock) *Queue {
 	t.Helper()
-	q, err := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
+	q, err := NewQueueFromCreateQueueInput(clock, Authorization{
 		Region:    Some("us-west-2"),
 		Host:      Some("sqslite.local"),
 		AccountID: "test-account",
@@ -127,18 +126,6 @@ func createTestQueue(t *testing.T) *Queue {
 	})
 	t.Cleanup(q.Close)
 	require.Nil(t, err)
-	return q
-}
-
-func createTestQueueWithNameAndURL(name, url string) *Queue {
-	q, _ := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
-		Region:    Some("us-west-2"),
-		Host:      Some("sqslite.local"),
-		AccountID: "test-account",
-	}, &sqs.CreateQueueInput{
-		QueueName: aws.String(name),
-	})
-	q.URL = url // Override URL for testing
 	return q
 }
 
@@ -153,7 +140,7 @@ func pushTestMessages(q *Queue, count int) []*MessageState {
 	var messages []*MessageState
 	for range count {
 		msg := createTestMessage("test message body")
-		msgState, _ := q.NewMessageState(msg, time.Now().UTC(), 0)
+		msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
 		messages = append(messages, msgState)
 	}
 	q.Push(messages...)
