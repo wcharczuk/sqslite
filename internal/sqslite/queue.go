@@ -769,8 +769,12 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		return err
 	}
 	if redrivePolicy.IsSet {
+		if err = validateRedrivePolicy(redrivePolicy.Value); err != nil {
+			return err
+		}
 		q.RedrivePolicy = redrivePolicy
 	}
+
 	policy, ok := messageAttributes[string(types.QueueAttributeNamePolicy)]
 	if ok {
 		q.Policy = Some(policy)
@@ -849,6 +853,13 @@ func validateVisibilityTimeout(visibilityTimeout time.Duration) *Error {
 	}
 	if visibilityTimeout > 12*time.Hour {
 		return ErrorInvalidParameterValueException().WithMessagef("VisibilityTimeout must be less than or equal to 12 hours, you put: %v", visibilityTimeout)
+	}
+	return nil
+}
+
+func validateRedrivePolicy(redrivePolicy RedrivePolicy) *Error {
+	if redrivePolicy.MaxReceiveCount < 0 || redrivePolicy.MaxReceiveCount > 1000 {
+		return ErrorInvalidParameterValueException().WithMessagef("%s for parameter RedrivePolicy is invalid; Reason: Invalid value for maxReceiveCount: %d, valid values are from 1 to 1000 both inclusive.", marshalJSON(redrivePolicy), redrivePolicy.MaxReceiveCount)
 	}
 	return nil
 }

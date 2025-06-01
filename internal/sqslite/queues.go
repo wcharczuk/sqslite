@@ -80,7 +80,7 @@ func (q *Queues) AddQueue(queue *Queue) (err *Error) {
 	if queue.RedrivePolicy.IsSet {
 		dlqURL, ok := q.queueARNs[queue.RedrivePolicy.Value.DeadLetterTargetArn]
 		if !ok {
-			err = ErrorInvalidAttributeValue().WithMessagef("DeadLetterTargetArn is invalid; queue with arn not found: %s", queue.RedrivePolicy.Value.DeadLetterTargetArn)
+			err = ErrorInvalidParameterValueException().WithMessagef("%s for parameter RedrivePolicy is invalid. Reason: Invalid value for deadLetterTargetArn.", marshalJSON(queue.RedrivePolicy.Value))
 			return
 		}
 		dlq, ok := q.queues[dlqURL]

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -24,7 +25,7 @@ import (
 
 var (
 	flagAWSRegion   = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
-	flagScenario    = pflag.String("scenario", "send-message-batch-large-bodies", "The AWS region")
+	flagScenario    = pflag.String("scenario", "create-queue-missing-redrive-target", "The AWS region")
 	flagSpyUpstream = pflag.String("spy-upstream", "https://sqs.us-west-2.amazonaws.com", "The upstrem endpoint for the spy proxy")
 )
 
@@ -77,6 +78,10 @@ func main() {
 		}
 	case "create-queue-queue-name-invalid":
 		if err := createQueueQueueNameInvalid(ctx, sqsClient); err != nil {
+			maybeFatal(err)
+		}
+	case "create-queue-invalid-redrive-target":
+		if err := createQueueInvalidRedriveTarget(ctx, sqsClient); err != nil {
 			maybeFatal(err)
 		}
 	case "send-message-large-body":
@@ -173,6 +178,23 @@ func createQueueQueueNameInvalid(ctx context.Context, sqsClient *sqs.Client) err
 	return nil
 }
 
+func createQueueInvalidRedriveTarget(ctx context.Context, sqsClient *sqs.Client) error {
+	queueName := fmt.Sprintf("duplicate-%s", uuid.V4().String())
+	_, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName: aws.String(queueName),
+		Attributes: map[string]string{
+			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(sqslite.RedrivePolicy{
+				DeadLetterTargetArn: uuid.V4().String(),
+				MaxReceiveCount:     10,
+			}),
+		},
+	})
+	if err != nil {
+		fmt.Printf("%#v\n", err)
+	}
+	return nil
+}
+
 func recreateQueueWithUpdatedAttributes(ctx context.Context, sqsClient *sqs.Client) error {
 	queueName := fmt.Sprintf("duplicate-%s", uuid.V4().String())
 	queueRes, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
@@ -205,4 +227,9 @@ func must[V any](v V, err error) V {
 		panic(err)
 	}
 	return v
+}
+
+func marshalJSON(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
 }
