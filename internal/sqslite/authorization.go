@@ -14,6 +14,12 @@ const (
 	knownGoodSignatureType = "AWS4-HMAC-SHA256"
 )
 
+// DefaultAuthorization is an authorization that uses
+// [DefaultAccountID] as the account identifier.
+var DefaultAuthorization = Authorization{
+	AccountID: DefaultAccountID,
+}
+
 type Authorization struct {
 	Host      Optional[string]
 	Region    Optional[string]

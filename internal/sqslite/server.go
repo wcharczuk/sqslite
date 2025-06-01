@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	"github.com/wcharczuk/sqslite/internal/uuid"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -939,6 +940,7 @@ func deserialize[V any](req *http.Request) (*V, *Error) {
 
 func serialize(rw http.ResponseWriter, _ *http.Request, res any) {
 	rw.Header().Set("Content-Type", ContentTypeAmzJSON)
+	rw.Header().Set(HeaderAmznRequestID, uuid.V4().String())
 	if commonError, ok := res.(*Error); ok {
 		rw.WriteHeader(commonError.StatusCode)
 	} else {

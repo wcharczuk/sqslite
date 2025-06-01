@@ -19,6 +19,8 @@ const (
 	HeaderAmzTarget = "X-Amz-Target"
 	// HeaderAmzQueryMode it is unclear to me what this does yet.
 	HeaderAmzQueryMode = "X-Amzn-Query-Mode"
+	// HeaderAmznRequestID is used to report back a request id to the client.
+	HeaderAmznRequestID = "X-Amzn-Requestid"
 	// ContentTypeAmzJSON is the amz-json-1.0 content type header value.
 	ContentTypeAmzJSON = "application/x-amz-json-1.0"
 )

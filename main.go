@@ -60,8 +60,8 @@ func main() {
 				Level:     logLeveler,
 			})),
 		)
-	default:
 	case "text":
+	default:
 		slog.SetDefault(
 			slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 				AddSource: false,
@@ -218,7 +218,7 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 	var elapsedSeconds float64 = float64(elapsed) / float64(time.Second)
 	newStats := make(map[string]sqslite.QueueStats)
 	for q := range server.EachQueue() {
-		prevStats, _ := prev[q.Name]
+		prevStats := prev[q.Name]
 		stats := q.Stats()
 		changeMessagesSent := float64(stats.TotalMessagesSent - prevStats.TotalMessagesSent)
 		changeMessagesReceived := float64(stats.TotalMessagesReceived - prevStats.TotalMessagesReceived)
