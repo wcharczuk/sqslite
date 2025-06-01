@@ -693,7 +693,12 @@ func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
 
 func (q *Queue) getQueueAttributesUnsafe(attributes ...types.QueueAttributeName) map[string]string {
 	distinctAttributes := distinct(flatten(apply(attributes, func(v types.QueueAttributeName) []types.QueueAttributeName {
-		return v.Values()
+		switch v {
+		case types.QueueAttributeNameAll:
+			return v.Values()
+		default:
+			return []types.QueueAttributeName{v}
+		}
 	})))
 	output := make(map[string]string)
 	for _, attribute := range distinctAttributes {

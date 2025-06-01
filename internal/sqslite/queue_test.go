@@ -2324,3 +2324,26 @@ func Test_Queue_UpdateDelayedToReady_preservesStillDelayedMessagesInDelayedState
 	require.True(t, exists)
 	q.mu.Unlock()
 }
+
+func Test_Queue_getQueueAttributesUnsafe_all(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+
+	attributes := q.getQueueAttributesUnsafe(types.QueueAttributeNameAll)
+	require.Len(t, attributes, 12)
+	require.EqualValues(t, q.ARN, attributes["QueueArn"])
+}
+
+func Test_Queue_getQueueAttributesUnsafe_queueArn(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+
+	attributes := q.getQueueAttributesUnsafe(types.QueueAttributeNameQueueArn)
+	require.Len(t, attributes, 1)
+}
+
+func Test_Queue_getQueueAttributeUnsafe_approximateNumberOfMessages(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+	pushTestMessages(q, 100)
+
+	attributeValue := q.getQueueAttributeUnsafe(types.QueueAttributeNameApproximateNumberOfMessages)
+	require.Equal(t, "100", attributeValue)
+}

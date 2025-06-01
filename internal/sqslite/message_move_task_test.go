@@ -1,6 +1,7 @@
 package sqslite
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jonboulle/clockwork"
@@ -35,4 +36,99 @@ func Test_MessageMoveStatus_String(t *testing.T) {
 	//nolint:misspell
 	require.Equal(t, "CANCELLED", MessageMoveStatusCanceled.String())
 	require.Equal(t, "UNKNOWN", MessageMoveStatus(127).String())
+}
+
+func Test_MessageMoveTask_moveMessages_basic(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	sourceQueue := createTestQueueWithName(t, clock, "source")
+
+	for range 10 {
+		msg, _ := sourceQueue.NewMessageState(
+			createTestMessage(`{"message_index":0}`),
+			clock.Now(),
+			0,
+		)
+		sourceQueue.Push(
+			msg,
+		)
+	}
+
+	destinationQueue := createTestQueueWithName(t, clock, "destination")
+	mmt := NewMessagesMoveTask(clock, sourceQueue, destinationQueue, 100)
+	mmt.moveMessages(context.Background())
+	require.EqualValues(t, MessageMoveStatusCompleted, mmt.Status(), mmt.FailureReason)
+	require.EqualValues(t, 10, destinationQueue.Stats().NumMessages)
+}
+
+func Test_MessageMoveTask_moveMessages_withoutDestination(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	sourceQueue := createTestQueueWithName(t, clock, "source")
+
+	destinationQueue := createTestQueueWithName(t, clock, "destination")
+
+	for range 10 {
+		msg, _ := sourceQueue.NewMessageState(
+			createTestMessage(`{"message_index":0}`),
+			clock.Now(),
+			0,
+		)
+		msg.OriginalSourceQueue = destinationQueue
+		sourceQueue.Push(
+			msg,
+		)
+	}
+
+	mmt := NewMessagesMoveTask(clock, sourceQueue, nil, 100)
+	mmt.moveMessages(context.Background())
+	require.EqualValues(t, MessageMoveStatusCompleted, mmt.Status(), mmt.FailureReason)
+	require.EqualValues(t, 10, destinationQueue.Stats().NumMessages)
+}
+
+func Test_MessageMoveTask_moveMessages_failsIfDestinationDeleted(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	sourceQueue := createTestQueueWithName(t, clock, "source")
+
+	for range 10 {
+		msg, _ := sourceQueue.NewMessageState(
+			createTestMessage(`{"message_index":0}`),
+			clock.Now(),
+			0,
+		)
+		sourceQueue.Push(
+			msg,
+		)
+	}
+
+	destinationQueue := createTestQueueWithName(t, clock, "destination")
+	destinationQueue.deleted = clock.Now()
+
+	mmt := NewMessagesMoveTask(clock, sourceQueue, destinationQueue, 100)
+	mmt.moveMessages(context.Background())
+	require.EqualValues(t, MessageMoveStatusFailed, mmt.Status())
+	require.EqualValues(t, 0, destinationQueue.Stats().NumMessages)
+}
+
+func Test_MessageMoveTask_moveMessages_failsIfDestinationDisallowsRedrives(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	sourceQueue := createTestQueueWithName(t, clock, "source")
+
+	for range 10 {
+		msg, _ := sourceQueue.NewMessageState(
+			createTestMessage(`{"message_index":0}`),
+			clock.Now(),
+			0,
+		)
+		sourceQueue.Push(
+			msg,
+		)
+	}
+
+	destinationQueue := createTestQueueWithName(t, clock, "destination")
+	destinationQueue.RedriveAllowPolicy = Some(RedriveAllowPolicy{
+		RedrivePermission: RedrivePermissionDenyAll,
+	})
+	mmt := NewMessagesMoveTask(clock, sourceQueue, destinationQueue, 100)
+	mmt.moveMessages(context.Background())
+	require.EqualValues(t, MessageMoveStatusFailed, mmt.Status())
+	require.EqualValues(t, 0, destinationQueue.Stats().NumMessages)
 }

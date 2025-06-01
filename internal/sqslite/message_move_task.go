@@ -2,6 +2,7 @@ package sqslite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -23,7 +24,7 @@ func NewMessagesMoveTask(clock clockwork.Clock, source /*must not be nil*/, dest
 		started:                      clock.Now(),
 	}
 	if maxNumberOfMessagesPerSecond > 0 {
-		mmt.limiter = rate.NewLimiter(rate.Limit(maxNumberOfMessagesPerSecond), 0 /*burstBalance*/)
+		mmt.limiter = rate.NewLimiter(rate.Limit(maxNumberOfMessagesPerSecond), 1 /*burstBalance has to be > 0*/)
 	}
 	return mmt
 }
@@ -119,7 +120,11 @@ func (m *MessageMoveTask) moveMessages(ctx context.Context) {
 		}
 		if m.limiter != nil {
 			if err := m.limiter.Wait(ctx); err != nil {
-				atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCanceled))
+				if errors.Is(err, context.Canceled) {
+					atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCanceled))
+					return
+				}
+				m.markFailedByRateLimiterError(err)
 				return
 			}
 		}
@@ -138,10 +143,27 @@ func (m *MessageMoveTask) moveMessages(ctx context.Context) {
 			m.markFailedByDestinationDeleted()
 			return
 		}
+		if destinationQueue.RedriveAllowPolicy.IsSet {
+			if !destinationQueue.RedriveAllowPolicy.Value.AllowSource(m.SourceQueue.ARN) {
+				m.markFailedByDestinationDisallowed()
+				return
+			}
+		}
 		destinationQueue.Push(msg)
 		atomic.AddUint64(&m.stats.ApproximateNumberOfMessagesMoved, 1)
 		atomic.StoreInt64(&m.stats.ApproximateNumberOfMessagesToMove, m.SourceQueue.Stats().NumMessagesReady)
 	}
+}
+
+func (m *MessageMoveTask) markFailedByRateLimiterError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status != uint32(MessageMoveStatusRunning) {
+		return
+	}
+	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusFailed))
+	m.FailureReason = fmt.Sprintf("rate limiter error: %v", err)
+	m.finishUnsafe()
 }
 
 func (m *MessageMoveTask) markFailedByDestinationDeleted() {
@@ -150,9 +172,20 @@ func (m *MessageMoveTask) markFailedByDestinationDeleted() {
 	if m.status != uint32(MessageMoveStatusRunning) {
 		return
 	}
-	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCompleted))
-	m.cancel() // clear the goroutine here
-	m.cancel = nil
+	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusFailed))
+	m.FailureReason = fmt.Sprintf("destination queue %q has been deleted", m.DestinationQueue.ARN)
+	m.finishUnsafe()
+}
+
+func (m *MessageMoveTask) markFailedByDestinationDisallowed() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status != uint32(MessageMoveStatusRunning) {
+		return
+	}
+	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusFailed))
+	m.FailureReason = fmt.Sprintf("destination queue %q disallows the source by redriveAllowPolicy", m.DestinationQueue.ARN)
+	m.finishUnsafe()
 }
 
 func (m *MessageMoveTask) markCompleted() {
@@ -162,9 +195,7 @@ func (m *MessageMoveTask) markCompleted() {
 		return
 	}
 	atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCompleted))
-	m.cancel() // clear the goroutine here
-	m.cancel = nil
-	m.FailureReason = fmt.Sprintf("destination queue %q has been deleted", m.DestinationQueue.ARN)
+	m.finishUnsafe()
 }
 
 func (m *MessageMoveTask) Close() {
@@ -172,6 +203,12 @@ func (m *MessageMoveTask) Close() {
 	defer m.mu.Unlock()
 	if m.cancel != nil {
 		atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCanceling))
+		m.finishUnsafe()
+	}
+}
+
+func (m *MessageMoveTask) finishUnsafe() {
+	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
 	}
