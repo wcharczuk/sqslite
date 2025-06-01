@@ -121,6 +121,12 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		s.cancelMoveMessageTask(rw, req)
 	case MethodListMessageMoveTasks:
 		s.listMoveMessageTasks(rw, req)
+
+	case MethodAddPermission:
+		s.addPermission(rw, req)
+	case MethodRemovePermission:
+		s.removePermission(rw, req)
+
 	default:
 		s.invalidMethod(rw, req, action)
 	}
@@ -817,6 +823,38 @@ func (s Server) listMoveMessageTasks(rw http.ResponseWriter, req *http.Request) 
 	serialize(rw, req, &sqs.ListMessageMoveTasksOutput{
 		Results: results,
 	})
+}
+
+func (s Server) addPermission(rw http.ResponseWriter, req *http.Request) {
+	_, err := deserialize[sqs.AddPermissionInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	// if err := requireQueueURL(input.QueueUrl); err != nil {
+	// 	serialize(rw, req, err)
+	// 	return
+	// }
+	// authz, ok := GetContextAuthorization(req.Context())
+	// if !ok {
+	// 	serialize(rw, req, ErrorResponseInvalidSecurity())
+	// 	return
+	// }
+	// queue, ok := s.accounts.EnsureQueues(authz.AccountID).GetQueue(*input.QueueUrl)
+	// if !ok {
+	// 	serialize(rw, req, ErrorQueueDoesNotExist())
+	// 	return
+	// }
+	serialize(rw, req, &sqs.AddPermissionOutput{})
+}
+
+func (s Server) removePermission(rw http.ResponseWriter, req *http.Request) {
+	_, err := deserialize[sqs.RemovePermissionInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	serialize(rw, req, &sqs.RemovePermissionOutput{})
 }
 
 func (s Server) unknownMethod(rw http.ResponseWriter, req *http.Request) {

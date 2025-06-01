@@ -80,7 +80,8 @@ type Queue struct {
 	MessageRetentionPeriod  time.Duration
 	Delay                   Optional[time.Duration]
 	MaximumMessagesInflight int
-	Policy                  Optional[string]
+
+	Policy Optional[Policy]
 
 	Attributes map[string]string
 	Tags       map[string]string
@@ -774,10 +775,13 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		}
 		q.RedrivePolicy = redrivePolicy
 	}
-
-	policy, ok := messageAttributes[string(types.QueueAttributeNamePolicy)]
-	if ok {
-		q.Policy = Some(policy)
+	policy, err := readAttributePolicy(messageAttributes)
+	if err != nil {
+		return err
+	}
+	if policy.IsSet {
+		// validate policy ... later
+		q.Policy = policy
 	}
 	return nil
 }
@@ -946,6 +950,20 @@ func readAttributeRedrivePolicy(attributes map[string]string) (output Optional[R
 	var policy RedrivePolicy
 	if jsonErr := json.Unmarshal([]byte(value), &policy); jsonErr != nil {
 		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse redrive policy: %v", string(types.QueueAttributeNameRedrivePolicy), jsonErr)
+		return
+	}
+	output = Some(policy)
+	return
+}
+
+func readAttributePolicy(attributes map[string]string) (output Optional[Policy], err *Error) {
+	value, ok := attributes[string(types.QueueAttributeNamePolicy)]
+	if !ok {
+		return
+	}
+	var policy Policy
+	if jsonErr := json.Unmarshal([]byte(value), &policy); jsonErr != nil {
+		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse policy: %v", string(types.QueueAttributeNamePolicy), jsonErr)
 		return
 	}
 	output = Some(policy)
