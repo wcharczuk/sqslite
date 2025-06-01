@@ -661,8 +661,8 @@ func (s Server) startMessageMoveTask(rw http.ResponseWriter, req *http.Request) 
 		serialize(rw, req, ErrorInvalidAddress().WithMessagef("DestinationArn is required"))
 		return
 	}
-	if input.MaxNumberOfMessagesPerSecond != nil && *input.MaxNumberOfMessagesPerSecond > 500 {
-		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxNumberOfMessagesPerSecond must be less than 500, you put %d", *input.MaxNumberOfMessagesPerSecond))
+	if input.MaxNumberOfMessagesPerSecond != nil && (*input.MaxNumberOfMessagesPerSecond < 0 || *input.MaxNumberOfMessagesPerSecond > 500) {
+		serialize(rw, req, ErrorInvalidParameterValueException().WithMessagef("MaxNumberOfMessagesPerSecond must be less than 500, you put %d", *input.MaxNumberOfMessagesPerSecond))
 		return
 	}
 	authz, ok := GetContextAuthorization(req.Context())
