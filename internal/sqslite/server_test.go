@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 	"github.com/wcharczuk/sqslite/internal/uuid"
@@ -22,6 +23,47 @@ func Test_Server_createQueue(t *testing.T) {
 	})
 	// default + defaultDLQ + not-default
 	require.EqualValues(t, 3, len(server.accounts.accounts[testAccountID].queues))
+}
+
+func Test_Server_createQueue_allowsDuplicatesWithSameAttributes(t *testing.T) {
+	server, testServer := startTestServer(t)
+	_ = testHelperCreateQueue(t, testServer, &sqs.CreateQueueInput{
+		QueueName: aws.String("not-default"),
+		Attributes: map[string]string{
+			string(types.QueueAttributeNameDelaySeconds): "10",
+		},
+	})
+	// default + defaultDLQ + not-default
+	require.EqualValues(t, 3, len(server.accounts.accounts[testAccountID].queues))
+	_ = testHelperCreateQueue(t, testServer, &sqs.CreateQueueInput{
+		QueueName: aws.String("not-default"),
+		Attributes: map[string]string{
+			string(types.QueueAttributeNameDelaySeconds): "10",
+		},
+	})
+	// default + defaultDLQ + not-default
+	require.EqualValues(t, 3, len(server.accounts.accounts[testAccountID].queues))
+}
+
+func Test_Server_createQueue_blocksDuplicatesWithUpdatedAttributes(t *testing.T) {
+	server, testServer := startTestServer(t)
+	_ = testHelperCreateQueue(t, testServer, &sqs.CreateQueueInput{
+		QueueName: aws.String("not-default"),
+		Attributes: map[string]string{
+			string(types.QueueAttributeNameDelaySeconds): "10",
+		},
+	})
+	// default + defaultDLQ + not-default
+	require.EqualValues(t, 3, len(server.accounts.accounts[testAccountID].queues))
+	err := testHelperCreateQueueForError(t, testServer, &sqs.CreateQueueInput{
+		QueueName: aws.String("not-default"),
+		Attributes: map[string]string{
+			string(types.QueueAttributeNameDelaySeconds): "20",
+		},
+	})
+	// default + defaultDLQ + not-default
+	require.EqualValues(t, 3, len(server.accounts.accounts[testAccountID].queues))
+	require.EqualValues(t, "com.amazonaws.sqs#QueueNameExists", err.Type)
 }
 
 func Test_Server_listQueues(t *testing.T) {
@@ -218,9 +260,8 @@ func Test_Server_returnsWellFormedErrors(t *testing.T) {
 	var errResponse Error
 	err = json.NewDecoder(res.Body).Decode(&errResponse)
 	require.NoError(t, err)
-	require.Equal(t, "InvalidMethod", errResponse.Code)
+	require.Equal(t, "com.amazonaws.sqs#InvalidMethod", errResponse.Type)
 	require.Equal(t, http.StatusBadRequest, errResponse.StatusCode)
-	require.Equal(t, true, errResponse.SenderFault)
 	require.Equal(t, "The http method GET is not valid for this endpoint.", errResponse.Message)
 }
 

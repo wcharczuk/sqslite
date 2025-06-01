@@ -5,116 +5,141 @@ import (
 	"net/http"
 )
 
-func ErrorResponseInvalidAddress() *Error {
+func ErrorInvalidAddress() *Error {
 	return &Error{
-		Code:        "InvalidAddress",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     "The address https://queue.amazonaws.com/ is not valid for this endpoint.",
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#InvalidAddress",
 	}
 }
 
-func ErrorResponseInvalidSecurity() *Error {
+func ErrorInvalidParameterValueException() *Error {
 	return &Error{
-		Code:        " InvalidSecurity ",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     "The request was not made over HTTPS or did not use SigV4 for signing.",
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#InvalidParameterValueException",
 	}
 }
 
-func ErrorResponseInvalidMethod(method string) *Error {
+func ErrorQueueNameAlreadyExists() *Error {
 	return &Error{
-		Code:        "InvalidMethod",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     fmt.Sprintf("The http method %s is not valid for this endpoint.", method),
-	}
-}
-
-func ErrorResponseInvalidAction(action string) *Error {
-	return &Error{
-		Code:        "InvalidAction",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     fmt.Sprintf("The action %s is not valid for this endpoint.", action),
-	}
-}
-
-func ErrorUnknownOperation(message string) *Error {
-	return &Error{
-		Code:        "UnknownOperation",
-		StatusCode:  http.StatusNotFound,
-		SenderFault: true,
-		Message:     message,
-	}
-}
-
-func ErrorInvalidAttributeValue(message string) *Error {
-	return &Error{
-		Code:        "InvalidAttributeValue",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     message,
-	}
-}
-
-func ErrorMissingRequiredParameter(message string) *Error {
-	return &Error{
-		Code:        "MissingRequiredParameter",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     message,
-	}
-}
-
-func ErrorInvalidParameterValue(message string) *Error {
-	return &Error{
-		Code:        "InvalidParameterValue",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     message,
-	}
-}
-
-func ErrorInternalServer(message string) *Error {
-	return &Error{
-		Code:        "InternalServerError",
-		StatusCode:  http.StatusInternalServerError,
-		SenderFault: true,
-		Message:     message,
-	}
-}
-
-func ErrorNotReady() *Error {
-	return &Error{
-		Code:        "NotReady",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     "Queue is not ready",
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#QueueNameExists",
 	}
 }
 
 func ErrorQueueDoesNotExist() *Error {
 	return &Error{
-		Code:        "QueueDoesNotExist",
-		StatusCode:  http.StatusBadRequest,
-		SenderFault: true,
-		Message:     "Ensure that the QueueUrl is correct and that the queue has not been deleted.",
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#QueueDoesNotExist",
+	}
+}
+
+func ErrorQueueDeletedRecently() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#QueueDeletedRecently",
+	}
+}
+
+func ErrorResponseInvalidSecurity() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#InvalidSecurity",
+	}
+}
+
+func ErrorInvalidAttributeName() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#InvalidAttributeName ",
+	}
+}
+
+func ErrorInvalidAttributeValue() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#InvalidAttributeValue",
+	}
+}
+
+func ErrorInvalidMessageContents() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#InvalidMessageContents ",
+	}
+}
+
+func ErrorUnsupportedOperation() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#UnsupportedOperation",
+	}
+}
+
+func ErrorResourceNotFoundException() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#ResourceNotFoundException",
+	}
+}
+
+func ErrorReceiptHandleIsInvalid() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#ReceiptHandleIsInvalid ",
+	}
+}
+
+func ErrorInternalServer() *Error {
+	return &Error{
+		StatusCode: http.StatusInternalServerError,
+		Type:       "com.amazonaws.sqs#InternalServerError",
+	}
+}
+
+func ErrorTooManyEntriesInBatchRequest() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#TooManyEntriesInBatchRequest ",
+	}
+}
+
+func ErrorBatchEntryIdsNotDistinct() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#BatchEntryIdsNotDistinct",
+	}
+}
+
+func ErrorInvalidBatchEntryID() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs# InvalidBatchEntryId ",
+	}
+}
+
+func ErrorBatchRequestTooLong() *Error {
+	return &Error{
+		StatusCode: http.StatusBadRequest,
+		Type:       "com.amazonaws.sqs#BatchRequestTooLong",
 	}
 }
 
 type Error struct {
-	Code        string
-	StatusCode  int
-	Message     string
-	SenderFault bool
+	StatusCode int    `json:"-"`
+	Type       string `json:"__type"`
+	Message    string `json:"message"`
 }
 
-func (e Error) Status() int {
-	return e.StatusCode
+func (e Error) WithMessage(message string) *Error {
+	e.Message = message
+	return &e
+}
+
+func (e Error) WithMessagef(format string, args ...any) *Error {
+	e.Message = fmt.Sprintf(format, args...)
+	return &e
 }
 
 func (e Error) Error() string {
-	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+	return fmt.Sprintf("%s: %s", e.Type, e.Message)
 }

@@ -3,6 +3,7 @@ package sqslite
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -27,6 +28,11 @@ func testNewSendMessageInput(queueURL string) *sqs.SendMessageInput {
 func testHelperCreateQueue(t *testing.T, testServer *httptest.Server, input *sqs.CreateQueueInput) *sqs.CreateQueueOutput {
 	t.Helper()
 	return testHelperDoClientMethod[sqs.CreateQueueInput, sqs.CreateQueueOutput](t, testServer, MethodCreateQueue, input)
+}
+
+func testHelperCreateQueueForError(t *testing.T, testServer *httptest.Server, input *sqs.CreateQueueInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodCreateQueue, input)
 }
 
 func testHelperListQueues(t *testing.T, testServer *httptest.Server, input *sqs.ListQueuesInput) *sqs.ListQueuesOutput {
@@ -67,6 +73,27 @@ func testHelperDoClientMethod[Input, Output any](t *testing.T, testServer *httpt
 	return &output
 }
 
+func testHelperDoClientMethodForError[Input any](t *testing.T, testServer *httptest.Server, method string, input *Input) *Error {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
+	require.NoError(t, err)
+	req.Header.Set(httputil.HeaderAuthorization, testAuthorizationHeader)
+	req.Header.Set(httputil.HeaderContentType, ContentTypeAmzJSON)
+	req.Header.Set(HeaderAmzTarget, method)
+	req.Header.Set(HeaderAmzQueryMode, "true")
+	res, err := testServer.Client().Do(req)
+	require.NoError(t, err)
+	defer res.Body.Close()
+
+	bodyData, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+
+	var output Error
+	err = json.Unmarshal(bodyData, &output)
+	require.NoError(t, err)
+	return &output
+}
+
 func testHelperDoClientMethodWithoutAuth(t *testing.T, testServer *httptest.Server, method string, input any) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
@@ -89,7 +116,7 @@ const (
 
 func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
-	server := NewServer().WithClock(clockwork.NewFakeClock())
+	server := NewServer(clockwork.NewFakeClock())
 	authz := Authorization{
 		AccountID: testAccountID,
 	}

@@ -17,10 +17,10 @@ import (
 )
 
 // NewServer returns a new server.
-func NewServer() *Server {
+func NewServer(clock clockwork.Clock) *Server {
 	return &Server{
-		accounts: NewAccounts(),
-		clock:    clockwork.NewRealClock(),
+		accounts: NewAccounts(clock),
+		clock:    clock,
 	}
 }
 
@@ -30,12 +30,6 @@ var _ http.Handler = (*Server)(nil)
 type Server struct {
 	accounts *Accounts
 	clock    clockwork.Clock
-}
-
-// WithClock sets the server clock and returns a reference to the same server.
-func (s *Server) WithClock(clock clockwork.Clock) *Server {
-	s.clock = clock
-	return s
 }
 
 // Clock returns the server's [clockwork.Clock] instance.
@@ -168,10 +162,10 @@ func (s Server) listQueues(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if input.MaxResults != nil && (*input.MaxResults < 0 || *input.MaxResults > 1000) {
-		serialize(rw, req, ErrorInvalidParameterValue("MaxResults: must be greater than 0 and less than 1000"))
+		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxResults must be greater than 0 and less than 1000, you put %d", *input.MaxResults))
 	}
 	if input.NextToken != nil && input.MaxResults == nil {
-		serialize(rw, req, ErrorInvalidParameterValue("NextToken: must also set MaxResults"))
+		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxResults must be set if NextToken is set"))
 	}
 
 	queues := s.accounts.EnsureQueues(authz.AccountID)
@@ -343,7 +337,7 @@ func (s Server) deleteQueue(rw http.ResponseWriter, req *http.Request) {
 	}
 	ok = s.accounts.EnsureQueues(authz.AccountID).DeleteQueue(*input.QueueUrl)
 	if !ok {
-		serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
+		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
 	serialize(rw, req, &sqs.DeleteQueueOutput{})
@@ -434,8 +428,8 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
-	if err := validateMessageBodySize(input.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
-		serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
+	if err := validateMessageBody(input.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
+		serialize(rw, req, err)
 		return
 	}
 	msg, err := queue.NewMessageState(NewMessageFromSendMessageInput(input), s.clock.Now(), int(input.DelaySeconds))
@@ -463,9 +457,20 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if len(input.Entries) > 10 {
-		serialize(rw, req, ErrorInvalidParameterValue(fmt.Sprintf("Entries must have at most 10 entries, you provided %d", len(input.Entries))))
+		serialize(rw, req, ErrorTooManyEntriesInBatchRequest())
 		return
 	}
+	entryIDs := apply(input.Entries, func(e types.SendMessageBatchRequestEntry) string { return safeDeref(e.Id) })
+	if err := validateBatchEntryIDs(entryIDs); err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	totalMessageSizeBytes := sum(apply(input.Entries, func(e types.SendMessageBatchRequestEntry) int { return len([]byte(safeDeref(e.MessageBody))) }))
+	if totalMessageSizeBytes > 256*1024 {
+		serialize(rw, req, ErrorBatchRequestTooLong().WithMessagef("Batch requests cannot be longer than 262144 bytes. You have sent %d bytes.", totalMessageSizeBytes))
+		return
+	}
+
 	authz, ok := GetContextAuthorization(req.Context())
 	if !ok {
 		serialize(rw, req, ErrorResponseInvalidSecurity())
@@ -482,8 +487,8 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 			serialize(rw, req, err)
 			return
 		}
-		if err := validateMessageBodySize(entry.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
-			serialize(rw, req, ErrorInvalidParameterValue("QueueUrl"))
+		if err := validateMessageBody(entry.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
+			serialize(rw, req, ErrorInvalidMessageContents())
 			return
 		}
 		msg, err := queue.NewMessageState(NewMessageFromSendMessageBatchEntry(entry), s.clock.Now(), int(entry.DelaySeconds))
@@ -519,9 +524,9 @@ func (s Server) deleteMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
-	err = queue.Delete(*input.ReceiptHandle)
-	if err != nil {
-		serialize(rw, req, err)
+	ok = queue.Delete(*input.ReceiptHandle)
+	if !ok {
+		serialize(rw, req, ErrorReceiptHandleIsInvalid())
 		return
 	}
 	serialize(rw, req, &sqs.DeleteMessageOutput{})
@@ -594,7 +599,7 @@ func (s Server) changeMessageVisibility(rw http.ResponseWriter, req *http.Reques
 		visibilityTimeout,
 	)
 	if !ok {
-		serialize(rw, req, ErrorInvalidParameterValue("ReceiptHandle"))
+		serialize(rw, req, ErrorReceiptHandleIsInvalid())
 		return
 	}
 	serialize(rw, req, &sqs.ChangeMessageVisibilityOutput{})
@@ -649,15 +654,15 @@ func (s Server) startMessageMoveTask(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 	if input.SourceArn == nil || *input.SourceArn == "" {
-		serialize(rw, req, ErrorMissingRequiredParameter("SourceArn"))
+		serialize(rw, req, ErrorInvalidAddress().WithMessagef("SourceArn is required"))
 		return
 	}
 	if input.DestinationArn == nil || *input.DestinationArn == "" {
-		serialize(rw, req, ErrorMissingRequiredParameter("DestinationArn"))
+		serialize(rw, req, ErrorInvalidAddress().WithMessagef("DestinationArn is required"))
 		return
 	}
 	if input.MaxNumberOfMessagesPerSecond != nil && *input.MaxNumberOfMessagesPerSecond > 500 {
-		serialize(rw, req, ErrorInvalidParameterValue("MaxNumberOfMessagesPerSecond: must be less than 500"))
+		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxNumberOfMessagesPerSecond must be less than 500, you put %d", *input.MaxNumberOfMessagesPerSecond))
 		return
 	}
 	authz, ok := GetContextAuthorization(req.Context())
@@ -683,7 +688,7 @@ func (s Server) cancelMoveMessageTask(rw http.ResponseWriter, req *http.Request)
 		return
 	}
 	if input.TaskHandle == nil || *input.TaskHandle == "" {
-		serialize(rw, req, ErrorMissingRequiredParameter("TaskHandle"))
+		serialize(rw, req, ErrorInvalidAddress().WithMessagef("TaskHandle is required"))
 		return
 	}
 	authz, ok := GetContextAuthorization(req.Context())
@@ -709,11 +714,11 @@ func (s Server) listMoveMessageTasks(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 	if input.SourceArn == nil || *input.SourceArn == "" {
-		serialize(rw, req, ErrorMissingRequiredParameter("SourceArn"))
+		serialize(rw, req, ErrorInvalidAddress().WithMessagef("SourceArn is required"))
 		return
 	}
 	if input.MaxResults != nil && (*input.MaxResults < 0 || *input.MaxResults > 10) {
-		serialize(rw, req, ErrorInvalidParameterValue("MaxResults: must be greater than 0 and less than 10"))
+		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxResults must be greater than 0 and less than 10, you put %d", *input.MaxResults))
 		return
 	}
 
@@ -752,15 +757,15 @@ func (s Server) listMoveMessageTasks(rw http.ResponseWriter, req *http.Request) 
 }
 
 func (s Server) unknownMethod(rw http.ResponseWriter, req *http.Request) {
-	serialize(rw, req, ErrorResponseInvalidMethod(req.Method))
+	serialize(rw, req, ErrorUnsupportedOperation().WithMessagef("Invalid method %s", req.Method))
 }
 
 func (s Server) unknownPath(rw http.ResponseWriter, req *http.Request) {
-	serialize(rw, req, ErrorUnknownOperation(fmt.Sprintf("Expected '/' as the request path, you used: %v", req.URL.Path)))
+	serialize(rw, req, ErrorUnsupportedOperation().WithMessagef("Invalid resource %s", req.URL.Path))
 }
 
 func (s Server) invalidMethod(rw http.ResponseWriter, req *http.Request, action string) {
-	serialize(rw, req, ErrorUnknownOperation(action))
+	serialize(rw, req, ErrorUnsupportedOperation().WithMessagef("Invalid action %s", action))
 }
 
 func (s Server) eachQueueInAccount(queues *Queues, yield func(*Queue) bool) bool {
@@ -776,21 +781,21 @@ func (s Server) eachQueueInAccount(queues *Queues, yield func(*Queue) bool) bool
 
 func requireEntryID(id *string) *Error {
 	if id == nil || *id == "" {
-		return ErrorMissingRequiredParameter("Id")
+		return ErrorInvalidAttributeValue().WithMessagef("Id")
 	}
 	return nil
 }
 
 func requireReceiptHandle(receiptHandle *string) *Error {
 	if receiptHandle == nil || *receiptHandle == "" {
-		return ErrorMissingRequiredParameter("ReceiptHandle")
+		return ErrorReceiptHandleIsInvalid()
 	}
 	return nil
 }
 
 func requireQueueURL(queueURL *string) *Error {
 	if queueURL == nil || *queueURL == "" {
-		return ErrorMissingRequiredParameter("QueueUrl")
+		return ErrorInvalidAddress().WithMessagef("QueueUrl")
 	}
 	return nil
 }
@@ -823,10 +828,9 @@ func deserialize[V any](req *http.Request) (*V, *Error) {
 	var value V
 	if err := json.NewDecoder(req.Body).Decode(&value); err != nil {
 		return nil, &Error{
-			Code:        "InvalidInput",
-			SenderFault: true,
-			StatusCode:  http.StatusBadRequest,
-			Message:     fmt.Sprintf("Deserializing input failed: %v", err),
+			Type:       "com.amazonaws.sqs#InvalidInput",
+			StatusCode: http.StatusBadRequest,
+			Message:    fmt.Sprintf("Deserializing input failed: %v", err),
 		}
 	}
 	return &value, nil

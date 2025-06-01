@@ -2,20 +2,24 @@ package sqslite
 
 import (
 	"sync"
+
+	"github.com/jonboulle/clockwork"
 )
 
 // NewAccounts returns a new accounts set.
-func NewAccounts() *Accounts {
+func NewAccounts(clock clockwork.Clock) *Accounts {
 	return &Accounts{
 		accounts: map[string]*Queues{
-			DefaultAccountID: NewQueues(),
+			DefaultAccountID: NewQueues(clock),
 		},
+		clock: clock,
 	}
 }
 
 type Accounts struct {
 	mu       sync.Mutex
 	accounts map[string]*Queues
+	clock    clockwork.Clock
 }
 
 func (a *Accounts) EnsureQueues(accountID string) *Queues {
@@ -24,7 +28,8 @@ func (a *Accounts) EnsureQueues(accountID string) *Queues {
 	if queues, ok := a.accounts[accountID]; ok {
 		return queues
 	}
-	newQueues := NewQueues()
+	newQueues := NewQueues(a.clock)
+	newQueues.Start()
 	a.accounts[accountID] = newQueues
 	return newQueues
 }

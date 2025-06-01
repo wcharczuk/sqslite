@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -25,7 +26,7 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 		return nil, err
 	}
 	queue := &Queue{
-		Name:                            *input.QueueName,
+		Name:                            safeDeref(input.QueueName),
 		AccountID:                       authz.AccountID,
 		URL:                             QueueURL(authz, *input.QueueName),
 		ARN:                             QueueARN(authz, *input.QueueName),
@@ -86,6 +87,7 @@ type Queue struct {
 
 	created      time.Time
 	lastModified time.Time
+	deleted      time.Time
 
 	sequenceNumber uint64
 	lifecycleMu    sync.Mutex
@@ -111,34 +113,6 @@ type Queue struct {
 	delayWorkerCancel      func()
 
 	stats QueueStats
-}
-
-func (q *Queue) AddDLQSources(sources ...*Queue) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for _, queue := range sources {
-		atomic.StoreUint32(&q.isDLQ, 1)
-		q.dlqSources[queue.URL] = queue
-	}
-}
-
-func (q *Queue) RemoveDLQSource(queueURL string) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	delete(q.dlqSources, queueURL)
-	if len(q.dlqSources) == 0 {
-		atomic.StoreUint32(&q.isDLQ, 0)
-	}
-}
-
-// IsDLQ indicates if a queue is a dlq.
-func (q *Queue) IsDLQ() bool {
-	return atomic.LoadUint32(&q.isDLQ) == 1
-}
-
-// Clock returns the timesource for the queue.
-func (q *Queue) Clock() clockwork.Clock {
-	return q.clock
 }
 
 // Stats are basic statistics about the queue.
@@ -187,6 +161,16 @@ func (q *Queue) LastModified() time.Time {
 	return q.lastModified
 }
 
+// Deleted returns the deleted timestamp.
+func (q *Queue) Deleted() time.Time {
+	return q.deleted
+}
+
+// IsDeleted returns if the queue has been deleted and is waiting to be purged.
+func (q *Queue) IsDeleted() bool {
+	return !q.deleted.IsZero()
+}
+
 func (q *Queue) Start() {
 	q.lifecycleMu.Lock()
 	defer q.lifecycleMu.Unlock()
@@ -225,6 +209,34 @@ func (q *Queue) Close() {
 		q.visibilityWorkerCancel = nil
 		q.visibilityWorker = nil
 	}
+}
+
+func (q *Queue) AddDLQSources(sources ...*Queue) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, queue := range sources {
+		atomic.StoreUint32(&q.isDLQ, 1)
+		q.dlqSources[queue.URL] = queue
+	}
+}
+
+func (q *Queue) RemoveDLQSource(queueURL string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.dlqSources, queueURL)
+	if len(q.dlqSources) == 0 {
+		atomic.StoreUint32(&q.isDLQ, 0)
+	}
+}
+
+// IsDLQ indicates if a queue is a dlq.
+func (q *Queue) IsDLQ() bool {
+	return atomic.LoadUint32(&q.isDLQ) == 1
+}
+
+// Clock returns the timesource for the queue.
+func (q *Queue) Clock() clockwork.Clock {
+	return q.clock
 }
 
 func (q *Queue) Tag(tags map[string]string) {
@@ -377,10 +389,9 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 		messageID, ok = q.messagesInflightByReceiptHandle[safeDeref(entry.ReceiptHandle)]
 		if !ok {
 			failed = append(failed, types.BatchResultErrorEntry{
-				Code:        aws.String("InvalidParameterValue"),
+				Code:        aws.String("ReceiptHandleIsInvalid"),
 				Id:          entry.Id,
 				SenderFault: true,
-				Message:     aws.String("ReceiptHandle not found"),
 			})
 			return
 		}
@@ -391,7 +402,6 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 				Code:        aws.String("InternalServerError"),
 				Id:          entry.Id,
 				SenderFault: false,
-				Message:     aws.String("Message not found"),
 			})
 			return
 		}
@@ -412,18 +422,16 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	return
 }
 
-func (q *Queue) Delete(initiatingReceiptHandle string) (err *Error) {
+func (q *Queue) Delete(initiatingReceiptHandle string) (ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	messageID, ok := q.messagesInflightByReceiptHandle[initiatingReceiptHandle]
 	if !ok {
-		err = ErrorInvalidParameterValue("ReceiptHandle")
 		return
 	}
 	var msg *MessageState
 	msg, ok = q.messagesInflight[messageID]
 	if !ok {
-		err = ErrorInvalidParameterValue("ReceiptHandle")
 		return
 	}
 	for receiptHandle := range msg.ReceiptHandles.Consume() {
@@ -586,7 +594,7 @@ func (q *Queue) UpdateDelayedToReady() {
 	}
 }
 
-// NewMessageStateFromInput returns a new [MessageState] from a given send message input
+// NewMessageState returns a new [MessageState] from a given send message input
 func (q *Queue) NewMessageState(m Message, created time.Time, delaySeconds int) (*MessageState, *Error) {
 	sqsm := &MessageState{
 		Message:                m,
@@ -774,85 +782,121 @@ var validQueueNameRegexp = regexp.MustCompile("^[0-9,a-z,A-Z,_,-]+$")
 
 func validateQueueName(queueName string) *Error {
 	if queueName == "" {
-		return ErrorInvalidAttributeValue("Invalid QueueName; must not be empty")
+		return ErrorInvalidParameterValueException().WithMessage("Queue name cannot be empty")
 	}
 	if len(queueName) > 80 {
-		return ErrorInvalidAttributeValue("Invalid QueueName; must be less than or equal to 80 characters long")
+		return ErrorInvalidParameterValueException().WithMessage("Can only include alphanumeric characters, hyphens, or underscores. 1 to 80 in length")
 	}
 	if !validQueueNameRegexp.MatchString(queueName) {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid QueueName; invalid characters, regexp used: %s", validQueueNameRegexp.String()))
+		return ErrorInvalidParameterValueException().WithMessage("Can only include alphanumeric characters, hyphens, or underscores. 1 to 80 in length")
 	}
 	return nil
 }
 
 func validateDelay(delay time.Duration) *Error {
 	if delay < 0 {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid DelaySeconds; must be greater than or equal to 0, you put: %v", delay))
+		return ErrorInvalidParameterValueException().WithMessagef("DelaySeconds must be greater than or equal to 0, you put: %v", delay)
 	}
 	if delay > 90*time.Second {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid DelaySeconds; must be less than or equal to 90 seconds, you put: %v", delay))
+		return ErrorInvalidParameterValueException().WithMessagef("DelaySeconds must be less than or equal to 90 seconds, you put: %v", delay)
 	}
 	return nil
 }
 
 func validateMaximumMessageSizeBytes(maximumMessageSizeBytes int) *Error {
 	if maximumMessageSizeBytes < 1024 {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid MaximumMessageSizeBytes; must be greater than or equal to 1024, you put: %v", maximumMessageSizeBytes))
+		return ErrorInvalidParameterValueException().WithMessagef("MaximumMessageSizeBytes must be greater than or equal to 1024, you put: %v", maximumMessageSizeBytes)
 	}
 	if maximumMessageSizeBytes > 256*1024 {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid MaximumMessageSizeBytes; must be less than or equal to 256KiB, you put: %v", maximumMessageSizeBytes))
+		return ErrorInvalidParameterValueException().WithMessagef("MaximumMessageSizeBytes must be less than or equal to 256KiB, you put: %v", maximumMessageSizeBytes)
 	}
 	return nil
 }
 
 func validateMessageRetentionPeriod(messageRetentionPeriod time.Duration) *Error {
 	if messageRetentionPeriod < 60*time.Second {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid MessageRetentionPeriod; must be greater than or equal to 60 seconds, you put: %v", messageRetentionPeriod))
+		return ErrorInvalidParameterValueException().WithMessagef("MessageRetentionPeriod must be greater than or equal to 60 seconds, you put: %v", messageRetentionPeriod)
 	}
 	if messageRetentionPeriod > 14*24*time.Hour {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid MessageRetentionPeriod; must be less than or equal to 14 days, you put: %v", messageRetentionPeriod))
+		return ErrorInvalidParameterValueException().WithMessagef("MessageRetentionPeriod must be less than or equal to 14 days, you put: %v", messageRetentionPeriod)
 	}
 	return nil
 }
 
 func validateReceiveMessageWaitTime(receiveMessageWaitTime time.Duration) *Error {
 	if receiveMessageWaitTime < 0 {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid ReceiveMessageWaitTime; must be greater than or equal to 0, you put: %v", receiveMessageWaitTime))
+		return ErrorInvalidParameterValueException().WithMessagef("ReceiveMessageWaitTime must be greater than or equal to 0, you put: %v", receiveMessageWaitTime)
 	}
 	if receiveMessageWaitTime > 20*time.Second {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid ReceiveMessageWaitTime; must be less than or equal to 20 seconds, you put: %v", receiveMessageWaitTime))
+		return ErrorInvalidParameterValueException().WithMessagef("ReceiveMessageWaitTime must be less than or equal to 20 seconds, you put: %v", receiveMessageWaitTime)
 	}
 	return nil
 }
 
 func validateWaitTimeSeconds(waitTime time.Duration) *Error {
 	if waitTime < 0 {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid WaitTimeSeconds; must be greater than or equal to 0, you put: %v", waitTime))
+		return ErrorInvalidParameterValueException().WithMessagef("WaitTimeSeconds must be greater than or equal to 0, you put: %v", waitTime)
 	}
 	if waitTime > 20*time.Second {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid WaitTimeSeconds; must be less than or equal to 20 seconds, you put: %v", waitTime))
+		return ErrorInvalidParameterValueException().WithMessagef("WaitTimeSeconds must be less than or equal to 20 seconds, you put: %v", waitTime)
 	}
 	return nil
 }
 
 func validateVisibilityTimeout(visibilityTimeout time.Duration) *Error {
 	if visibilityTimeout < 0 {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid VisibilityTimeout; must be greater than or equal to 0, you put: %v", visibilityTimeout))
+		return ErrorInvalidParameterValueException().WithMessagef("VisibilityTimeout must be greater than or equal to 0, you put: %v", visibilityTimeout)
 	}
 	if visibilityTimeout > 12*time.Hour {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid VisibilityTimeout; must be less than or equal to 12 hours, you put: %v", visibilityTimeout))
+		return ErrorInvalidParameterValueException().WithMessagef("VisibilityTimeout must be less than or equal to 12 hours, you put: %v", visibilityTimeout)
 	}
 	return nil
 }
 
-func validateMessageBodySize(body *string, maximumMessageSizeBytes int) *Error {
+func validateMessageBody(body *string, maximumMessageSizeBytes int) *Error {
 	if body == nil || *body == "" {
 		return nil
 	}
-	if len(*body) > maximumMessageSizeBytes {
-		return ErrorInvalidAttributeValue(fmt.Sprintf("Invalid MessageBody; must be less than %v bytes, you put: %v", maximumMessageSizeBytes, len(*body)))
+	if len([]byte(*body)) > maximumMessageSizeBytes {
+		return ErrorInvalidParameterValueException().WithMessage("One or more parameters are invalid. Reason: Message must be shorter than 262144 bytes.")
+	}
+	if isMessageBodyExclusivelyInvalidCharacters(*body) {
+		return ErrorInvalidParameterValueException().WithMessagef("Message body must contain at least one valid character")
 	}
 	return nil
+}
+
+func validateBatchEntryIDs(entryIDs []string) *Error {
+	if len(distinct(entryIDs)) != len(entryIDs) {
+		return ErrorBatchEntryIdsNotDistinct()
+	}
+	for _, id := range entryIDs {
+		if err := validateBatchEntryID(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var validBatchEntryIDRegexp = regexp.MustCompile("^[0-9,a-z,A-Z,_,-]+$")
+
+func validateBatchEntryID(entryID string) *Error {
+	if len(entryID) > 80 {
+		return ErrorInvalidBatchEntryID().WithMessagef("Id must be fewer than 80 characters; you put %d", len(entryID))
+	}
+	if !validBatchEntryIDRegexp.MatchString(entryID) {
+		return ErrorInvalidBatchEntryID().WithMessagef("Id must be a valid string; regexp used %q", validBatchEntryIDRegexp.String())
+	}
+	return nil
+}
+
+func isMessageBodyExclusivelyInvalidCharacters(body string) bool {
+	for _, r := range body {
+		if utf8.ValidRune(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func readAttributeDurationSeconds(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[time.Duration], err *Error) {
@@ -862,7 +906,7 @@ func readAttributeDurationSeconds(attributes map[string]string, attributeName ty
 	}
 	parsed, parseErr := strconv.Atoi(value)
 	if parseErr != nil {
-		err = ErrorInvalidAttributeValue(fmt.Sprintf("Failed to parse %s as duration seconds: %v", attributeName, parseErr))
+		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse as duration seconds: %v", attributeName, parseErr)
 		return
 	}
 	output = Some(time.Duration(parsed) * time.Second)
@@ -876,7 +920,7 @@ func readAttributeDurationInt(attributes map[string]string, attributeName types.
 	}
 	parsed, parseErr := strconv.Atoi(value)
 	if parseErr != nil {
-		err = ErrorInvalidAttributeValue(fmt.Sprintf("Failed to parse %s as integer: %v", attributeName, parseErr))
+		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse as integer: %v", attributeName, parseErr)
 		return
 	}
 	output = Some(parsed)
@@ -890,7 +934,7 @@ func readAttributeRedrivePolicy(attributes map[string]string) (output Optional[R
 	}
 	var policy RedrivePolicy
 	if jsonErr := json.Unmarshal([]byte(value), &policy); jsonErr != nil {
-		err = ErrorInvalidAttributeValue(fmt.Sprintf("Failed to parse redrive policy: %v", jsonErr))
+		err = ErrorInvalidAttributeValue().WithMessagef("%s failed to parse redrive policy: %v", string(types.QueueAttributeNameRedrivePolicy), jsonErr)
 		return
 	}
 	output = Some(policy)

@@ -1,6 +1,9 @@
 package sqslite
 
-import "fmt"
+import (
+	"cmp"
+	"fmt"
+)
 
 func must[V any](v V, err error) V {
 	if err != nil {
@@ -27,6 +30,17 @@ func apply[Input, Output any](values []Input, fn func(Input) Output) (output []O
 	return
 }
 
+func sum[V cmp.Ordered](values []V) (accum V) {
+	for _, v := range values {
+		accum += v
+	}
+	return
+}
+
+// distinct returns a given list of values as distinct
+// by strict comparable equality.
+//
+// For example: distinct([a,a,b]) => [a,b]
 func distinct[V comparable](values []V) (output []V) {
 	lookup := map[V]struct{}{}
 	output = make([]V, 0, len(values))
