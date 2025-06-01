@@ -37,7 +37,7 @@ var (
 			slog.LevelWarn.String(),
 			slog.LevelError.String(),
 		))
-	flagSkipGzip  = pflag.Bool("skip-gzip", false, "If we should skip gzip compression on responses")
+	flagGzip      = pflag.Bool("gzip", false, "If we should enable gzip compression on responses")
 	flagSkipStats = pflag.Bool("skip-stats", false, "If we should skip outputing queue stats")
 )
 
@@ -108,12 +108,12 @@ func main() {
 	slog.Info("created default queue with url", slog.String("queue_url", defaultQueue.URL))
 
 	var handler http.Handler
-	if *flagSkipGzip {
-		slog.Info("skipping gzip compression on responses")
-		handler = httputil.Logged(server)
-	} else {
+	if *flagGzip {
 		slog.Info("using gzip compression on responses")
 		handler = httputil.Logged(httputil.Gzipped(server))
+	} else {
+		slog.Info("skipping gzip compression on responses")
+		handler = httputil.Logged(server)
 	}
 
 	httpSrv := &http.Server{

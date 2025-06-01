@@ -142,7 +142,7 @@ func (q *Queues) StartMoveMessageTask(clock clockwork.Clock, sourceArn, destinat
 	if !ok {
 		return nil, ErrorResourceNotFoundException().WithMessage("DestinationArn")
 	}
-	mmt := NewMoveMessageTask(clock, sourceQueue, destinationQueue, int(rateLimit))
+	mmt := NewMessagesMoveTask(clock, sourceQueue, destinationQueue, int(rateLimit))
 	mmt.Start(context.Background())
 	q.moveMessageTasks[mmt.TaskHandle] = mmt
 	if _, ok := q.moveMessageTasksBySourceArn[sourceArn]; !ok {
@@ -228,7 +228,10 @@ func (q *Queues) PurgeDeletedQueues() {
 	now := q.clock.Now()
 	var toDelete []string
 	for _, queue := range q.queues {
-		if !queue.deleted.IsZero() && now.Sub(queue.deleted) > 60*time.Second {
+		if !queue.IsDeleted() {
+			continue
+		}
+		if now.Sub(queue.Deleted()) > 60*time.Second {
 			toDelete = append(toDelete, queue.URL)
 		}
 	}

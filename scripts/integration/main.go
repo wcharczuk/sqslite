@@ -11,22 +11,26 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/jonboulle/clockwork"
 	"github.com/spf13/pflag"
+
 	"github.com/wcharczuk/sqslite/internal/spy"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 var (
-	flagAWSRegion   = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
-	flagScenario    = pflag.String("scenario", "create-queue-missing-redrive-target", "The AWS region")
-	flagSpyUpstream = pflag.String("spy-upstream", "https://sqs.us-west-2.amazonaws.com", "The upstrem endpoint for the spy proxy")
+	flagAWSRegion = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
+	flagScenario  = pflag.String("scenario", "messages-move", "The AWS region")
+	flagLocal     = pflag.Bool("local", false, "If we should target a local sqslite instance")
 )
 
 // assertions
@@ -41,6 +45,11 @@ func main() {
 	ctx, done := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer done()
 
+	var upstream = "https://sqs.us-west-2.amazonaws.com"
+	if *flagLocal {
+		upstream = "http://localhost:4566"
+	}
+
 	spyListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		maybeFatal(err)
@@ -49,170 +58,261 @@ func main() {
 	spy := &http.Server{
 		Handler: &spy.Handler{
 			Do:   spy.WriteOutput(os.Stdout),
-			Next: httputil.NewSingleHostReverseProxy(must(url.Parse(*flagSpyUpstream))),
+			Next: httputil.NewSingleHostReverseProxy(must(url.Parse(upstream))),
 		},
 	}
 	go spy.Serve(spyListener)
 
-	sess, err := config.LoadDefaultConfig(ctx) // config.WithRegion(*flagAWSRegion),
-	// config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
-
-	if err != nil {
-		maybeFatal(err)
+	var sess aws.Config
+	if *flagLocal {
+		sess, err = config.LoadDefaultConfig(ctx,
+			config.WithRegion(*flagAWSRegion),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+		)
+		if err != nil {
+			maybeFatal(err)
+		}
+	} else {
+		sess, err = config.LoadDefaultConfig(ctx)
+		if err != nil {
+			maybeFatal(err)
+		}
 	}
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
 		o.BaseEndpoint = aws.String(fmt.Sprintf("http://%s", spyListener.Addr().String()))
 	})
-	switch *flagScenario {
-	case "recreate-queue":
-		if err := recreateQueueWithUpdatedAttributes(ctx, sqsClient); err != nil {
-			maybeFatal(err)
+	err = (&IntegrationTest{
+		ctx:       ctx,
+		sqsClient: sqsClient,
+		clock:     clockwork.NewRealClock(),
+	}).Run(messagesMove)
+	maybeFatal(err)
+}
+
+func messagesMove(it *IntegrationTest) {
+	dlq := it.CreateQueue()
+	mainQueue := it.CreateQueueWithDLQ(dlq)
+
+	for range 5 {
+		it.SendMessage(mainQueue)
+	}
+
+	// transfer messages to the dlq
+	for range 5 {
+		messages := it.ReceiveMessages(mainQueue)
+		for _, msg := range messages {
+			it.ChangeMessageVisibility(mainQueue, msg, 0)
 		}
-	case "create-queue-missing-queue-name":
-		if err := createQueueMissingQueueName(ctx, sqsClient); err != nil {
-			maybeFatal(err)
+	}
+
+	it.Sleep(time.Second)
+	_ = it.StartMessagesMoveTask(dlq, mainQueue)
+
+done:
+	for {
+		tasks := it.ListMessagesMoveTasks(dlq)
+		for _, t := range tasks {
+			if t.Status != "RUNNING" {
+				break done
+			}
 		}
-	case "create-queue-long-queue-name":
-		if err := createQueueLongQueueName(ctx, sqsClient); err != nil {
-			maybeFatal(err)
+		it.Sleep(time.Second)
+	}
+
+	messages := it.ReceiveMessages(mainQueue)
+	for _, msg := range messages {
+		it.DeleteMessage(mainQueue, msg)
+	}
+	return
+}
+
+type IntegrationTest struct {
+	ctx            context.Context
+	sqsClient      *sqs.Client
+	messageOrdinal uint64
+	clock          clockwork.Clock
+	after          []func()
+}
+
+func (it *IntegrationTest) Run(fn func(*IntegrationTest)) (err error) {
+	defer func() {
+		it.Cleanup()
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+			return
 		}
-	case "create-queue-queue-name-invalid":
-		if err := createQueueQueueNameInvalid(ctx, sqsClient); err != nil {
-			maybeFatal(err)
-		}
-	case "create-queue-invalid-redrive-target":
-		if err := createQueueInvalidRedriveTarget(ctx, sqsClient); err != nil {
-			maybeFatal(err)
-		}
-	case "send-message-large-body":
-		if err := sendMessageLargeBody(ctx, sqsClient); err != nil {
-			maybeFatal(err)
-		}
-	case "send-message-batch-large-bodies":
-		if err := sendMessageBatchLargeBodies(ctx, sqsClient); err != nil {
-			maybeFatal(err)
-		}
+	}()
+	fn(it)
+	return
+}
+
+func (it *IntegrationTest) Cleanup() {
+	for _, fn := range it.after {
+		fn()
 	}
 }
 
-func sendMessageBatchLargeBodies(ctx context.Context, sqsClient *sqs.Client) error {
+func (it *IntegrationTest) After(fn func()) {
+	it.after = append(it.after, fn)
+}
+
+func (it *IntegrationTest) Sleep(d time.Duration) {
+	timer := it.clock.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-it.ctx.Done():
+		panic(context.Canceled)
+	case <-timer.Chan():
+		return
+	}
+}
+
+func (it *IntegrationTest) CreateQueue() (output Queue) {
 	queueName := fmt.Sprintf("test-queue-%s", uuid.V4())
-	queueRes, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
+	queueRes, err := it.sqsClient.CreateQueue(it.ctx, &sqs.CreateQueueInput{
 		QueueName: aws.String(queueName),
 	})
 	if err != nil {
-		return err
+		panic(err)
 	}
-	defer func() {
-		_, err = sqsClient.DeleteQueue(ctx, &sqs.DeleteQueueInput{
+	it.After(func() {
+		_, err = it.sqsClient.DeleteQueue(context.Background(), &sqs.DeleteQueueInput{
 			QueueUrl: queueRes.QueueUrl,
 		})
-	}()
-	_, _ = sqsClient.SendMessageBatch(ctx, &sqs.SendMessageBatchInput{
+	})
+	queueAttributesRes, err := it.sqsClient.GetQueueAttributes(it.ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl: queueRes.QueueUrl,
-		Entries: []types.SendMessageBatchRequestEntry{
-			{
-				Id:          aws.String(uuid.V4().String()),
-				MessageBody: aws.String(strings.Repeat("a", 128*1024)),
-			},
-			{
-				Id:          aws.String(uuid.V4().String()),
-				MessageBody: aws.String(strings.Repeat("a", 128*1024)),
-			},
-			{
-				Id:          aws.String(uuid.V4().String()),
-				MessageBody: aws.String(strings.Repeat("a", 128*1024)),
-			},
+		AttributeNames: []types.QueueAttributeName{
+			types.QueueAttributeNameQueueArn,
 		},
 	})
-	return nil
+	if err != nil {
+		panic(err)
+	}
+	output.QueueName = queueName
+	output.QueueArn = queueAttributesRes.Attributes[string(types.QueueAttributeNameQueueArn)]
+	output.QueueURL = safeDeref(queueRes.QueueUrl)
+	return
 }
 
-func sendMessageLargeBody(ctx context.Context, sqsClient *sqs.Client) error {
+func (it *IntegrationTest) CreateQueueWithDLQ(dlq Queue) (output Queue) {
 	queueName := fmt.Sprintf("test-queue-%s", uuid.V4())
-	queueRes, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
-		QueueName: aws.String(queueName),
-	})
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_, err = sqsClient.DeleteQueue(ctx, &sqs.DeleteQueueInput{
-			QueueUrl: queueRes.QueueUrl,
-		})
-	}()
-	_, _ = sqsClient.SendMessage(ctx, &sqs.SendMessageInput{
-		QueueUrl:    queueRes.QueueUrl,
-		MessageBody: aws.String(strings.Repeat("a", 512*1024)),
-	})
-	return nil
-}
-
-func createQueueMissingQueueName(ctx context.Context, sqsClient *sqs.Client) error {
-	_, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
-		QueueName: aws.String(""),
-	})
-	if err != nil {
-		fmt.Printf("%#v\n", err)
-	}
-	return nil
-}
-
-func createQueueLongQueueName(ctx context.Context, sqsClient *sqs.Client) error {
-	_, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
-		QueueName: aws.String(strings.Repeat("a", 160)),
-	})
-	if err != nil {
-		fmt.Printf("%#v\n", err)
-	}
-	return nil
-}
-
-func createQueueQueueNameInvalid(ctx context.Context, sqsClient *sqs.Client) error {
-	_, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
-		QueueName: aws.String("test!!!queue"),
-	})
-	if err != nil {
-		fmt.Printf("%#v\n", err)
-	}
-	return nil
-}
-
-func createQueueInvalidRedriveTarget(ctx context.Context, sqsClient *sqs.Client) error {
-	queueName := fmt.Sprintf("duplicate-%s", uuid.V4().String())
-	_, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
+	queueRes, err := it.sqsClient.CreateQueue(it.ctx, &sqs.CreateQueueInput{
 		QueueName: aws.String(queueName),
 		Attributes: map[string]string{
 			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(sqslite.RedrivePolicy{
-				DeadLetterTargetArn: uuid.V4().String(),
-				MaxReceiveCount:     10,
+				DeadLetterTargetArn: dlq.QueueArn,
+				MaxReceiveCount:     3,
 			}),
 		},
 	})
 	if err != nil {
-		fmt.Printf("%#v\n", err)
+		panic(err)
 	}
-	return nil
-}
-
-func recreateQueueWithUpdatedAttributes(ctx context.Context, sqsClient *sqs.Client) error {
-	queueName := fmt.Sprintf("duplicate-%s", uuid.V4().String())
-	queueRes, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
-		QueueName: aws.String(queueName),
+	it.After(func() {
+		_, err = it.sqsClient.DeleteQueue(context.Background(), &sqs.DeleteQueueInput{
+			QueueUrl: queueRes.QueueUrl,
+		})
 	})
-	if err != nil {
-		return err
-	}
-	_, _ = sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
-		QueueName: aws.String(queueName),
-		Attributes: map[string]string{
-			string(types.QueueAttributeNameDelaySeconds): "10",
+	queueAttributesRes, err := it.sqsClient.GetQueueAttributes(it.ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl: queueRes.QueueUrl,
+		AttributeNames: []types.QueueAttributeName{
+			types.QueueAttributeNameQueueArn,
 		},
 	})
-	_, err = sqsClient.DeleteQueue(ctx, &sqs.DeleteQueueInput{
-		QueueUrl: queueRes.QueueUrl,
+	if err != nil {
+		panic(err)
+	}
+	output.QueueName = queueName
+	output.QueueArn = queueAttributesRes.Attributes[string(types.QueueAttributeNameQueueArn)]
+	output.QueueURL = safeDeref(queueRes.QueueUrl)
+	return
+}
+
+func (it *IntegrationTest) SendMessage(queue Queue) {
+	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
+		QueueUrl:    &queue.QueueURL,
+		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, atomic.AddUint64(&it.messageOrdinal, 1))),
 	})
-	return err
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (it *IntegrationTest) ReceiveMessages(queue Queue) (receiptHandles []string) {
+	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            &queue.QueueURL,
+		MaxNumberOfMessages: 10,
+	})
+	if err != nil {
+		panic(err)
+	}
+	for _, msg := range res.Messages {
+		receiptHandles = append(receiptHandles, safeDeref(msg.ReceiptHandle))
+	}
+	return
+}
+
+func (it *IntegrationTest) DeleteMessage(queue Queue, receiptHandle string) {
+	_, err := it.sqsClient.DeleteMessage(it.ctx, &sqs.DeleteMessageInput{
+		QueueUrl:      &queue.QueueURL,
+		ReceiptHandle: &receiptHandle,
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (it *IntegrationTest) ChangeMessageVisibility(queue Queue, receiptHandle string, visibilityTimeout int) {
+	_, err := it.sqsClient.ChangeMessageVisibility(it.ctx, &sqs.ChangeMessageVisibilityInput{
+		QueueUrl:          &queue.QueueURL,
+		ReceiptHandle:     &receiptHandle,
+		VisibilityTimeout: int32(visibilityTimeout),
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (it *IntegrationTest) StartMessagesMoveTask(source, destination Queue) (taskHandle string) {
+	res, err := it.sqsClient.StartMessageMoveTask(it.ctx, &sqs.StartMessageMoveTaskInput{
+		SourceArn:      &source.QueueArn,
+		DestinationArn: &destination.QueueArn,
+	})
+	if err != nil {
+		panic(err)
+	}
+	taskHandle = safeDeref(res.TaskHandle)
+	return
+}
+
+func (it *IntegrationTest) ListMessagesMoveTasks(source Queue) (tasks []MoveMessagesTask) {
+	res, err := it.sqsClient.ListMessageMoveTasks(it.ctx, &sqs.ListMessageMoveTasksInput{
+		SourceArn: &source.QueueArn,
+	})
+	if err != nil {
+		panic(err)
+	}
+	for _, t := range res.Results {
+		tasks = append(tasks, MoveMessagesTask{
+			TaskHandle:     safeDeref(t.TaskHandle),
+			DestinationArn: safeDeref(t.DestinationArn),
+			Status:         safeDeref(t.Status),
+		})
+	}
+	return
+}
+
+type MoveMessagesTask struct {
+	TaskHandle     string
+	DestinationArn string
+	Status         string
+}
+
+type Queue struct {
+	QueueName string
+	QueueURL  string
+	QueueArn  string
 }
 
 func maybeFatal(err error) {
@@ -232,4 +332,11 @@ func must[V any](v V, err error) V {
 func marshalJSON(v any) string {
 	data, _ := json.Marshal(v)
 	return string(data)
+}
+
+func safeDeref[V any](v *V) (out V) {
+	if v == nil {
+		return
+	}
+	return *v
 }

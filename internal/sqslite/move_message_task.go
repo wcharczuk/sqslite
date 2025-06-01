@@ -11,8 +11,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// NewMoveMoveMessageTask returns a new move message task.
-func NewMoveMessageTask(clock clockwork.Clock, source, destination *Queue, maxNumberOfMessagesPerSecond int) *MessageMoveTask {
+// NewMessagesMoveTask returns a new move message task.
+func NewMessagesMoveTask(clock clockwork.Clock, source, destination *Queue, maxNumberOfMessagesPerSecond int) *MessageMoveTask {
 	mmt := &MessageMoveTask{
 		AccountID:                    source.AccountID,
 		TaskHandle:                   uuid.V4().String(),
@@ -32,7 +32,7 @@ type MessageMoveStatus uint32
 const (
 	MessageMoveStatusUnknown   MessageMoveStatus = iota
 	MessageMoveStatusRunning   MessageMoveStatus = iota
-	MessageMoveStatusComplete  MessageMoveStatus = iota
+	MessageMoveStatusCompleted MessageMoveStatus = iota
 	MessageMoveStatusFailed    MessageMoveStatus = iota
 	MessageMoveStatusCanceling MessageMoveStatus = iota
 	MessageMoveStatusCanceled  MessageMoveStatus = iota
@@ -44,8 +44,8 @@ func (m MessageMoveStatus) String() string {
 		return "UNKNOWN"
 	case MessageMoveStatusRunning:
 		return "RUNNING"
-	case MessageMoveStatusComplete:
-		return "COMPLETE"
+	case MessageMoveStatusCompleted:
+		return "COMPLETED"
 	case MessageMoveStatusFailed:
 		return "FAILED"
 	case MessageMoveStatusCanceling:
@@ -120,7 +120,7 @@ func (m *MessageMoveTask) moveMessages(ctx context.Context) {
 		}
 		msg, ok := m.SourceQueue.PopMessageForMove()
 		if !ok {
-			atomic.StoreUint32(&m.status, uint32(MessageMoveStatusComplete))
+			atomic.StoreUint32(&m.status, uint32(MessageMoveStatusCompleted))
 			return
 		}
 		m.DestinationQueue.Push(msg)
