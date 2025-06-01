@@ -32,8 +32,8 @@ var (
 // - ✅ can recreate queues with the same attributes => yields the same queue url
 // - ✅ what is the missing required parameter error type
 // - ✅ what error is returned by sendMessage if the body is > 256KiB
-// - sendMessageBatch requires the sum of all the bodes to be < 256KiB
-// - startMessageMoveTask what happens if you put a MaxNumberOfMessagesPerSecond > 500
+// - ✅ sendMessageBatch requires the sum of all the bodes to be < 256KiB
+// - ✅ startMessageMoveTask what happens if you put a MaxNumberOfMessagesPerSecond > 500
 
 func main() {
 	pflag.Parse()
