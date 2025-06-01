@@ -123,7 +123,6 @@ done:
 	for _, msg := range messages {
 		it.DeleteMessage(mainQueue, msg)
 	}
-	return
 }
 
 type IntegrationTest struct {
