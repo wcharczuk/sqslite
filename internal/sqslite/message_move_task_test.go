@@ -30,7 +30,9 @@ func Test_MessageMoveStatus_String(t *testing.T) {
 	require.Equal(t, "RUNNING", MessageMoveStatusRunning.String())
 	require.Equal(t, "COMPLETED", MessageMoveStatusCompleted.String())
 	require.Equal(t, "FAILED", MessageMoveStatusFailed.String())
+	//nolint:misspell
 	require.Equal(t, "CANCELLING", MessageMoveStatusCanceling.String())
+	//nolint:misspell
 	require.Equal(t, "CANCELLED", MessageMoveStatusCanceled.String())
 	require.Equal(t, "UNKNOWN", MessageMoveStatus(127).String())
 }
