@@ -11,8 +11,9 @@ import (
 )
 
 // NewQueues returns a new queues storage.
-func NewQueues(clock clockwork.Clock) *Queues {
+func NewQueues(clock clockwork.Clock, accountID string) *Queues {
 	return &Queues{
+		accountID:                   accountID,
 		queueURLs:                   make(map[string]string),
 		queueARNs:                   make(map[string]string),
 		queues:                      make(map[string]*Queue),
@@ -24,6 +25,7 @@ func NewQueues(clock clockwork.Clock) *Queues {
 
 // Queues holds all the queue
 type Queues struct {
+	accountID                   string
 	lifecycleMu                 sync.Mutex
 	queuesMu                    sync.Mutex
 	queueURLs                   map[string]string
@@ -38,12 +40,14 @@ type Queues struct {
 	clock clockwork.Clock
 }
 
-func (q *Queues) Start() {
+func (q *Queues) AccountID() string { return q.accountID }
+
+func (q *Queues) Start(ctx context.Context) {
 	q.lifecycleMu.Lock()
 	defer q.lifecycleMu.Unlock()
 
 	var deletedQueueWorkerCtx context.Context
-	deletedQueueWorkerCtx, q.deletedQueueWorkerCancel = context.WithCancel(context.Background())
+	deletedQueueWorkerCtx, q.deletedQueueWorkerCancel = context.WithCancel(ctx)
 	q.deletedQueueWorker = &deletedQueueWorker{queues: q, clock: q.clock}
 	go q.deletedQueueWorker.Start(deletedQueueWorkerCtx)
 }
@@ -231,7 +235,7 @@ func (q *Queues) PurgeDeletedQueues() {
 		if !queue.IsDeleted() {
 			continue
 		}
-		if now.Sub(queue.Deleted()) > 60*time.Second {
+		if now.Sub(queue.Deleted()) >= 60*time.Second {
 			toDelete = append(toDelete, queue.URL)
 		}
 	}
@@ -239,6 +243,10 @@ func (q *Queues) PurgeDeletedQueues() {
 		q.deleteQueueUnsafe(queueURL)
 	}
 }
+
+//
+// unexported helpers
+//
 
 func (q *Queues) getQueueUnsafe(queueURL string) (*Queue, bool) {
 	var queue *Queue

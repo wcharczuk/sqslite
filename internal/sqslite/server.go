@@ -1,6 +1,7 @@
 package sqslite
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -154,7 +155,9 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	queue.Start()
+	// we use the background context here because this
+	// runs at the scope of the server itself (not the request)
+	queue.Start(context.Background())
 	serialize(rw, req, &sqs.CreateQueueOutput{
 		QueueUrl: &queue.URL,
 	})

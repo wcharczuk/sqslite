@@ -1,6 +1,7 @@
 package sqslite
 
 import (
+	"context"
 	"sync"
 
 	"github.com/jonboulle/clockwork"
@@ -9,10 +10,8 @@ import (
 // NewAccounts returns a new accounts set.
 func NewAccounts(clock clockwork.Clock) *Accounts {
 	return &Accounts{
-		accounts: map[string]*Queues{
-			DefaultAccountID: NewQueues(clock),
-		},
-		clock: clock,
+		accounts: map[string]*Queues{},
+		clock:    clock,
 	}
 }
 
@@ -28,8 +27,8 @@ func (a *Accounts) EnsureQueues(accountID string) *Queues {
 	if queues, ok := a.accounts[accountID]; ok {
 		return queues
 	}
-	newQueues := NewQueues(a.clock)
-	newQueues.Start()
+	newQueues := NewQueues(a.clock, accountID)
+	newQueues.Start(context.Background())
 	a.accounts[accountID] = newQueues
 	return newQueues
 }

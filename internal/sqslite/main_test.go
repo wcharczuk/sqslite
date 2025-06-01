@@ -130,7 +130,7 @@ func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	dlq, _ := NewQueueFromCreateQueueInput(server.Clock(), authz, &sqs.CreateQueueInput{
 		QueueName: aws.String("default-dlq"),
 	})
-	dlq.Start()
+	dlq.Start(t.Context())
 	server.accounts.EnsureQueues(testAccountID).AddQueue(dlq)
 	defaultQueue, _ := NewQueueFromCreateQueueInput(server.Clock(), authz, &sqs.CreateQueueInput{
 		QueueName: aws.String("default"),
@@ -141,7 +141,7 @@ func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 			}),
 		},
 	})
-	defaultQueue.Start()
+	defaultQueue.Start(t.Context())
 	server.accounts.EnsureQueues(testAccountID).AddQueue(defaultQueue)
 	svr := httptest.NewServer(httputil.Logged(server))
 	t.Cleanup(server.Close)
@@ -154,7 +154,7 @@ func createTestQueue(t *testing.T, clock clockwork.Clock) *Queue {
 	q, err := NewQueueFromCreateQueueInput(clock, Authorization{
 		Region:    Some("us-west-2"),
 		Host:      Some("sqslite.local"),
-		AccountID: "test-account",
+		AccountID: testAccountID,
 	}, &sqs.CreateQueueInput{
 		QueueName: aws.String("test-queue"),
 	})
@@ -168,7 +168,7 @@ func createTestQueueWithName(t *testing.T, clock clockwork.Clock, name string) *
 	queue, err := NewQueueFromCreateQueueInput(clock, Authorization{
 		Region:    Some("us-west-2"),
 		Host:      Some("sqslite.local"),
-		AccountID: "test-account",
+		AccountID: testAccountID,
 	}, &sqs.CreateQueueInput{
 		QueueName: aws.String(name),
 	})

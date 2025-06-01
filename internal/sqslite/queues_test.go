@@ -13,21 +13,22 @@ import (
 
 func TestNewQueues_CreatesInstanceWithEmptyMaps(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 
 	require.NotNil(t, queues)
+	require.Equal(t, testAccountID, queues.AccountID())
 }
 
 func TestNewQueues_SetsProvidedClock(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 
 	require.Equal(t, clock, queues.clock)
 }
 
 func TestNewQueues_InitializesQueueURLsMap(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 
 	require.NotNil(t, queues.queueURLs)
 	require.Equal(t, 0, len(queues.queueURLs))
@@ -35,7 +36,7 @@ func TestNewQueues_InitializesQueueURLsMap(t *testing.T) {
 
 func TestNewQueues_InitializesQueuesMap(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 
 	require.NotNil(t, queues.queues)
 	require.Equal(t, 0, len(queues.queues))
@@ -43,7 +44,7 @@ func TestNewQueues_InitializesQueuesMap(t *testing.T) {
 
 func TestNewQueues_InitializesMoveMessageTasksMap(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 
 	assert.NotNil(t, queues.moveMessageTasks)
 	assert.Equal(t, 0, len(queues.moveMessageTasks))
@@ -51,28 +52,28 @@ func TestNewQueues_InitializesMoveMessageTasksMap(t *testing.T) {
 
 func TestQueues_Start_InitializesWorker(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
-	queues.Start()
+	queues.Start(t.Context())
 
 	require.NotNil(t, queues.deletedQueueWorker)
 }
 
 func TestQueues_Start_SetsCancelFunction(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
-	queues.Start()
+	queues.Start(t.Context())
 
 	require.NotNil(t, queues.deletedQueueWorkerCancel)
 }
 
 func TestQueues_Close_ClearsWorkerReference(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
-	queues.Start()
+	queues := NewQueues(clock, testAccountID)
+	queues.Start(t.Context())
 
 	queues.Close()
 
@@ -81,8 +82,8 @@ func TestQueues_Close_ClearsWorkerReference(t *testing.T) {
 
 func TestQueues_Close_ClearsCancelFunction(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
-	queues.Start()
+	queues := NewQueues(clock, testAccountID)
+	queues.Start(t.Context())
 
 	queues.Close()
 
@@ -91,7 +92,7 @@ func TestQueues_Close_ClearsCancelFunction(t *testing.T) {
 
 func TestQueues_AddQueue_AddsQueueSuccessfully(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -103,7 +104,7 @@ func TestQueues_AddQueue_AddsQueueSuccessfully(t *testing.T) {
 
 func TestQueues_AddQueue_ReturnsErrorForDuplicateNameWithDifferentAttributes(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue1 := createTestQueueWithName(t, clock, "test-queue")
 	defer queue1.Close()
@@ -126,7 +127,7 @@ func TestQueues_AddQueue_ReturnsErrorForDuplicateNameWithDifferentAttributes(t *
 
 func TestQueues_AddQueue_SucceedsForDuplicateNameWithSameAttributes(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, DefaultAccountID)
 	defer queues.Close()
 	queue1 := createTestQueueWithName(t, clock, "test-queue")
 	defer queue1.Close()
@@ -141,7 +142,7 @@ func TestQueues_AddQueue_SucceedsForDuplicateNameWithSameAttributes(t *testing.T
 
 func TestQueues_PurgeQueue_ReturnsTrueForExistingQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -154,7 +155,7 @@ func TestQueues_PurgeQueue_ReturnsTrueForExistingQueue(t *testing.T) {
 
 func TestQueues_PurgeQueue_ReturnsFalseForNonExistentQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
 	ok := queues.PurgeQueue("non-existent-url")
@@ -164,7 +165,7 @@ func TestQueues_PurgeQueue_ReturnsFalseForNonExistentQueue(t *testing.T) {
 
 func TestQueues_GetQueueURL_ReturnsURLForExistingQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -178,7 +179,7 @@ func TestQueues_GetQueueURL_ReturnsURLForExistingQueue(t *testing.T) {
 
 func TestQueues_GetQueueURL_ReturnsFalseForNonExistentQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
 	_, ok := queues.GetQueueURL("non-existent")
@@ -188,7 +189,7 @@ func TestQueues_GetQueueURL_ReturnsFalseForNonExistentQueue(t *testing.T) {
 
 func TestQueues_GetQueue_ReturnsQueueForExistingURL(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -202,7 +203,7 @@ func TestQueues_GetQueue_ReturnsQueueForExistingURL(t *testing.T) {
 
 func TestQueues_GetQueue_ReturnsFalseForNonExistentURL(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
 	_, ok := queues.GetQueue("non-existent-url")
@@ -212,7 +213,7 @@ func TestQueues_GetQueue_ReturnsFalseForNonExistentURL(t *testing.T) {
 
 func TestQueues_DeleteQueue_ReturnsTrueForExistingQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -225,7 +226,7 @@ func TestQueues_DeleteQueue_ReturnsTrueForExistingQueue(t *testing.T) {
 
 func TestQueues_DeleteQueue_ReturnsFalseForNonExistentQueue(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
 	ok := queues.DeleteQueue("non-existent-url")
@@ -235,7 +236,7 @@ func TestQueues_DeleteQueue_ReturnsFalseForNonExistentQueue(t *testing.T) {
 
 func TestQueues_DeleteQueue_MarksQueueAsDeleted(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -251,7 +252,7 @@ func TestQueues_DeleteQueue_MarksQueueAsDeleted(t *testing.T) {
 
 func TestQueues_PurgeDeletedQueues_RemovesQueuesDeletedOver60Seconds(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -267,7 +268,7 @@ func TestQueues_PurgeDeletedQueues_RemovesQueuesDeletedOver60Seconds(t *testing.
 
 func TestQueues_PurgeDeletedQueues_KeepsQueuesDeletedUnder60Seconds(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -283,7 +284,7 @@ func TestQueues_PurgeDeletedQueues_KeepsQueuesDeletedUnder60Seconds(t *testing.T
 
 func TestQueues_EachQueue_IteratesOverActiveQueues(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -299,7 +300,7 @@ func TestQueues_EachQueue_IteratesOverActiveQueues(t *testing.T) {
 
 func TestQueues_EachQueue_SkipsDeletedQueues(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	queue := createTestQueueWithName(t, clock, "test-queue")
 	defer queue.Close()
@@ -316,7 +317,7 @@ func TestQueues_EachQueue_SkipsDeletedQueues(t *testing.T) {
 
 func TestQueues_StartMoveMessageTask_ReturnsErrorForNonExistentSourceArn(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
 	_, err := queues.StartMoveMessageTask(clock, "non-existent-arn", "destination-arn", 10)
@@ -326,7 +327,7 @@ func TestQueues_StartMoveMessageTask_ReturnsErrorForNonExistentSourceArn(t *test
 
 func TestQueues_StartMoveMessageTask_ReturnsErrorForNonExistentDestinationArn(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
 	defer sourceQueue.Close()
@@ -339,7 +340,7 @@ func TestQueues_StartMoveMessageTask_ReturnsErrorForNonExistentDestinationArn(t 
 
 func TestQueues_StartMoveMessageTask_ReturnsTaskForValidQueues(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
 	defer sourceQueue.Close()
@@ -357,7 +358,7 @@ func TestQueues_StartMoveMessageTask_ReturnsTaskForValidQueues(t *testing.T) {
 
 func TestQueues_CancelMoveMessageTask_ReturnsErrorForNonExistentTask(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
 	_, err := queues.CancelMoveMessageTask("non-existent-handle")
@@ -367,7 +368,7 @@ func TestQueues_CancelMoveMessageTask_ReturnsErrorForNonExistentTask(t *testing.
 
 func TestQueues_CancelMoveMessageTask_TracksTaskInternalMap(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
 	defer sourceQueue.Close()
@@ -385,7 +386,7 @@ func TestQueues_CancelMoveMessageTask_TracksTaskInternalMap(t *testing.T) {
 
 func TestQueues_EachMoveMessageTasks_ReturnsEmptyForNonExistentSourceArn(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 
 	var count int
@@ -398,7 +399,7 @@ func TestQueues_EachMoveMessageTasks_ReturnsEmptyForNonExistentSourceArn(t *test
 
 func TestQueues_EachMoveMessageTasks_IteratesOverTasksForSourceArn(t *testing.T) {
 	clock := clockwork.NewFakeClock()
-	queues := NewQueues(clock)
+	queues := NewQueues(clock, testAccountID)
 	defer queues.Close()
 	sourceQueue := createTestQueueWithName(t, clock, "source-queue")
 	defer sourceQueue.Close()

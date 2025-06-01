@@ -172,22 +172,22 @@ func (q *Queue) IsDeleted() bool {
 	return !q.deleted.IsZero()
 }
 
-func (q *Queue) Start() {
+func (q *Queue) Start(ctx context.Context) {
 	q.lifecycleMu.Lock()
 	defer q.lifecycleMu.Unlock()
 
 	var retentionCtx context.Context
-	retentionCtx, q.retentionWorkerCancel = context.WithCancel(context.Background())
+	retentionCtx, q.retentionWorkerCancel = context.WithCancel(ctx)
 	q.retentionWorker = &retentionWorker{queue: q, clock: q.clock}
 	go q.retentionWorker.Start(retentionCtx)
 
 	var visibilityCtx context.Context
-	visibilityCtx, q.visibilityWorkerCancel = context.WithCancel(context.Background())
+	visibilityCtx, q.visibilityWorkerCancel = context.WithCancel(ctx)
 	q.visibilityWorker = &visibilityWorker{queue: q, clock: q.clock}
 	go q.visibilityWorker.Start(visibilityCtx)
 
 	var delayCtx context.Context
-	delayCtx, q.delayWorkerCancel = context.WithCancel(context.Background())
+	delayCtx, q.delayWorkerCancel = context.WithCancel(ctx)
 	q.delayWorker = &delayWorker{queue: q, clock: q.clock}
 	go q.delayWorker.Start(delayCtx)
 }

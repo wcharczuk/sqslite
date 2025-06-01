@@ -29,7 +29,7 @@ import (
 
 var (
 	flagAWSRegion = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
-	flagScenario  = pflag.String("scenario", "messages-move", "The AWS region")
+	flagScenarios = pflag.StringSlice("scenario", []string{"messages-move"}, "The integration test scenarios to run")
 	flagLocal     = pflag.Bool("local", false, "If we should target a local sqslite instance")
 )
 
@@ -81,12 +81,26 @@ func main() {
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
 		o.BaseEndpoint = aws.String(fmt.Sprintf("http://%s", spyListener.Addr().String()))
 	})
-	err = (&IntegrationTest{
+	it := &IntegrationTest{
 		ctx:       ctx,
 		sqsClient: sqsClient,
 		clock:     clockwork.NewRealClock(),
-	}).Run(messagesMove)
+	}
+	for _, scenario := range *flagScenarios {
+		fn, ok := scenarios[scenario]
+		if !ok {
+			continue
+		}
+		slog.Info("running integration test", slog.String("scenario", scenario))
+		if err := it.Run(fn); err != nil {
+			maybeFatal(err)
+		}
+	}
 	maybeFatal(err)
+}
+
+var scenarios = map[string]func(*IntegrationTest){
+	"messages-move": messagesMove,
 }
 
 func messagesMove(it *IntegrationTest) {

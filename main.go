@@ -90,7 +90,7 @@ func main() {
 	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
 		QueueName: aws.String(sqslite.DefaultDLQQueueName),
 	})
-	defaultQueueDLQ.Start()
+	defaultQueueDLQ.Start(context.Background())
 	_ = server.Accounts().EnsureQueues(sqslite.DefaultAccountID).AddQueue(defaultQueueDLQ)
 	slog.Info("created default queue dlq with url", slog.String("queue_url", defaultQueueDLQ.URL))
 
@@ -103,7 +103,7 @@ func main() {
 			}),
 		},
 	})
-	defaultQueue.Start()
+	defaultQueue.Start(context.Background())
 	_ = server.Accounts().EnsureQueues(sqslite.DefaultAccountID).AddQueue(defaultQueue)
 	slog.Info("created default queue with url", slog.String("queue_url", defaultQueue.URL))
 
@@ -228,10 +228,19 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 		changeMessagesDelayedToReady := float64(stats.TotalMessagesDelayedToReady - prevStats.TotalMessagesDelayedToReady)
 		changeMessagesInflightToReady := float64(stats.TotalMessagesInflightToReady - prevStats.TotalMessagesInflightToReady)
 		changeMessagesInflightToDLQ := float64(stats.TotalMessagesInflightToDLQ - prevStats.TotalMessagesInflightToDLQ)
+
+		var deleted time.Duration
+		if !q.Deleted().IsZero() {
+			deleted = time.Since(q.Deleted())
+		}
+
 		slog.Info(
-			"statistics",
+			"queue statistics",
 			slog.String("queue_name", q.Name),
 			slog.String("queue_url", q.URL),
+			slog.Duration("created", time.Since(q.Created())),
+			slog.Duration("last_modified", time.Since(q.LastModified())),
+			slog.Duration("deleted", deleted),
 			slog.Int64("num_messages", stats.NumMessages),
 			slog.Int64("num_messages_ready", stats.NumMessagesReady),
 			slog.Int64("num_messages_inflight", stats.NumMessagesInflight),
