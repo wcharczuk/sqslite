@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"sync"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/wcharczuk/sqslite/internal/spy"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
@@ -42,7 +44,6 @@ func (v *Verifier) VerificationFailures() chan *VerificationFailure {
 func (v *Verifier) HandleRequest(actualReq spy.Request) {
 	expectedReq, ok := v.getNextExpectedResult()
 	if !ok {
-		slog.Error("verification failure")
 		v.failures <- &VerificationFailure{
 			Actual:  actualReq,
 			Message: "Unexpected actual request",
@@ -68,6 +69,20 @@ var (
 )
 
 func (v *Verifier) verifyRequest(expectedReq, actualReq spy.Request) *VerificationFailure {
+	if expectedReq.Method != actualReq.Method {
+		return &VerificationFailure{
+			Expected: expectedReq,
+			Actual:   actualReq,
+			Message:  fmt.Sprintf("expected http verb %q, got %q", expectedReq.Method, actualReq.Method),
+		}
+	}
+	if expectedReq.StatusCode != actualReq.StatusCode {
+		return &VerificationFailure{
+			Expected: expectedReq,
+			Actual:   actualReq,
+			Message:  fmt.Sprintf("expected status code %q, got %q", expectedReq.StatusCode, actualReq.StatusCode),
+		}
+	}
 	for _, requiredHeader := range requestHeadersShouldMatch {
 		expectedValue, ok := expectedReq.RequestHeaders[requiredHeader]
 		if !ok {
@@ -134,7 +149,37 @@ func (v *Verifier) verifyRequest(expectedReq, actualReq spy.Request) *Verificati
 			}
 		}
 	}
-	return nil
+
+	var expectedRes, actualRes any
+	if err := json.Unmarshal([]byte(expectedReq.ResponseBody), &expectedRes); err != nil {
+		return &VerificationFailure{
+			Expected: expectedReq,
+			Actual:   actualReq,
+			Message:  fmt.Sprintf("unable to deserialize expected response body: %v", err),
+		}
+	}
+	if err := json.Unmarshal([]byte(actualReq.ResponseBody), &actualRes); err != nil {
+		return &VerificationFailure{
+			Expected: expectedReq,
+			Actual:   actualReq,
+			Message:  fmt.Sprintf("unable to deserialize actual response body: %v", err),
+		}
+	}
+	if !reflect.DeepEqual(expectedRes, actualRes) {
+		diff := diffBodies(expectedRes, actualRes)
+		return &VerificationFailure{
+			Expected: expectedReq,
+			Actual:   actualReq,
+			Message:  diff,
+		}
+	}
+
+	return &VerificationFailure{
+		Expected: expectedReq,
+		Actual:   actualReq,
+		Message:  "test failure!",
+	}
+	//return nil
 }
 
 func (v *Verifier) getNextExpectedResult() (expectedReq spy.Request, ok bool) {
@@ -154,5 +199,21 @@ type VerificationFailure struct {
 }
 
 func (v VerificationFailure) Error() string {
+	if v.Message != "" {
+		return fmt.Sprintf("verification failure: %s", v.Message)
+	}
 	return "verification failure"
+}
+
+func diffBodies(expected, actual any) string {
+	diff, _ := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A:        difflib.SplitLines(marshalPrettyJSON(expected)),
+		B:        difflib.SplitLines(marshalPrettyJSON(actual)),
+		FromFile: "Expected",
+		FromDate: "",
+		ToFile:   "Actual",
+		ToDate:   "",
+		Context:  1,
+	})
+	return diff
 }

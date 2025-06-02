@@ -84,7 +84,7 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 	var spyHandler func(spy.Request)
 	switch s.ModeOrDefault() {
 	case ModeSave:
-		slog.Debug("ensuring output path", slog.String("outputPath", s.OutputPathOrDefault()))
+		slog.Debug("ensuring output path", slog.String("outputPath", outputPath))
 		if err := os.MkdirAll(s.OutputPathOrDefault(), 0755); err != nil {
 			return fmt.Errorf("unable to create output path dir: %w", err)
 		}
@@ -115,13 +115,13 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 		sqsliteServer := &http.Server{
 			Handler: sqslite_httputil.Logged(sqslite.NewServer(s.ClockOrDefault())),
 		}
-		go sqsliteServer.Serve(spyListener)
+		go sqsliteServer.Serve(sqsliteListener)
 		defer func() {
 			slog.Debug("shutting down local sqslite", slog.String("bind_addr", sqsliteListener.Addr().String()))
 			_ = sqsliteServer.Shutdown(context.Background())
 		}()
 		upstream = fmt.Sprintf("http://%s", sqsliteListener.Addr().String())
-		slog.Debug("opening verififer for file", slog.String("outputPath", s.OutputPathOrDefault()))
+		slog.Debug("opening verififer for file", slog.String("outputPath", outputPath))
 		v, err := NewVerifier(outputPath)
 		if err != nil {
 			return err
@@ -154,7 +154,6 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 		slog.Debug("shutting down local spy proxy", slog.String("bind_addr", spyListener.Addr().String()))
 		_ = spy.Shutdown(context.Background())
 	}()
-
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
 		o.BaseEndpoint = aws.String(fmt.Sprintf("http://%s", spyListener.Addr().String()))
 	})

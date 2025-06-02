@@ -94,12 +94,12 @@ func main() {
 		if !ok {
 			continue
 		}
-		slog.Info("integration scenario starting", slog.String("scenario", scenario))
+		slog.Info("integration scenario starting", slog.String("scenario", scenario), slog.String("mode", *flagMode))
 		if err := it.Run(ctx, scenario, fn); err != nil {
-			slog.Error("integration scenario failed", slog.String("scenario", scenario), slog.Any("err", err))
+			slog.Error("integration scenario failed", slog.String("scenario", scenario), slog.Any("err", err), slog.String("mode", *flagMode))
 			os.Exit(1)
 		}
-		slog.Info("integration scenario completed successfully", slog.String("scenario", scenario))
+		slog.Info("integration scenario completed successfully", slog.String("scenario", scenario), slog.String("mode", *flagMode))
 	}
 }
 

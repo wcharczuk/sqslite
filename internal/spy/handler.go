@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/wcharczuk/sqslite/internal/httputil"
 )
 
 type Handler struct {
@@ -34,7 +37,7 @@ func (l *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	details.RequestHeaders = make(map[string]string)
 
 	for key, values := range req.Header {
-		if key == "Authorization" {
+		if strings.EqualFold(key, httputil.HeaderAuthorization) {
 			details.RequestHeaders[key] = "<redacted>"
 			continue
 		}

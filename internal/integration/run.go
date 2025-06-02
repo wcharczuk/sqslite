@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -221,6 +222,14 @@ type Queue struct {
 func marshalJSON(v any) string {
 	data, _ := json.Marshal(v)
 	return string(data)
+}
+
+func marshalPrettyJSON(v any) string {
+	output := new(bytes.Buffer)
+	enc := json.NewEncoder(output)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+	return output.String()
 }
 
 func safeDeref[V any](v *V) (out V) {
