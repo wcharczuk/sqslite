@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -333,7 +334,17 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 		effectiveVisibilityTimeout = q.VisibilityTimeout
 	}
 
-	for msg := range q.messagesReadyOrdered.Consume() {
+	if maxNumberOfMessages == 0 {
+		maxNumberOfMessages = 1
+	}
+
+	// do not rely on getting all the messages all the time!
+	var effectiveMaxMessages = rand.IntN(maxNumberOfMessages) + 1
+	for {
+		msg, ok := q.messagesReadyOrdered.Pop()
+		if !ok {
+			break
+		}
 		atomic.AddUint64(&q.stats.TotalMessagesReceived, 1)
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
 		atomic.AddInt64(&q.stats.NumMessagesInflight, 1)
@@ -361,7 +372,7 @@ func (q *Queue) Receive(maxNumberOfMessages int, visibilityTimeout time.Duration
 		messageCopy.Attributes[MessageAttributeApproximateReceiveCount] = fmt.Sprint(msg.ReceiveCount)
 
 		output = append(output, messageCopy)
-		if len(output) == int(maxNumberOfMessages) {
+		if len(output) == effectiveMaxMessages {
 			break
 		}
 		if len(q.messagesInflight) >= q.MaximumMessagesInflight {

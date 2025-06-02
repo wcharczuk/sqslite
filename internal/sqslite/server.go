@@ -811,8 +811,13 @@ func (s Server) listMoveMessageTasks(rw http.ResponseWriter, req *http.Request) 
 	var results []types.ListMessageMoveTasksResultEntry
 	for mmt := range queues.EachMoveMessageTasks(*input.SourceArn) {
 		mmtStats := mmt.Stats()
+
+		var taskHandle string
+		if mmt.Status() == MessageMoveStatusRunning {
+			taskHandle = mmt.TaskHandle
+		}
 		results = append(results, types.ListMessageMoveTasksResultEntry{
-			TaskHandle:                        aws.String(mmt.TaskHandle),
+			TaskHandle:                        aws.String(taskHandle),
 			StartedTimestamp:                  mmt.Started().Unix(),
 			SourceArn:                         aws.String(mmt.SourceQueue.ARN),
 			DestinationArn:                    aws.String(mmt.DestinationQueue.ARN),

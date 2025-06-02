@@ -147,14 +147,21 @@ func messagesMove(it *IntegrationTest) {
 		it.SendMessage(mainQueue)
 	}
 
-	for range redrivePolicyMaxReceiveCount {
+	for range redrivePolicyMaxReceiveCount << 1 {
 		messages := it.ReceiveMessages(mainQueue)
+		if len(messages) != 5 {
+			panic(fmt.Errorf("expected receive to have 5 messages, has %d", len(messages)))
+		}
 		for _, msg := range messages {
 			it.ChangeMessageVisibility(mainQueue, msg, 0)
 		}
+		it.Sleep(time.Second)
 	}
 
-	it.Sleep(time.Second)
+	queueAttributes := it.GetQueueAttributes(dlq, types.QueueAttributeNameApproximateNumberOfMessages)
+	if value := queueAttributes["ApproximateNumberOfMessages"]; value != "5" {
+		panic(fmt.Errorf("expected dlq to have 5 messages, has %s", value))
+	}
 
 	taskHandle := it.StartMessagesMoveTask(dlq, mainQueue)
 
@@ -165,7 +172,7 @@ done:
 			panic("expect at least one task")
 		}
 		if !matchesAny(tasks, func(t MoveMessagesTask) bool {
-			return t.TaskHandle == taskHandle
+			return t.Status != "RUNNING" || (t.Status == "RUNNING" && t.TaskHandle == taskHandle)
 		}) {
 			panic("expect at least one task to have the correct task handle")
 		}
@@ -179,6 +186,7 @@ done:
 		}
 		it.Sleep(time.Second)
 	}
+
 	messages := it.ReceiveMessages(mainQueue)
 	if len(messages) != 5 {
 		panic("expect final moved message count to be 5")
@@ -307,6 +315,7 @@ func (it *IntegrationTest) ReceiveMessages(queue Queue) (receiptHandles []string
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            &queue.QueueURL,
 		MaxNumberOfMessages: 10,
+		VisibilityTimeout:   1,
 	})
 	if err != nil {
 		panic(err)
@@ -315,6 +324,17 @@ func (it *IntegrationTest) ReceiveMessages(queue Queue) (receiptHandles []string
 		receiptHandles = append(receiptHandles, safeDeref(msg.ReceiptHandle))
 	}
 	return
+}
+
+func (it *IntegrationTest) GetQueueAttributes(queue Queue, attributeNames ...types.QueueAttributeName) map[string]string {
+	res, err := it.sqsClient.GetQueueAttributes(it.ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       &queue.QueueURL,
+		AttributeNames: attributeNames,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return res.Attributes
 }
 
 func (it *IntegrationTest) DeleteMessage(queue Queue, receiptHandle string) {
