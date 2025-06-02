@@ -159,6 +159,7 @@ func messagesMove(it *integration.Run) {
 			}
 		}
 	}
+	it.Sleep(time.Second)
 
 	queueAttributes := it.GetQueueAttributes(dlq, types.QueueAttributeNameApproximateNumberOfMessages)
 	if value := queueAttributes["ApproximateNumberOfMessages"]; value != "5" {

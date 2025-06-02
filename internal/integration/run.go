@@ -122,7 +122,7 @@ func (it *Run) ReceiveMessage(queue Queue) (receiptHandle string, ok bool) {
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            &queue.QueueURL,
 		MaxNumberOfMessages: 1,
-		VisibilityTimeout:   1,
+		VisibilityTimeout:   5,
 	})
 	if err != nil {
 		panic(err)
