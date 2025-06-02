@@ -8,6 +8,10 @@ const (
 	// DefaultDLQQueueName is the name of a default dlq created automatically.
 	DefaultDLQQueueName = "default-dlq"
 
+	DefaultHost      = "sqslite.local"
+	DefaultRegion    = "us-west-2"
+	DefaultAccountID = "sqslite-test-account"
+
 	DefaultQueueMaximumMessageSizeBytes = 256 * 1024         // 256KiB
 	DefaultQueueMessageRetentionPeriod  = 4 * 24 * time.Hour // 4 days
 	DefaultQueueReceiveMessageWaitTime  = 20 * time.Second

@@ -4,25 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"iter"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/jonboulle/clockwork"
-	"github.com/wcharczuk/sqslite/internal/uuid"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/jonboulle/clockwork"
+	"github.com/julienschmidt/httprouter"
+
+	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 // NewServer returns a new server.
 func NewServer(clock clockwork.Clock) *Server {
-	return &Server{
+	server := &Server{
 		accounts: NewAccounts(clock),
+		router:   httprouter.New(),
 		clock:    clock,
 	}
+
+	server.router.GET("/admin/:account_id/queues", server.adminGetQueues)
+	server.router.GET("/admin/:account_id/queue/:queue_name", server.adminGetQueue)
+	return server
 }
 
 var _ http.Handler = (*Server)(nil)
@@ -30,6 +35,7 @@ var _ http.Handler = (*Server)(nil)
 // Server implements the http routing layer for sqslite.
 type Server struct {
 	accounts *Accounts
+	router   *httprouter.Router
 	clock    clockwork.Clock
 }
 
@@ -43,19 +49,6 @@ func (s *Server) Accounts() *Accounts {
 	return s.accounts
 }
 
-// EachQueue returns an iterator for every queue in the server across all accounts.
-func (s *Server) EachQueue() iter.Seq[*Queue] {
-	return func(yield func(*Queue) bool) {
-		s.accounts.mu.Lock()
-		defer s.accounts.mu.Unlock()
-		for _, accountQueues := range s.accounts.accounts {
-			if !s.eachQueueInAccount(accountQueues, yield) {
-				return
-			}
-		}
-	}
-}
-
 // Close shuts down the server.
 func (s *Server) Close() {
 	s.accounts.Close()
@@ -63,6 +56,11 @@ func (s *Server) Close() {
 
 // ServeHTTP implements [http.Handler].
 func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	if strings.HasPrefix(req.URL.Path, "/admin/") {
+		s.router.ServeHTTP(rw, req)
+		return
+	}
+
 	if req.Method != http.MethodPost {
 		s.unknownMethod(rw, req)
 		return
@@ -124,6 +122,7 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	case MethodListMessageMoveTasks:
 		s.listMoveMessageTasks(rw, req)
 
+	/* these don't really do anything */
 	case MethodAddPermission:
 		s.addPermission(rw, req)
 	case MethodRemovePermission:
@@ -184,8 +183,8 @@ func (s Server) listQueues(rw http.ResponseWriter, req *http.Request) {
 	queues := s.accounts.EnsureQueues(authz.AccountID)
 
 	var inputNextToken nextPageToken
-	if input.NextToken != nil && *input.NextToken != "" {
-		inputNextToken = parseNextPageToken(*input.NextToken)
+	if inputNextTokenRaw := safeDeref(input.NextToken); inputNextTokenRaw != "" {
+		inputNextToken = parseNextPageToken(inputNextTokenRaw)
 	}
 
 	var maxResults = 1000
@@ -877,17 +876,6 @@ func (s Server) unknownPath(rw http.ResponseWriter, req *http.Request) {
 
 func (s Server) invalidMethod(rw http.ResponseWriter, req *http.Request, action string) {
 	serialize(rw, req, ErrorUnsupportedOperation().WithMessagef("Invalid action %s", action))
-}
-
-func (s Server) eachQueueInAccount(queues *Queues, yield func(*Queue) bool) bool {
-	queues.queuesMu.Lock()
-	defer queues.queuesMu.Unlock()
-	for _, queue := range queues.queues {
-		if !yield(queue) {
-			return false
-		}
-	}
-	return true
 }
 
 func requireEntryID(id *string) *Error {

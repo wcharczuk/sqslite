@@ -2,6 +2,7 @@ package sqslite
 
 import (
 	"context"
+	"iter"
 	"sync"
 
 	"github.com/jonboulle/clockwork"
@@ -31,6 +32,30 @@ func (a *Accounts) EnsureQueues(accountID string) *Queues {
 	newQueues.Start(context.Background())
 	a.accounts[accountID] = newQueues
 	return newQueues
+}
+
+// EachQueue returns an iterator for every queue in the server across all accounts.
+func (a *Accounts) EachQueue() iter.Seq[*Queue] {
+	return func(yield func(*Queue) bool) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		for _, accountQueues := range a.accounts {
+			if !a.eachQueueInAccount(accountQueues, yield) {
+				return
+			}
+		}
+	}
+}
+
+func (a *Accounts) eachQueueInAccount(queues *Queues, yield func(*Queue) bool) bool {
+	queues.queuesMu.Lock()
+	defer queues.queuesMu.Unlock()
+	for _, queue := range queues.queues {
+		if !yield(queue) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Accounts) Close() {

@@ -217,7 +217,7 @@ func main() {
 func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[string]sqslite.QueueStats) map[string]sqslite.QueueStats {
 	var elapsedSeconds float64 = float64(elapsed) / float64(time.Second)
 	newStats := make(map[string]sqslite.QueueStats)
-	for q := range server.EachQueue() {
+	for q := range server.Accounts().EachQueue() {
 		prevStats := prev[q.Name]
 		stats := q.Stats()
 		changeMessagesSent := float64(stats.TotalMessagesSent - prevStats.TotalMessagesSent)
