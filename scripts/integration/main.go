@@ -19,9 +19,11 @@ import (
 )
 
 var (
-	flagAWSRegion = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
-	flagLocal     = pflag.Bool("local", false, "If we should target a local sqslite instance")
-	flagScenarios = pflag.StringSlice("scenario", []string{"messages-move"}, fmt.Sprintf(
+	flagAWSRegion  = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
+	flagLocal      = pflag.Bool("local", false, "If we should target a local sqslite instance")
+	flagMode       = pflag.String("mode", string(integration.ModeVerify), "The integration test mode")
+	flagOutputPath = pflag.String("output-path", "testdata/integration", "The output path in --mode=save")
+	flagScenarios  = pflag.StringSlice("scenario", nil, fmt.Sprintf(
 		"The integration test scenarios to run (%s)",
 		strings.Join(slices.Collect(maps.Keys(scenarios)), "|"),
 	))
@@ -45,12 +47,19 @@ func main() {
 	it := integration.Suite{
 		Local: *flagLocal,
 	}
-	for _, scenario := range *flagScenarios {
+
+	var enabledScenarios []string
+	if len(*flagScenarios) == 0 {
+		enabledScenarios = slices.Collect(maps.Keys(scenarios))
+	} else {
+		enabledScenarios = *flagScenarios
+	}
+	for _, scenario := range enabledScenarios {
 		fn, ok := scenarios[scenario]
 		if !ok {
 			continue
 		}
-		slog.Info("running integration test", slog.String("scenario", scenario))
+		slog.Info("running integration scenario", slog.String("scenario", scenario))
 		if err := it.Run(ctx, scenario, fn); err != nil {
 			maybeFatal(err)
 		}
@@ -58,18 +67,27 @@ func main() {
 }
 
 var scenarios = map[string]func(*integration.Run){
+	"send-receive":                 sendReceive,
 	"fill-dlq":                     fillDLQ,
 	"messages-move":                messagesMove,
 	"messages-move-invalid-source": messagesMoveInvalidSource,
 }
 
-func messagesMoveInvalidSource(it *integration.Run) {
-	notDLQ := it.CreateQueue()
-	mainQueue := it.CreateQueue()
+func sendReceive(it *integration.Run) {
+	dlq := it.CreateQueue()
+	mainQueue := it.CreateQueueWithDLQ(dlq)
 
-	it.ExpectFailure(func() {
-		_ = it.StartMessagesMoveTask(notDLQ, mainQueue)
-	})
+	for range 5 {
+		it.SendMessage(mainQueue)
+	}
+	for range integration.RedrivePolicyMaxReceiveCount {
+		for range 5 {
+			receiptHandle, ok := it.ReceiveMessage(mainQueue)
+			if ok {
+				it.DeleteMessage(mainQueue, receiptHandle)
+			}
+		}
+	}
 }
 
 func fillDLQ(it *integration.Run) {
@@ -80,9 +98,11 @@ func fillDLQ(it *integration.Run) {
 		it.SendMessage(mainQueue)
 	}
 	for range integration.RedrivePolicyMaxReceiveCount {
-		receiptHandle, ok := it.ReceiveMessage(mainQueue)
-		if ok {
-			it.ChangeMessageVisibility(mainQueue, receiptHandle, 0)
+		for range 5 {
+			receiptHandle, ok := it.ReceiveMessage(mainQueue)
+			if ok {
+				it.ChangeMessageVisibility(mainQueue, receiptHandle, 0)
+			}
 		}
 	}
 	it.Sleep(time.Second)
@@ -118,7 +138,7 @@ done:
 		if len(tasks) == 0 {
 			panic("expect at least one task")
 		}
-		if !matchesAny(tasks, func(t integration.MoveMessagesTask) bool {
+		if !slices.ContainsFunc(tasks, func(t integration.MoveMessagesTask) bool {
 			return t.Status != "RUNNING" || (t.Status == "RUNNING" && t.TaskHandle == taskHandle)
 		}) {
 			panic("expect at least one task to have the correct task handle")
@@ -150,8 +170,13 @@ done:
 	}
 }
 
-func matchesAny[V any](values []V, pred func(V) bool) bool {
-	return slices.ContainsFunc(values, pred)
+func messagesMoveInvalidSource(it *integration.Run) {
+	notDLQ := it.CreateQueue()
+	mainQueue := it.CreateQueue()
+
+	it.ExpectFailure(func() {
+		_ = it.StartMessagesMoveTask(notDLQ, mainQueue)
+	})
 }
 
 func maybeFatal(err error) {
@@ -159,11 +184,4 @@ func maybeFatal(err error) {
 		slog.Error("fatal error", slog.Any("err", err))
 		os.Exit(1)
 	}
-}
-
-func must[V any](v V, err error) V {
-	if err != nil {
-		panic(err)
-	}
-	return v
 }
