@@ -14,7 +14,7 @@ import (
 func NewVerifier(sourceFile string) (*Verifier, error) {
 	f, err := os.Open(sourceFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to open verifier source file for read: %w", err)
 	}
 	return &Verifier{
 		sourceFile: f,

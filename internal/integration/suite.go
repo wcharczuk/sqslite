@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -16,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/jonboulle/clockwork"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/wcharczuk/sqslite/internal/spy"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
@@ -26,6 +28,7 @@ type Suite struct {
 	Local      bool
 	Mode       Mode
 	Clock      clockwork.Clock
+	ShowOutput bool
 	OutputPath string
 }
 
@@ -65,7 +68,7 @@ const (
 	ModeVerify  Mode = "verify"
 )
 
-func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) (err error) {
+func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 	var upstream = "https://sqs.us-west-2.amazonaws.com"
 	if s.Local {
 		upstream = "http://localhost:4566"
@@ -78,27 +81,35 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) (err error)
 		_ = spyListener.Close()
 	}()
 
-	// default ?
+	var verificationFailures chan *VerificationFailure
 	outputPath := filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", name))
 	var spyHandler func(spy.Request)
 	switch s.ModeOrDefault() {
 	case ModeSave:
+		slog.Debug("ensuring output path", slog.String("outputPath", s.OutputPathOrDefault()))
 		if err := os.MkdirAll(s.OutputPathOrDefault(), 0755); err != nil {
-			return err
+			return fmt.Errorf("unable to create output path dir: %w", err)
 		}
 		outputFile, err := os.Create(outputPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("unable to create output file for write: %w", err)
 		}
 		defer outputFile.Close()
-		spyHandler = spy.WriteOutput(io.MultiWriter(outputFile, os.Stdout))
+		if s.ShowOutput {
+			spyHandler = spy.WriteOutput(io.MultiWriter(outputFile, os.Stdout))
+		} else {
+			spyHandler = spy.WriteOutput(io.MultiWriter(outputFile))
+		}
+		verificationFailures = make(chan *VerificationFailure) // don't do anything with it
 	case ModeVerify:
+		slog.Debug("opening verififer for file", slog.String("outputPath", s.OutputPathOrDefault()))
 		v, err := NewVerifier(outputPath)
 		if err != nil {
 			return err
 		}
 		defer v.Close()
 		spyHandler = v.HandleRequest
+		verificationFailures = v.VerificationFailures()
 	default:
 		return fmt.Errorf("unknown mode %s", s.ModeOrDefault())
 	}
@@ -135,18 +146,35 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) (err error)
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
 		o.BaseEndpoint = aws.String(fmt.Sprintf("http://%s", spyListener.Addr().String()))
 	})
-	it := &Run{
-		ctx:       ctx,
-		sqsClient: sqsClient,
-		clock:     s.ClockOrDefault(),
-	}
-	defer func() {
-		it.Cleanup()
-		if r := recover(); r != nil {
-			err = fmt.Errorf("%v", r)
-			return
+
+	suiteExited := make(chan struct{})
+	group, groupContext := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		select {
+		case <-suiteExited:
+			return nil
+		case <-groupContext.Done():
+			return nil
+		case failure := <-verificationFailures:
+			return failure
 		}
-	}()
-	fn(it)
-	return
+	})
+	group.Go(func() (err error) {
+		it := &Run{
+			ctx:       groupContext,
+			sqsClient: sqsClient,
+			clock:     s.ClockOrDefault(),
+		}
+		defer func() {
+			it.Cleanup()
+			if r := recover(); r != nil {
+				err = fmt.Errorf("%v", r)
+				return
+			}
+			close(suiteExited)
+		}()
+		fn(it)
+		return
+	})
+	return group.Wait()
 }

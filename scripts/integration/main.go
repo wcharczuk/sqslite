@@ -21,8 +21,8 @@ import (
 var (
 	flagAWSRegion  = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
 	flagLocal      = pflag.Bool("local", false, "If we should target a local sqslite instance")
-	flagMode       = pflag.String("mode", string(integration.ModeVerify), "The integration test mode")
-	flagOutputPath = pflag.String("output-path", "testdata/integration", "The output path in --mode=save")
+	flagMode       = pflag.String("mode", string(integration.ModeVerify), "The integration test mode (save|verify)")
+	flagOutputPath = pflag.String("output-path", "testdata/integration", "The output path in --mode=save, and the source path in --mode=verify")
 	flagScenarios  = pflag.StringSlice("scenario", nil, fmt.Sprintf(
 		"The integration test scenarios to run (%s)",
 		strings.Join(slices.Collect(maps.Keys(scenarios)), "|"),
@@ -45,7 +45,10 @@ func main() {
 	defer done()
 
 	it := integration.Suite{
-		Local: *flagLocal,
+		Region:     *flagAWSRegion,
+		Local:      *flagLocal,
+		Mode:       integration.Mode(*flagMode),
+		OutputPath: *flagOutputPath,
 	}
 
 	var enabledScenarios []string
@@ -59,10 +62,12 @@ func main() {
 		if !ok {
 			continue
 		}
-		slog.Info("running integration scenario", slog.String("scenario", scenario))
+		slog.Info("integration scenario starting", slog.String("scenario", scenario))
 		if err := it.Run(ctx, scenario, fn); err != nil {
-			maybeFatal(err)
+			slog.Error("integration scenario failed", slog.String("scenario", scenario), slog.Any("err", err))
+			os.Exit(1)
 		}
+		slog.Info("integration scenario completed successfully", slog.String("scenario", scenario))
 	}
 }
 
@@ -80,12 +85,10 @@ func sendReceive(it *integration.Run) {
 	for range 5 {
 		it.SendMessage(mainQueue)
 	}
-	for range integration.RedrivePolicyMaxReceiveCount {
-		for range 5 {
-			receiptHandle, ok := it.ReceiveMessage(mainQueue)
-			if ok {
-				it.DeleteMessage(mainQueue, receiptHandle)
-			}
+	for range 5 {
+		receiptHandle, ok := it.ReceiveMessage(mainQueue)
+		if ok {
+			it.DeleteMessage(mainQueue, receiptHandle)
 		}
 	}
 }
@@ -177,11 +180,4 @@ func messagesMoveInvalidSource(it *integration.Run) {
 	it.ExpectFailure(func() {
 		_ = it.StartMessagesMoveTask(notDLQ, mainQueue)
 	})
-}
-
-func maybeFatal(err error) {
-	if err != nil {
-		slog.Error("fatal error", slog.Any("err", err))
-		os.Exit(1)
-	}
 }
