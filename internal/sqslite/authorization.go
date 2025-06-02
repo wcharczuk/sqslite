@@ -7,10 +7,6 @@ import (
 )
 
 const (
-	DefaultHost      = "sqslite.local"
-	DefaultRegion    = "us-west-2"
-	DefaultAccountID = "sqslite-test-account"
-
 	knownGoodSignatureType = "AWS4-HMAC-SHA256"
 )
 
