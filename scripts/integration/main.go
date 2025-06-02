@@ -15,12 +15,14 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/wcharczuk/sqslite/internal/integration"
+	"github.com/wcharczuk/sqslite/internal/slant"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
 
 var (
+	flagLogLevel   = pflag.String("log-level", slog.LevelInfo.String(), "The logger level")
+	flagLogFormat  = pflag.String("log-format", "json", "The logger format (json|text)")
 	flagAWSRegion  = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
-	flagLocal      = pflag.Bool("local", false, "If we should target a local sqslite instance")
 	flagMode       = pflag.String("mode", string(integration.ModeVerify), "The integration test mode (save|verify)")
 	flagOutputPath = pflag.String("output-path", "testdata/integration", "The output path in --mode=save, and the source path in --mode=verify")
 	flagScenarios  = pflag.StringSlice("scenario", nil, fmt.Sprintf(
@@ -44,9 +46,35 @@ func main() {
 	ctx, done := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer done()
 
+	logLeveler := new(slog.LevelVar)
+	if err := logLeveler.UnmarshalText([]byte(*flagLogLevel)); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid log level: %v\n", err)
+		os.Exit(1)
+	}
+	switch *flagLogFormat {
+	case "json":
+		slog.SetDefault(
+			slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+				AddSource: false,
+				Level:     logLeveler,
+			})),
+		)
+	case "text":
+		slog.SetDefault(
+			slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+				AddSource: false,
+				Level:     logLeveler,
+			})),
+		)
+		slant.Print(os.Stdout, "sqslite verifier")
+	default:
+		slog.Error("invalid log level", slog.String("log_level", *flagLogLevel))
+		os.Exit(1)
+	}
+	slog.Error("using log level", slog.String("log_level", logLeveler.Level().String()))
+
 	it := integration.Suite{
 		Region:     *flagAWSRegion,
-		Local:      *flagLocal,
 		Mode:       integration.Mode(*flagMode),
 		OutputPath: *flagOutputPath,
 	}
@@ -56,6 +84,10 @@ func main() {
 		enabledScenarios = slices.Collect(maps.Keys(scenarios))
 	} else {
 		enabledScenarios = *flagScenarios
+	}
+	if len(enabledScenarios) == 0 {
+		slog.Error("must provide at least (1) integration test scenario")
+		os.Exit(1)
 	}
 	for _, scenario := range enabledScenarios {
 		fn, ok := scenarios[scenario]

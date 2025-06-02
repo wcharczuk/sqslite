@@ -19,13 +19,13 @@ import (
 	"github.com/jonboulle/clockwork"
 	"golang.org/x/sync/errgroup"
 
+	sqslite_httputil "github.com/wcharczuk/sqslite/internal/httputil"
 	"github.com/wcharczuk/sqslite/internal/spy"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
 
 type Suite struct {
 	Region     string
-	Local      bool
 	Mode       Mode
 	Clock      clockwork.Clock
 	ShowOutput bool
@@ -69,10 +69,6 @@ const (
 )
 
 func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
-	var upstream = "https://sqs.us-west-2.amazonaws.com"
-	if s.Local {
-		upstream = "http://localhost:4566"
-	}
 	spyListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -80,7 +76,9 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 	defer func() {
 		_ = spyListener.Close()
 	}()
-
+	slog.Debug("starting local spy proxy", slog.String("bind_addr", spyListener.Addr().String()))
+	var upstream string
+	var sess aws.Config
 	var verificationFailures chan *VerificationFailure
 	outputPath := filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", name))
 	var spyHandler func(spy.Request)
@@ -101,7 +99,28 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 			spyHandler = spy.WriteOutput(io.MultiWriter(outputFile))
 		}
 		verificationFailures = make(chan *VerificationFailure) // don't do anything with it
+		sess, err = config.LoadDefaultConfig(ctx)
+		if err != nil {
+			return err
+		}
 	case ModeVerify:
+		sqsliteListener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = sqsliteListener.Close()
+		}()
+		slog.Debug("starting local sqslite", slog.String("bind_addr", sqsliteListener.Addr().String()))
+		sqsliteServer := &http.Server{
+			Handler: sqslite_httputil.Logged(sqslite.NewServer(s.ClockOrDefault())),
+		}
+		go sqsliteServer.Serve(spyListener)
+		defer func() {
+			slog.Debug("shutting down local sqslite", slog.String("bind_addr", sqsliteListener.Addr().String()))
+			_ = sqsliteServer.Shutdown(context.Background())
+		}()
+		upstream = fmt.Sprintf("http://%s", sqsliteListener.Addr().String())
 		slog.Debug("opening verififer for file", slog.String("outputPath", s.OutputPathOrDefault()))
 		v, err := NewVerifier(outputPath)
 		if err != nil {
@@ -110,6 +129,15 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 		defer v.Close()
 		spyHandler = v.HandleRequest
 		verificationFailures = v.VerificationFailures()
+		sess, err = config.LoadDefaultConfig(ctx,
+			config.WithRegion(s.Region),
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token"),
+			),
+		)
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unknown mode %s", s.ModeOrDefault())
 	}
@@ -123,26 +151,10 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 	}
 	go spy.Serve(spyListener)
 	defer func() {
+		slog.Debug("shutting down local spy proxy", slog.String("bind_addr", spyListener.Addr().String()))
 		_ = spy.Shutdown(context.Background())
 	}()
 
-	var sess aws.Config
-	if s.Local {
-		sess, err = config.LoadDefaultConfig(ctx,
-			config.WithRegion(s.Region),
-			config.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token"),
-			),
-		)
-		if err != nil {
-			return err
-		}
-	} else {
-		sess, err = config.LoadDefaultConfig(ctx)
-		if err != nil {
-			return err
-		}
-	}
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
 		o.BaseEndpoint = aws.String(fmt.Sprintf("http://%s", spyListener.Addr().String()))
 	})

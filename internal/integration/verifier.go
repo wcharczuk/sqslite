@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 
@@ -41,12 +42,14 @@ func (v *Verifier) VerificationFailures() chan *VerificationFailure {
 func (v *Verifier) HandleRequest(actualReq spy.Request) {
 	expectedReq, ok := v.getNextExpectedResult()
 	if !ok {
+		slog.Error("verification failure")
 		v.failures <- &VerificationFailure{
 			Actual:  actualReq,
 			Message: "Unexpected actual request",
 		}
 	}
 	if err := v.verifyRequest(expectedReq, actualReq); err != nil {
+		slog.Error("verification failure")
 		v.failures <- err
 	}
 }

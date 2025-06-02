@@ -61,7 +61,6 @@ func main() {
 			})),
 		)
 	case "text":
-	default:
 		slog.SetDefault(
 			slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 				AddSource: false,
@@ -69,6 +68,9 @@ func main() {
 			})),
 		)
 		slant.Print(os.Stdout, "sqslite")
+	default:
+		slog.Error("invalid log level", slog.String("log_level", *flagLogLevel))
+		os.Exit(1)
 	}
 	slog.Error("using log level", slog.String("log_level", logLeveler.Level().String()))
 
