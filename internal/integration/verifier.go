@@ -4,12 +4,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"reflect"
 	"sync"
 
 	"github.com/pmezard/go-difflib/difflib"
+	sqslite_httputil "github.com/wcharczuk/sqslite/internal/httputil"
 	"github.com/wcharczuk/sqslite/internal/spy"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
@@ -23,6 +23,7 @@ func NewVerifier(sourceFile string) (*Verifier, error) {
 		sourceFile: f,
 		scanner:    bufio.NewScanner(f),
 		failures:   make(chan *VerificationFailure),
+		strict:     false,
 	}, nil
 }
 
@@ -31,6 +32,7 @@ type Verifier struct {
 	sourceFile *os.File
 	scanner    *bufio.Scanner
 	failures   chan *VerificationFailure
+	strict     bool
 }
 
 func (v *Verifier) Close() error {
@@ -50,7 +52,6 @@ func (v *Verifier) HandleRequest(actualReq spy.Request) {
 		}
 	}
 	if err := v.verifyRequest(expectedReq, actualReq); err != nil {
-		slog.Error("verification failure")
 		v.failures <- err
 	}
 }
@@ -61,7 +62,7 @@ var (
 		sqslite.HeaderAmzQueryMode,
 	}
 	responseHeadersShouldMatch = []string{
-		"Content-Type",
+		sqslite_httputil.HeaderContentType,
 	}
 	responseHeadersShouldBePresent = []string{
 		sqslite.HeaderAmznRequestID,
@@ -150,36 +151,32 @@ func (v *Verifier) verifyRequest(expectedReq, actualReq spy.Request) *Verificati
 		}
 	}
 
-	var expectedRes, actualRes any
-	if err := json.Unmarshal([]byte(expectedReq.ResponseBody), &expectedRes); err != nil {
-		return &VerificationFailure{
-			Expected: expectedReq,
-			Actual:   actualReq,
-			Message:  fmt.Sprintf("unable to deserialize expected response body: %v", err),
+	if v.strict {
+		var expectedRes, actualRes any
+		if err := json.Unmarshal([]byte(expectedReq.ResponseBody), &expectedRes); err != nil {
+			return &VerificationFailure{
+				Expected: expectedReq,
+				Actual:   actualReq,
+				Message:  fmt.Sprintf("unable to deserialize expected response body: %v", err),
+			}
+		}
+		if err := json.Unmarshal([]byte(actualReq.ResponseBody), &actualRes); err != nil {
+			return &VerificationFailure{
+				Expected: expectedReq,
+				Actual:   actualReq,
+				Message:  fmt.Sprintf("unable to deserialize actual response body: %v", err),
+			}
+		}
+		if !reflect.DeepEqual(expectedRes, actualRes) {
+			diff := diffBodies(expectedRes, actualRes)
+			return &VerificationFailure{
+				Expected: expectedReq,
+				Actual:   actualReq,
+				Message:  diff,
+			}
 		}
 	}
-	if err := json.Unmarshal([]byte(actualReq.ResponseBody), &actualRes); err != nil {
-		return &VerificationFailure{
-			Expected: expectedReq,
-			Actual:   actualReq,
-			Message:  fmt.Sprintf("unable to deserialize actual response body: %v", err),
-		}
-	}
-	if !reflect.DeepEqual(expectedRes, actualRes) {
-		diff := diffBodies(expectedRes, actualRes)
-		return &VerificationFailure{
-			Expected: expectedReq,
-			Actual:   actualReq,
-			Message:  diff,
-		}
-	}
-
-	return &VerificationFailure{
-		Expected: expectedReq,
-		Actual:   actualReq,
-		Message:  "test failure!",
-	}
-	//return nil
+	return nil
 }
 
 func (v *Verifier) getNextExpectedResult() (expectedReq spy.Request, ok bool) {

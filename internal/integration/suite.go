@@ -103,6 +103,7 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 		if err != nil {
 			return err
 		}
+		upstream = fmt.Sprintf("https://sqs.%s.amazonaws.com", s.RegionOrDefault())
 	case ModeVerify:
 		sqsliteListener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
