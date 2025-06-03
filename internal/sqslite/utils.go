@@ -2,7 +2,6 @@ package sqslite
 
 import (
 	"cmp"
-	"fmt"
 )
 
 func must[V any](v V, err error) V {
@@ -57,14 +56,6 @@ func distinct[V comparable](values []V) (output []V) {
 func flatten[V any](values [][]V) (output []V) {
 	for _, list := range values {
 		output = append(output, list...)
-	}
-	return
-}
-
-func keysAndValues[K comparable, V any](m map[K]V) (output []string) {
-	output = make([]string, 0, len(m)<<1)
-	for k, v := range m {
-		output = append(output, fmt.Sprint(k), fmt.Sprint(v))
 	}
 	return
 }

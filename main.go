@@ -28,8 +28,8 @@ var (
 	flagAWSRegion           = pflag.String("region", "us-west-2", "The AWS region of the server")
 	flagBindAddr            = pflag.String("bind-addr", ":4566", "The server bind address")
 	flagShutdownGracePeriod = pflag.Duration("shutdown-grace-period", 30*time.Second, "The server shutdown grace period")
-	flagLogFormat           = pflag.String("log-format", "json", "The log format (json|text)")
-	flagLogLevel            = pflag.String("log-level", slog.LevelWarn.String(),
+	flagLogFormat           = pflag.String("log-format", "text", "The log format (json|text)")
+	flagLogLevel            = pflag.String("log-level", slog.LevelInfo.String(),
 		fmt.Sprintf(
 			"The log level (%s>%s>%s>%s) (not case sensitive, from least to most restrictive)",
 			slog.LevelDebug.String(),
@@ -37,8 +37,9 @@ var (
 			slog.LevelWarn.String(),
 			slog.LevelError.String(),
 		))
-	flagGzip      = pflag.Bool("gzip", false, "If we should enable gzip compression on responses")
-	flagSkipStats = pflag.Bool("skip-stats", false, "If we should skip outputing queue stats")
+	flagGzip          = pflag.Bool("gzip", false, "If we should enable gzip compression on responses")
+	flagSkipStats     = pflag.Bool("skip-stats", false, "If we should skip outputing queue stats every 10 seconds")
+	flagStatsInterval = pflag.Duration("stats-interval", 10*time.Second, "The interval in time between printing stats (exclusive with --skip-stats)")
 )
 
 func main() {
@@ -125,7 +126,7 @@ func main() {
 	group, groupCtx := errgroup.WithContext(context.Background())
 	if !*flagSkipStats {
 		group.Go(func() error {
-			t := time.NewTicker(10 * time.Second)
+			t := time.NewTicker(*flagStatsInterval)
 			prevTimestamp := time.Now()
 			defer t.Stop()
 			prevStats := make(map[string]sqslite.QueueStats)

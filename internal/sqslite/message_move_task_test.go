@@ -43,10 +43,8 @@ func Test_MessageMoveTask_moveMessages_basic(t *testing.T) {
 	sourceQueue := createTestQueueWithName(t, clock, "source")
 
 	for range 10 {
-		msg, _ := sourceQueue.NewMessageState(
-			createTestMessage(`{"message_index":0}`),
-			clock.Now(),
-			0,
+		msg := sourceQueue.NewMessageStateFromSendMessageInput(
+			createTestSendMessageInput(`{"message_index":0}`),
 		)
 		sourceQueue.Push(
 			msg,
@@ -67,10 +65,8 @@ func Test_MessageMoveTask_moveMessages_withoutDestination(t *testing.T) {
 	destinationQueue := createTestQueueWithName(t, clock, "destination")
 
 	for range 10 {
-		msg, _ := sourceQueue.NewMessageState(
-			createTestMessage(`{"message_index":0}`),
-			clock.Now(),
-			0,
+		msg := sourceQueue.NewMessageStateFromSendMessageInput(
+			createTestSendMessageInput(`{"message_index":0}`),
 		)
 		msg.OriginalSourceQueue = destinationQueue
 		sourceQueue.Push(
@@ -89,10 +85,8 @@ func Test_MessageMoveTask_moveMessages_failsIfDestinationDeleted(t *testing.T) {
 	sourceQueue := createTestQueueWithName(t, clock, "source")
 
 	for range 10 {
-		msg, _ := sourceQueue.NewMessageState(
-			createTestMessage(`{"message_index":0}`),
-			clock.Now(),
-			0,
+		msg := sourceQueue.NewMessageStateFromSendMessageInput(
+			createTestSendMessageInput(`{"message_index":0}`),
 		)
 		sourceQueue.Push(
 			msg,
@@ -113,10 +107,8 @@ func Test_MessageMoveTask_moveMessages_failsIfDestinationDisallowsRedrives(t *te
 	sourceQueue := createTestQueueWithName(t, clock, "source")
 
 	for range 10 {
-		msg, _ := sourceQueue.NewMessageState(
-			createTestMessage(`{"message_index":0}`),
-			clock.Now(),
-			0,
+		msg := sourceQueue.NewMessageStateFromSendMessageInput(
+			createTestSendMessageInput(`{"message_index":0}`),
 		)
 		sourceQueue.Push(
 			msg,

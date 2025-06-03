@@ -448,17 +448,14 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
-
-	allMessages := queue.Receive(int(input.MaxNumberOfMessages), visibilityTimeout)
+	allMessages := queue.Receive(input)
 	if len(allMessages) > 0 {
 		serialize(rw, req, &sqs.ReceiveMessageOutput{
-			Messages: apply(allMessages, asTypesMessage),
+			Messages: allMessages,
 		})
 		return
 	}
-
 	waitTime := coalesceZero(waitTimeout, queue.ReceiveMessageWaitTime)
-
 	ticker := s.clock.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	waitDeadline := s.clock.NewTimer(waitTime)
@@ -472,14 +469,14 @@ done:
 		case <-waitDeadline.Chan():
 			break done
 		case <-ticker.Chan():
-			allMessages = queue.Receive(int(input.MaxNumberOfMessages), visibilityTimeout)
+			allMessages = queue.Receive(input)
 			if len(allMessages) > 0 {
 				break done
 			}
 		}
 	}
 	serialize(rw, req, &sqs.ReceiveMessageOutput{
-		Messages: apply(allMessages, asTypesMessage),
+		Messages: allMessages,
 	})
 }
 
@@ -507,13 +504,9 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	msg, err := queue.NewMessageState(NewMessageFromSendMessageInput(input), s.clock.Now(), int(input.DelaySeconds))
-	if err != nil {
-		serialize(rw, req, err)
-		return
-	}
+	msg := queue.NewMessageStateFromSendMessageInput(input)
 	queue.Push(msg)
-	serialize(rw, req, asTypesSendMessageOutput(msg.Message))
+	serialize(rw, req, msg.ForSendMessageOutput())
 }
 
 func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
@@ -561,16 +554,14 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 			serialize(rw, req, ErrorInvalidMessageContents())
 			return
 		}
-		msg, err := queue.NewMessageState(NewMessageFromSendMessageBatchEntry(entry), s.clock.Now(), int(entry.DelaySeconds))
-		if err != nil {
-			serialize(rw, req, err)
-			return
-		}
+		msg := queue.NewMessageStateFromSendMessageBatchEntry(entry)
 		messages = append(messages, msg)
 	}
 	queue.Push(messages...)
 	serialize(rw, req, &sqs.SendMessageBatchOutput{
-		Successful:     apply(messages, asTypesSendMessageBatchResultEntry),
+		Successful: apply(messages, func(ms *MessageState) types.SendMessageBatchResultEntry {
+			return ms.ForSendMessageBatchResultEntry()
+		}),
 		ResultMetadata: middleware.Metadata{},
 	})
 }
@@ -896,50 +887,6 @@ func requireQueueURL(queueURL *string) *Error {
 		return ErrorInvalidAddress().WithMessagef("QueueUrl")
 	}
 	return nil
-}
-
-func asTypesSendMessageOutput(msg Message) *sqs.SendMessageOutput {
-	output := &sqs.SendMessageOutput{
-		MessageId:        aws.String(msg.MessageID.String()),
-		MD5OfMessageBody: aws.String(msg.MD5OfBody.Value),
-	}
-	if msg.MD5OfMessageAttributes.IsSet {
-		output.MD5OfMessageAttributes = aws.String(msg.MD5OfMessageAttributes.Value)
-	}
-	if msg.MD5OfMessageSystemAttributes.IsSet {
-		output.MD5OfMessageSystemAttributes = aws.String(msg.MD5OfMessageSystemAttributes.Value)
-	}
-	return output
-}
-
-func asTypesMessage(msg Message) types.Message {
-	output := types.Message{
-		Body:              aws.String(msg.Body.Value),
-		MD5OfBody:         aws.String(msg.MD5OfBody.Value),
-		MessageId:         aws.String(msg.MessageID.String()),
-		Attributes:        msg.Attributes,
-		MessageAttributes: msg.MessageAttributes,
-		ReceiptHandle:     aws.String(msg.ReceiptHandle.Value),
-	}
-	if msg.MD5OfMessageAttributes.IsSet {
-		output.MD5OfMessageAttributes = aws.String(msg.MD5OfMessageAttributes.Value)
-	}
-	return output
-}
-
-func asTypesSendMessageBatchResultEntry(msg *MessageState) types.SendMessageBatchResultEntry {
-	output := types.SendMessageBatchResultEntry{
-		Id:               aws.String(msg.Message.ID),
-		MessageId:        aws.String(msg.Message.MessageID.String()),
-		MD5OfMessageBody: aws.String(msg.Message.MD5OfBody.Value),
-	}
-	if msg.Message.MD5OfMessageAttributes.IsSet {
-		output.MD5OfMessageAttributes = aws.String(msg.Message.MD5OfMessageAttributes.Value)
-	}
-	if msg.Message.MD5OfMessageSystemAttributes.IsSet {
-		output.MD5OfMessageSystemAttributes = aws.String(msg.Message.MD5OfMessageSystemAttributes.Value)
-	}
-	return output
 }
 
 func deserialize[V any](req *http.Request) (*V, *Error) {

@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wcharczuk/sqslite/internal/httputil"
-	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 func testNewSendMessageInput(queueURL string) *sqs.SendMessageInput {
@@ -227,18 +226,17 @@ func createTestQueueWithNameWithDLQ(t *testing.T, clock clockwork.Clock, name st
 	return queue
 }
 
-func createTestMessage(body string) Message {
-	return Message{
-		MessageID: uuid.V4(),
-		Body:      Some(body), // once told me
+func createTestSendMessageInput(body string) *sqs.SendMessageInput {
+	return &sqs.SendMessageInput{
+		MessageBody: aws.String(body),
 	}
 }
 
 func pushTestMessages(q *Queue, count int) []*MessageState {
 	var messages []*MessageState
 	for range count {
-		msg := createTestMessage("test message body")
-		msgState, _ := q.NewMessageState(msg, q.Clock().Now(), 0)
+		msg := createTestSendMessageInput("test message body")
+		msgState := q.NewMessageStateFromSendMessageInput(msg)
 		messages = append(messages, msgState)
 	}
 	q.Push(messages...)

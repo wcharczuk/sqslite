@@ -97,12 +97,16 @@ func main() {
 }
 
 var scenarios = map[string]func(*integration.Run){
-	"send-receive":                 sendReceive,
-	"send-attribute-md5":           sendAttributeMD5,
-	"send-system-attribute-md5":    sendSystemAttributeMD5,
-	"fill-dlq":                     fillDLQ,
-	"messages-move":                messagesMove,
-	"messages-move-invalid-source": messagesMoveInvalidSource,
+	"send-receive":                   sendReceive,
+	"send-attribute-md5":             sendAttributeMD5,
+	"send-system-attribute-md5":      sendSystemAttributeMD5,
+	"receive-attribute-names":        receiveAttributeNames,
+	"receive-attribute-names-single": receiveAttributeNamesSingle,
+	"receive-attribute-names-all":    receiveAttributeNamesAll,
+	"receive-attribute-names-none":   receiveAttributeNamesNone,
+	"fill-dlq":                       fillDLQ,
+	"messages-move":                  messagesMove,
+	"messages-move-invalid-source":   messagesMoveInvalidSource,
 }
 
 func sendReceive(it *integration.Run) {
@@ -150,6 +154,78 @@ func sendSystemAttributeMD5(it *integration.Run) {
 		},
 	})
 	receiptHandle, ok := it.ReceiveMessage(mainQueue)
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func receiveAttributeNames(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+	it.SendMessageWithAttributes(mainQueue, map[string]types.MessageAttributeValue{
+		"test-key": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value"),
+		},
+		"test-key-alt": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value-alt"),
+		},
+	})
+	receiptHandle, ok := it.ReceiveMessageWithAttributeNames(mainQueue, []string{"test-key", "test-key-alt"})
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func receiveAttributeNamesSingle(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+	it.SendMessageWithAttributes(mainQueue, map[string]types.MessageAttributeValue{
+		"test-key": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value"),
+		},
+		"test-key-alt": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value-alt"),
+		},
+	})
+	receiptHandle, ok := it.ReceiveMessageWithAttributeNames(mainQueue, []string{"test-key"})
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func receiveAttributeNamesAll(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+	it.SendMessageWithAttributes(mainQueue, map[string]types.MessageAttributeValue{
+		"test-key": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value"),
+		},
+		"test-key-alt": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value-alt"),
+		},
+	})
+	receiptHandle, ok := it.ReceiveMessageWithAttributeNames(mainQueue, []string{"All"})
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func receiveAttributeNamesNone(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+	it.SendMessageWithAttributes(mainQueue, map[string]types.MessageAttributeValue{
+		"test-key": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value"),
+		},
+		"test-key-alt": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value-alt"),
+		},
+	})
+	receiptHandle, ok := it.ReceiveMessageWithAttributeNames(mainQueue, nil)
 	if ok {
 		it.DeleteMessage(mainQueue, receiptHandle)
 	}

@@ -7,10 +7,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 )
 
-func Test_NewMessageFromSendMessageInput(t *testing.T) {
+func Test_NewMessageStateFromSendMessageInput(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+
 	msgInput := &sqs.SendMessageInput{
 		QueueUrl:    aws.String("https://sqslite.local/sqslite-test-account/test-queue"),
 		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, 1)),
@@ -29,16 +32,18 @@ func Test_NewMessageFromSendMessageInput(t *testing.T) {
 		DelaySeconds: 10,
 	}
 
-	msg := NewMessageFromSendMessageInput(msgInput)
+	msg := q.NewMessageStateFromSendMessageInput(msgInput)
 	require.Equal(t, `{"message_index":1}`, msg.Body.Value)
 	require.NotEmpty(t, msg.MessageAttributes)
 	require.NotEmpty(t, msg.MessageSystemAttributes)
-	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody.Value)
-	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", msg.MD5OfMessageAttributes.Value)
-	require.EqualValues(t, "5ae4d5d7636402d80f4eb6d213245a88", msg.MD5OfMessageSystemAttributes.Value)
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody().Value)
+	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", msg.MD5OfMessageAttributes().Value)
+	require.EqualValues(t, "5ae4d5d7636402d80f4eb6d213245a88", msg.MD5OfMessageSystemAttributes().Value)
 }
 
-func Test_NewMessageFromSendMessageInput_noSystemAttributes(t *testing.T) {
+func Test_NewMessageStateFromSendMessageInput_noSystemAttributes(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+
 	msgInput := &sqs.SendMessageInput{
 		QueueUrl:    aws.String("https://sqslite.local/sqslite-test-account/test-queue"),
 		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, 1)),
@@ -51,32 +56,35 @@ func Test_NewMessageFromSendMessageInput_noSystemAttributes(t *testing.T) {
 		DelaySeconds: 10,
 	}
 
-	msg := NewMessageFromSendMessageInput(msgInput)
+	msg := q.NewMessageStateFromSendMessageInput(msgInput)
 	require.Equal(t, `{"message_index":1}`, msg.Body.Value)
 	require.NotEmpty(t, msg.MessageAttributes)
 	require.Empty(t, msg.MessageSystemAttributes)
-	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody.Value)
-	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", msg.MD5OfMessageAttributes.Value)
-	require.False(t, msg.MD5OfMessageSystemAttributes.IsSet)
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody().Value)
+	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", msg.MD5OfMessageAttributes().Value)
+	require.False(t, msg.MD5OfMessageSystemAttributes().IsSet)
 }
 
-func Test_NewMessageFromSendMessageInput_noSystemAttributes_noAttributes(t *testing.T) {
+func Test_NewMessageStateFromSendMessageInput_noSystemAttributes_noAttributes(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
 	msgInput := &sqs.SendMessageInput{
 		QueueUrl:     aws.String("https://sqslite.local/sqslite-test-account/test-queue"),
 		MessageBody:  aws.String(fmt.Sprintf(`{"message_index":%d}`, 1)),
 		DelaySeconds: 10,
 	}
 
-	msg := NewMessageFromSendMessageInput(msgInput)
+	msg := q.NewMessageStateFromSendMessageInput(msgInput)
 	require.Equal(t, `{"message_index":1}`, msg.Body.Value)
 	require.Empty(t, msg.MessageAttributes)
 	require.Empty(t, msg.MessageSystemAttributes)
-	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody.Value)
-	require.False(t, msg.MD5OfMessageAttributes.IsSet)
-	require.False(t, msg.MD5OfMessageSystemAttributes.IsSet)
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody().Value)
+	require.False(t, msg.MD5OfMessageAttributes().IsSet)
+	require.False(t, msg.MD5OfMessageSystemAttributes().IsSet)
 }
 
-func Test_NewMessageFromSendMessageBatchEntry(t *testing.T) {
+func Test_NewMessageStateFromSendMessageBatchEntry(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+
 	msgInput := types.SendMessageBatchRequestEntry{
 		Id:          aws.String("test-message-id"),
 		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, 1)),
@@ -94,17 +102,19 @@ func Test_NewMessageFromSendMessageBatchEntry(t *testing.T) {
 		},
 		DelaySeconds: 10,
 	}
-	msg := NewMessageFromSendMessageBatchEntry(msgInput)
-	require.Equal(t, "test-message-id", msg.ID)
+	msg := q.NewMessageStateFromSendMessageBatchEntry(msgInput)
+	require.Equal(t, "test-message-id", msg.UserProvidedID.Value)
 	require.Equal(t, `{"message_index":1}`, msg.Body.Value)
 	require.NotEmpty(t, msg.MessageAttributes)
 	require.NotEmpty(t, msg.MessageSystemAttributes)
-	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody.Value)
-	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", msg.MD5OfMessageAttributes.Value)
-	require.EqualValues(t, "5ae4d5d7636402d80f4eb6d213245a88", msg.MD5OfMessageSystemAttributes.Value)
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody().Value)
+	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", msg.MD5OfMessageAttributes().Value)
+	require.EqualValues(t, "5ae4d5d7636402d80f4eb6d213245a88", msg.MD5OfMessageSystemAttributes().Value)
 }
 
 func Test_NewMessageFromSendMessageBatchEntry_noSystemAttributes(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+
 	msgInput := types.SendMessageBatchRequestEntry{
 		Id:          aws.String("test-message-id"),
 		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, 1)),
@@ -116,28 +126,30 @@ func Test_NewMessageFromSendMessageBatchEntry_noSystemAttributes(t *testing.T) {
 		},
 		DelaySeconds: 10,
 	}
-	msg := NewMessageFromSendMessageBatchEntry(msgInput)
-	require.Equal(t, "test-message-id", msg.ID)
+	msg := q.NewMessageStateFromSendMessageBatchEntry(msgInput)
+	require.Equal(t, "test-message-id", msg.UserProvidedID.Value)
 	require.Equal(t, `{"message_index":1}`, msg.Body.Value)
 	require.NotEmpty(t, msg.MessageAttributes)
 	require.Empty(t, msg.MessageSystemAttributes)
-	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody.Value)
-	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", msg.MD5OfMessageAttributes.Value)
-	require.False(t, msg.MD5OfMessageSystemAttributes.IsSet)
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody().Value)
+	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", msg.MD5OfMessageAttributes().Value)
+	require.False(t, msg.MD5OfMessageSystemAttributes().IsSet)
 }
 
 func Test_NewMessageFromSendMessageBatchEntry_noSystemAttributes_noAttributes(t *testing.T) {
+	q := createTestQueue(t, clockwork.NewFakeClock())
+
 	msgInput := types.SendMessageBatchRequestEntry{
 		Id:           aws.String("test-message-id"),
 		MessageBody:  aws.String(fmt.Sprintf(`{"message_index":%d}`, 1)),
 		DelaySeconds: 10,
 	}
-	msg := NewMessageFromSendMessageBatchEntry(msgInput)
-	require.Equal(t, "test-message-id", msg.ID)
+	msg := q.NewMessageStateFromSendMessageBatchEntry(msgInput)
+	require.Equal(t, "test-message-id", msg.UserProvidedID.Value)
 	require.Equal(t, `{"message_index":1}`, msg.Body.Value)
 	require.Empty(t, msg.MessageAttributes)
 	require.Empty(t, msg.MessageSystemAttributes)
-	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody.Value)
-	require.False(t, msg.MD5OfMessageAttributes.IsSet)
-	require.False(t, msg.MD5OfMessageSystemAttributes.IsSet)
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody().Value)
+	require.False(t, msg.MD5OfMessageAttributes().IsSet)
+	require.False(t, msg.MD5OfMessageSystemAttributes().IsSet)
 }

@@ -4,7 +4,7 @@ func Some[T any](v T) Optional[T] {
 	return Optional[T]{v, true}
 }
 
-func SomePtr[T any](v *T) Optional[T] {
+func FromPtr[T any](v *T) Optional[T] {
 	if v == nil {
 		return Optional[T]{}
 	}
@@ -22,4 +22,11 @@ type Optional[T any] struct {
 
 func (o Optional[T]) IsZero() bool {
 	return !o.IsSet
+}
+
+func (o Optional[T]) Ptr() *T {
+	if o.IsSet {
+		return &o.Value
+	}
+	return nil
 }
