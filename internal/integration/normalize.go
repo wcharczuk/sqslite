@@ -24,4 +24,4 @@ func normalizeQueueARNs(corpus string) string {
 	return regexpQueueARN.ReplaceAllString(corpus, fmt.Sprintf("arn:aws:sqs:$1:%s:$3", sqslite.DefaultAccountID))
 }
 
-var regexpQueueARN = regexp.MustCompile(`arn:aws:sqs:([0-9,a-z,-]+):([0-9]+):([0-9,a-z,A-Z,_,-]+)`)
+var regexpQueueARN = regexp.MustCompile(`arn:aws:sqs:([0-9,a-z,-]+):([0-9,a-z,A-Z]+):([0-9,a-z,A-Z,_,-]+)`)
