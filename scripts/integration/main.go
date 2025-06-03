@@ -168,7 +168,6 @@ func messagesMove(it *integration.Run) {
 
 	taskHandle := it.StartMessagesMoveTask(dlq, mainQueue)
 
-done:
 	for {
 		tasks := it.ListMessagesMoveTasks(dlq)
 		if len(tasks) == 0 {
@@ -179,13 +178,15 @@ done:
 		}) {
 			panic("expect at least one task to have the correct task handle")
 		}
-		for _, t := range tasks {
-			if t.Status == "COMPLETED" {
-				break done
-			}
-			if t.Status == "FAILED" {
-				panic(t.FailureReason)
-			}
+		if slices.ContainsFunc(tasks, func(t integration.MoveMessagesTask) bool {
+			return t.Status == "FAILED"
+		}) {
+			panic("messages move task has FAILED status")
+		}
+		if slices.ContainsFunc(tasks, func(t integration.MoveMessagesTask) bool {
+			return t.Status == "COMPLETED"
+		}) {
+			break
 		}
 		it.Sleep(time.Second)
 	}

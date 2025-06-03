@@ -44,6 +44,7 @@ func (v *Verifier) VerificationFailures() chan *VerificationFailure {
 }
 
 func (v *Verifier) HandleRequest(actualReq spy.Request) {
+	actualReq = normalizeRequest(actualReq)
 	expectedReq, ok := v.getNextExpectedResult()
 	if !ok {
 		v.failures <- &VerificationFailure{
@@ -150,7 +151,6 @@ func (v *Verifier) verifyRequest(expectedReq, actualReq spy.Request) *Verificati
 			}
 		}
 	}
-
 	if v.strict {
 		var expectedRes, actualRes any
 		if err := json.Unmarshal([]byte(expectedReq.ResponseBody), &expectedRes); err != nil {
@@ -203,9 +203,13 @@ func (v VerificationFailure) Error() string {
 }
 
 func diffBodies(expected, actual any) string {
+	return diff(marshalPrettyJSON(expected), marshalPrettyJSON(actual))
+}
+
+func diff(expected, actual string) string {
 	diff, _ := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
-		A:        difflib.SplitLines(marshalPrettyJSON(expected)),
-		B:        difflib.SplitLines(marshalPrettyJSON(actual)),
+		A:        difflib.SplitLines(expected),
+		B:        difflib.SplitLines(actual),
 		FromFile: "Expected",
 		FromDate: "",
 		ToFile:   "Actual",

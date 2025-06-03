@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -68,23 +68,20 @@ const (
 	ModeVerify  Mode = "verify"
 )
 
-func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
+func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
 	spyListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = spyListener.Close()
-	}()
-	slog.Debug("starting local spy proxy", slog.String("bind_addr", spyListener.Addr().String()))
+	defer spyListener.Close()
+
 	var upstream string
 	var sess aws.Config
 	var verificationFailures chan *VerificationFailure
-	outputPath := filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", name))
+	outputPath := filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", id))
 	var spyHandler func(spy.Request)
 	switch s.ModeOrDefault() {
 	case ModeSave:
-		slog.Debug("ensuring output path", slog.String("outputPath", outputPath))
 		if err := os.MkdirAll(s.OutputPathOrDefault(), 0755); err != nil {
 			return fmt.Errorf("unable to create output path dir: %w", err)
 		}
@@ -94,9 +91,9 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 		}
 		defer outputFile.Close()
 		if s.ShowOutput {
-			spyHandler = spy.WriteOutput(io.MultiWriter(outputFile, os.Stdout))
+			spyHandler = WriteAndNormalizeOutput(io.MultiWriter(outputFile, os.Stdout))
 		} else {
-			spyHandler = spy.WriteOutput(io.MultiWriter(outputFile))
+			spyHandler = WriteAndNormalizeOutput(io.MultiWriter(outputFile))
 		}
 		verificationFailures = make(chan *VerificationFailure) // don't do anything with it
 		sess, err = config.LoadDefaultConfig(ctx)
@@ -105,31 +102,6 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 		}
 		upstream = fmt.Sprintf("https://sqs.%s.amazonaws.com", s.RegionOrDefault())
 	case ModeVerify:
-		sqsliteListener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return err
-		}
-		defer func() {
-			_ = sqsliteListener.Close()
-		}()
-		slog.Debug("starting local sqslite", slog.String("bind_addr", sqsliteListener.Addr().String()))
-		sqsliteServer := &http.Server{
-			Handler: sqslite_httputil.Logged(sqslite.NewServer(s.ClockOrDefault())),
-		}
-		go sqsliteServer.Serve(sqsliteListener)
-		defer func() {
-			slog.Debug("shutting down local sqslite", slog.String("bind_addr", sqsliteListener.Addr().String()))
-			_ = sqsliteServer.Shutdown(context.Background())
-		}()
-		upstream = fmt.Sprintf("http://%s", sqsliteListener.Addr().String())
-		slog.Debug("opening verififer for file", slog.String("outputPath", outputPath))
-		v, err := NewVerifier(outputPath)
-		if err != nil {
-			return err
-		}
-		defer v.Close()
-		spyHandler = v.HandleRequest
-		verificationFailures = v.VerificationFailures()
 		sess, err = config.LoadDefaultConfig(ctx,
 			config.WithRegion(s.Region),
 			config.WithCredentialsProvider(
@@ -139,6 +111,28 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 		if err != nil {
 			return err
 		}
+
+		sqsliteListener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return err
+		}
+		defer sqsliteListener.Close()
+
+		sqsliteServer := &http.Server{
+			Handler: sqslite_httputil.Logged(sqslite.NewServer(s.ClockOrDefault())),
+		}
+
+		go sqsliteServer.Serve(sqsliteListener)
+		defer sqsliteServer.Shutdown(context.Background())
+
+		v, err := NewVerifier(outputPath)
+		if err != nil {
+			return err
+		}
+		defer v.Close()
+		spyHandler = v.HandleRequest
+		verificationFailures = v.VerificationFailures()
+		upstream = fmt.Sprintf("http://%s", sqsliteListener.Addr().String())
 	default:
 		return fmt.Errorf("unknown mode %s", s.ModeOrDefault())
 	}
@@ -151,39 +145,43 @@ func (s *Suite) Run(ctx context.Context, name string, fn func(*Run)) error {
 		},
 	}
 	go spy.Serve(spyListener)
-	defer func() {
-		slog.Debug("shutting down local spy proxy", slog.String("bind_addr", spyListener.Addr().String()))
-		_ = spy.Shutdown(context.Background())
-	}()
+	defer spy.Shutdown(context.Background())
+
 	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
 		o.BaseEndpoint = aws.String(fmt.Sprintf("http://%s", spyListener.Addr().String()))
 	})
-
-	suiteExited := make(chan struct{})
 	group, groupContext := errgroup.WithContext(ctx)
-	group.Go(func() error {
-		select {
-		case <-suiteExited:
-			return nil
-		case <-groupContext.Done():
-			return nil
-		case failure := <-verificationFailures:
-			return failure
+	it := &Run{
+		id:        id,
+		ctx:       groupContext,
+		sqsClient: sqsClient,
+		clock:     s.ClockOrDefault(),
+	}
+	suiteExited := make(chan struct{})
+	group.Go(func() (err error) {
+		var errOnce sync.Once
+		for {
+			select {
+			case <-suiteExited:
+				return
+			case <-groupContext.Done():
+				return
+			case failure := <-verificationFailures:
+				errOnce.Do(func() {
+					err = failure
+				})
+			}
 		}
 	})
+
 	group.Go(func() (err error) {
-		it := &Run{
-			ctx:       groupContext,
-			sqsClient: sqsClient,
-			clock:     s.ClockOrDefault(),
-		}
 		defer func() {
+			defer close(suiteExited)
 			it.Cleanup()
 			if r := recover(); r != nil {
 				err = fmt.Errorf("%v", r)
 				return
 			}
-			close(suiteExited)
 		}()
 		fn(it)
 		return

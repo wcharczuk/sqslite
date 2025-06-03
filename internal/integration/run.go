@@ -13,16 +13,19 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/jonboulle/clockwork"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
-	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 type Run struct {
+	id             string
 	ctx            context.Context
 	outputPath     string
 	sqsClient      *sqs.Client
 	messageOrdinal uint64
+	queueOrdinal   uint64
 	clock          clockwork.Clock
 	after          []func()
+
+	crashed uint32
 }
 
 func (it *Run) Cleanup() {
@@ -47,7 +50,12 @@ func (it *Run) Sleep(d time.Duration) {
 }
 
 func (it *Run) CreateQueue() (output Queue) {
-	queueName := fmt.Sprintf("test-queue-%s", uuid.V4())
+	select {
+	case <-it.ctx.Done():
+		panic(it.ctx.Err())
+	default:
+	}
+	queueName := it.formatQueueName(false)
 	queueRes, err := it.sqsClient.CreateQueue(it.ctx, &sqs.CreateQueueInput{
 		QueueName: aws.String(queueName),
 	})
@@ -75,7 +83,7 @@ func (it *Run) CreateQueue() (output Queue) {
 }
 
 func (it *Run) CreateQueueWithDLQ(dlq Queue) (output Queue) {
-	queueName := fmt.Sprintf("test-queue-%s", uuid.V4())
+	queueName := it.formatQueueName(true)
 	queueRes, err := it.sqsClient.CreateQueue(it.ctx, &sqs.CreateQueueInput{
 		QueueName: aws.String(queueName),
 		Attributes: map[string]string{
@@ -109,6 +117,11 @@ func (it *Run) CreateQueueWithDLQ(dlq Queue) (output Queue) {
 }
 
 func (it *Run) SendMessage(queue Queue) {
+	select {
+	case <-it.ctx.Done():
+		panic(it.ctx.Err())
+	default:
+	}
 	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
 		QueueUrl:    &queue.QueueURL,
 		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, atomic.AddUint64(&it.messageOrdinal, 1))),
@@ -119,6 +132,12 @@ func (it *Run) SendMessage(queue Queue) {
 }
 
 func (it *Run) ReceiveMessage(queue Queue) (receiptHandle string, ok bool) {
+	select {
+	case <-it.ctx.Done():
+		panic(it.ctx.Err())
+	default:
+	}
+
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            &queue.QueueURL,
 		MaxNumberOfMessages: 1,
@@ -136,6 +155,12 @@ func (it *Run) ReceiveMessage(queue Queue) (receiptHandle string, ok bool) {
 }
 
 func (it *Run) GetQueueAttributes(queue Queue, attributeNames ...types.QueueAttributeName) map[string]string {
+	select {
+	case <-it.ctx.Done():
+		panic(it.ctx.Err())
+	default:
+	}
+
 	res, err := it.sqsClient.GetQueueAttributes(it.ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl:       &queue.QueueURL,
 		AttributeNames: attributeNames,
@@ -147,6 +172,12 @@ func (it *Run) GetQueueAttributes(queue Queue, attributeNames ...types.QueueAttr
 }
 
 func (it *Run) DeleteMessage(queue Queue, receiptHandle string) {
+	select {
+	case <-it.ctx.Done():
+		panic(it.ctx.Err())
+	default:
+	}
+
 	_, err := it.sqsClient.DeleteMessage(it.ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      &queue.QueueURL,
 		ReceiptHandle: &receiptHandle,
@@ -157,6 +188,11 @@ func (it *Run) DeleteMessage(queue Queue, receiptHandle string) {
 }
 
 func (it *Run) ChangeMessageVisibility(queue Queue, receiptHandle string, visibilityTimeout int) {
+	select {
+	case <-it.ctx.Done():
+		panic(it.ctx.Err())
+	default:
+	}
 	_, err := it.sqsClient.ChangeMessageVisibility(it.ctx, &sqs.ChangeMessageVisibilityInput{
 		QueueUrl:          &queue.QueueURL,
 		ReceiptHandle:     &receiptHandle,
@@ -177,6 +213,11 @@ func (it *Run) ExpectFailure(fn func()) {
 }
 
 func (it *Run) StartMessagesMoveTask(source, destination Queue) (taskHandle string) {
+	select {
+	case <-it.ctx.Done():
+		panic(it.ctx.Err())
+	default:
+	}
 	res, err := it.sqsClient.StartMessageMoveTask(it.ctx, &sqs.StartMessageMoveTaskInput{
 		SourceArn:      &source.QueueArn,
 		DestinationArn: &destination.QueueArn,
@@ -189,6 +230,11 @@ func (it *Run) StartMessagesMoveTask(source, destination Queue) (taskHandle stri
 }
 
 func (it *Run) ListMessagesMoveTasks(source Queue) (tasks []MoveMessagesTask) {
+	select {
+	case <-it.ctx.Done():
+		panic(it.ctx.Err())
+	default:
+	}
 	res, err := it.sqsClient.ListMessageMoveTasks(it.ctx, &sqs.ListMessageMoveTasksInput{
 		SourceArn: &source.QueueArn,
 	})
@@ -204,6 +250,13 @@ func (it *Run) ListMessagesMoveTasks(source Queue) (tasks []MoveMessagesTask) {
 		})
 	}
 	return
+}
+
+func (it *Run) formatQueueName(isDLQ bool) string {
+	if isDLQ {
+		return fmt.Sprintf("test-%s-%d-dlq", it.id, atomic.AddUint64(&it.queueOrdinal, 1))
+	}
+	return fmt.Sprintf("test-%s-%d", it.id, atomic.AddUint64(&it.queueOrdinal, 1))
 }
 
 type MoveMessagesTask struct {

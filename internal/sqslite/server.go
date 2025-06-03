@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/aws/smithy-go/middleware"
 	"github.com/jonboulle/clockwork"
 	"github.com/julienschmidt/httprouter"
 
@@ -313,7 +314,9 @@ func (s Server) setQueueAttributes(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	serialize(rw, req, &sqs.SetQueueAttributesOutput{})
+	serialize(rw, req, &sqs.SetQueueAttributesOutput{
+		ResultMetadata: middleware.Metadata{},
+	})
 }
 
 func (s Server) listQueueTags(rw http.ResponseWriter, req *http.Request) {
@@ -475,6 +478,7 @@ done:
 			}
 		}
 	}
+
 	serialize(rw, req, &sqs.ReceiveMessageOutput{
 		Messages: apply(allMessages, asTypesMessage),
 	})
@@ -572,7 +576,8 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 	}
 	queue.Push(messages...)
 	serialize(rw, req, &sqs.SendMessageBatchOutput{
-		Successful: apply(messages, asTypesSendMessageBatchResultEntry),
+		Successful:     apply(messages, asTypesSendMessageBatchResultEntry),
+		ResultMetadata: middleware.Metadata{},
 	})
 }
 
@@ -902,6 +907,7 @@ func requireQueueURL(queueURL *string) *Error {
 func asTypesMessage(m Message) types.Message {
 	return types.Message{
 		Attributes:             m.Attributes,
+		MessageAttributes:      m.MessageAttributes,
 		Body:                   aws.String(m.Body.Value),
 		MessageId:              aws.String(m.MessageID.String()),
 		ReceiptHandle:          aws.String(m.ReceiptHandle.Value),

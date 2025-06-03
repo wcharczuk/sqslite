@@ -1,6 +1,7 @@
 package sqslite
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -11,10 +12,23 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/aws/smithy-go/middleware"
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
+	"github.com/wcharczuk/sqslite/internal/httputil"
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
+
+func Test_serialize(t *testing.T) {
+	buf := new(bytes.Buffer)
+	rw := httputil.NewMockResponseWriter(buf)
+	serialize(rw, new(http.Request), &sqs.CreateQueueOutput{
+		QueueUrl:       aws.String("test-queue-url"),
+		ResultMetadata: middleware.Metadata{},
+	})
+	require.EqualValues(t, http.StatusOK, rw.StatusCode())
+	require.EqualValues(t, "{\"QueueUrl\":\"test-queue-url\",\"ResultMetadata\":{}}\n", buf.String())
+}
 
 func Test_Server_createQueue(t *testing.T) {
 	server, testServer := startTestServer(t)
