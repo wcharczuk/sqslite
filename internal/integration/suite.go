@@ -25,6 +25,7 @@ import (
 )
 
 type Suite struct {
+	Local      bool
 	Region     string
 	Mode       Mode
 	Clock      clockwork.Clock
@@ -78,7 +79,13 @@ func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
 	var upstream string
 	var sess aws.Config
 	var verificationFailures chan *VerificationFailure
-	outputPath := filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", id))
+
+	var outputPath string
+	if s.Local {
+		outputPath = filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.local.jsonl", id))
+	} else {
+		outputPath = filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", id))
+	}
 	var spyHandler func(spy.Request)
 	switch s.ModeOrDefault() {
 	case ModeSave:
@@ -100,7 +107,11 @@ func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
 		if err != nil {
 			return err
 		}
-		upstream = fmt.Sprintf("https://sqs.%s.amazonaws.com", s.RegionOrDefault())
+		if s.Local {
+			upstream = "http://localhost:4566"
+		} else {
+			upstream = fmt.Sprintf("https://sqs.%s.amazonaws.com", s.RegionOrDefault())
+		}
 	case ModeVerify:
 		sess, err = config.LoadDefaultConfig(ctx,
 			config.WithRegion(s.Region),

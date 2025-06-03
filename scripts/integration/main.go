@@ -24,6 +24,7 @@ var (
 	flagLogLevel   = pflag.String("log-level", slog.LevelInfo.String(), "The logger level")
 	flagLogFormat  = pflag.String("log-format", "json", "The logger format (json|text)")
 	flagAWSRegion  = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
+	flagLocal      = pflag.Bool("local", false, "If we should target a locally running instance for the upstream")
 	flagMode       = pflag.String("mode", string(integration.ModeVerify), "The integration test mode (save|verify)")
 	flagOutputPath = pflag.String("output-path", "testdata/integration", "The output path in --mode=save, and the source path in --mode=verify")
 	flagScenarios  = pflag.StringSlice("scenario", nil, fmt.Sprintf(
@@ -68,6 +69,7 @@ func main() {
 		Region:     *flagAWSRegion,
 		Mode:       integration.Mode(*flagMode),
 		OutputPath: *flagOutputPath,
+		Local:      *flagLocal,
 	}
 
 	var enabledScenarios []string
