@@ -41,6 +41,7 @@ func Test_normalizeQueueARNs(t *testing.T) {
 	actual := normalizeQueueARNs(body)
 	require.EqualValues(t, `"{\"Attributes\":{\"QueueArn\":\"arn:aws:sqs:us-west-2:sqslite-test-account:test-queue-b9931705007043d688c49e15c7c450ca\"}}`, actual)
 }
+
 func Test_normalizeQueueARNs_regression(t *testing.T) {
 	body := `"{\"Attributes\":{\"QueueArn\":\"arn:aws:sqs:us-west-2:AKIAVIBVEUF22S43OJ62:test-send-attribute-md5-1\"}}`
 	actual := normalizeQueueARNs(body)
