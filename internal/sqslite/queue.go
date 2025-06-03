@@ -18,6 +18,8 @@ import (
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
+const DefaultQueueShardCount = 32
+
 // NewQueueFromCreateQueueInput returns a new queue for a given [sqs.CreateQueueInput].
 func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, input *sqs.CreateQueueInput) (*Queue, *Error) {
 	if err := validateQueueName(*input.QueueName); err != nil {
@@ -30,8 +32,8 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 		ARN:                             FormatQueueARN(authz, *input.QueueName),
 		created:                         clock.Now(),
 		lastModified:                    clock.Now(),
-		messagesReadyOrdered:            new(LinkedList[*MessageState]),
-		messagesReady:                   make(map[uuid.UUID]*LinkedListNode[*MessageState]),
+		messagesReadyOrdered:            NewShardedLinkedList[*MessageState](DefaultQueueShardCount),
+		messagesReady:                   make(map[uuid.UUID]*ShardedLinkedListNode[*MessageState]),
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
 		messagesInflight:                make(map[uuid.UUID]*MessageState),
 		messagesInflightByReceiptHandle: make(map[string]uuid.UUID),
@@ -129,8 +131,8 @@ type Queue struct {
 	dlqTarget  *Queue
 	dlqSources map[string]*Queue
 
-	messagesReadyOrdered            *LinkedList[*MessageState]
-	messagesReady                   map[uuid.UUID]*LinkedListNode[*MessageState]
+	messagesReadyOrdered            *ShardedLinkedList[*MessageState]
+	messagesReady                   map[uuid.UUID]*ShardedLinkedListNode[*MessageState]
 	messagesDelayed                 map[uuid.UUID]*MessageState
 	messagesInflight                map[uuid.UUID]*MessageState
 	messagesInflightByReceiptHandle map[string]uuid.UUID
@@ -301,7 +303,6 @@ func (q *Queue) Push(msgs ...*MessageState) {
 		if m.OriginalSourceQueue == nil {
 			m.OriginalSourceQueue = q
 		}
-
 		// only apply the queue level default if
 		// - it's set
 		// - the message does not specify a delay
@@ -319,13 +320,6 @@ func (q *Queue) Push(msgs ...*MessageState) {
 		node := q.messagesReadyOrdered.Push(m)
 		q.messagesReady[m.MessageID] = node
 	}
-}
-
-type ReceiveMessageArgs struct {
-	MaxNumberOfMessages         int
-	VisibilityTimeout           time.Duration
-	MessageAttributeNames       []string
-	MessageSystemAttributeNames []string
 }
 
 func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message) {
@@ -536,7 +530,7 @@ func (q *Queue) Purge() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.messagesReadyOrdered = new(LinkedList[*MessageState])
+	q.messagesReadyOrdered = NewShardedLinkedList[*MessageState](DefaultQueueShardCount)
 	clear(q.messagesReady)
 	clear(q.messagesDelayed)
 	clear(q.messagesInflight)
@@ -581,7 +575,7 @@ func (q *Queue) PurgeExpired() {
 		atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 		delete(q.messagesInflight, msg.MessageID)
 	}
-	var toDeleteNodes []*LinkedListNode[*MessageState]
+	var toDeleteNodes []*ShardedLinkedListNode[*MessageState]
 	for _, msg := range q.messagesReady {
 		if msg.Value.IsExpired(now) {
 			toDeleteNodes = append(toDeleteNodes, msg)

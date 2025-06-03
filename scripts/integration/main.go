@@ -97,18 +97,19 @@ func main() {
 }
 
 var scenarios = map[string]func(*integration.Run){
-	"send-receive":                          sendReceive,
-	"send-attribute-md5":                    sendAttributeMD5,
-	"send-system-attribute-md5":             sendSystemAttributeMD5,
-	"receive-attribute-names":               receiveAttributeNames,
-	"receive-attribute-names-single":        receiveAttributeNamesSingle,
-	"receive-attribute-names-all":           receiveAttributeNamesAll,
-	"receive-attribute-names-none":          receiveAttributeNamesNone,
-	"receive-system-attribute-names-all":    receiveSystemAttributeNamesAll,
-	"receive-system-attribute-names-subset": receiveSystemAttributeNamesSubset,
-	"fill-dlq":                              fillDLQ,
-	"messages-move":                         messagesMove,
-	"messages-move-invalid-source":          messagesMoveInvalidSource,
+	"send-receive":                           sendReceive,
+	"send-attribute-md5":                     sendAttributeMD5,
+	"send-system-attribute-md5":              sendSystemAttributeMD5,
+	"receive-attribute-names":                receiveAttributeNames,
+	"receive-attribute-names-single":         receiveAttributeNamesSingle,
+	"receive-attribute-names-all":            receiveAttributeNamesAll,
+	"receive-attribute-names-none":           receiveAttributeNamesNone,
+	"receive-system-attribute-names-all":     receiveSystemAttributeNamesAll,
+	"receive-system-attribute-names-subset":  receiveSystemAttributeNamesSubset,
+	"receive-system-attribute-names-invalid": receiveSystemAttributeNamesInvalid,
+	"fill-dlq":                               fillDLQ,
+	"messages-move":                          messagesMove,
+	"messages-move-invalid-source":           messagesMoveInvalidSource,
 }
 
 func sendReceive(it *integration.Run) {
@@ -270,6 +271,26 @@ func receiveSystemAttributeNamesSubset(it *integration.Run) {
 		types.MessageSystemAttributeNameApproximateReceiveCount,
 		types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp,
 		types.MessageSystemAttributeNameDeadLetterQueueSourceArn,
+	})
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func receiveSystemAttributeNamesInvalid(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+	it.SendMessageWithAttributes(mainQueue, map[string]types.MessageAttributeValue{
+		"test-key": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value"),
+		},
+		"test-key-alt": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value-alt"),
+		},
+	})
+	receiptHandle, ok := it.ReceiveMessageWithSystemAttributeNames(mainQueue, nil, []types.MessageSystemAttributeName{
+		types.MessageSystemAttributeName("not-a-real-name"),
 	})
 	if ok {
 		it.DeleteMessage(mainQueue, receiptHandle)

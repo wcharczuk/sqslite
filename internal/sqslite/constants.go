@@ -62,17 +62,3 @@ const (
 	AttributeTypeNumber = "Number"
 	AttributeTypeBinary = "Binary"
 )
-
-const (
-	MessageAttributeApproximateReceiveCount          = "ApproximateReceiveCount"
-	MessageAttributeApproximateFirstReceiveTimestamp = "ApproximateFirstReceiveTimestamp"
-	MessageAttributeSenderID                         = "SenderId"
-	MessageAttributeSentTimestamp                    = "SentTimestamp"
-	MessageAttributeAWSTraceHeader                   = "AWSTraceHeader"
-	MessageAttributeDeadLetterQueueSourceArn         = "DeadLetterQueueSourceArn"
-
-	/* not implementing fifo queues, so these are not needed */
-	MessageAttributeSequenceNumber         = "SequenceNumber"
-	MessageAttributeMessageGroupID         = "MessageGroupId"
-	MessageAttributeMessageDeduplicationId = "MessageDeduplicationId"
-)

@@ -3,12 +3,14 @@ package sqslite
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
+	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 func Test_NewMessageStateFromSendMessageInput(t *testing.T) {
@@ -152,4 +154,89 @@ func Test_NewMessageFromSendMessageBatchEntry_noSystemAttributes_noAttributes(t 
 	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", msg.MD5OfBody().Value)
 	require.False(t, msg.MD5OfMessageAttributes().IsSet)
 	require.False(t, msg.MD5OfMessageSystemAttributes().IsSet)
+}
+
+func Test_MessageState_GetAttributes_all(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	testQueue := createTestQueue(t, clock)
+	m := &MessageState{
+		MessageID:           uuid.V4(),
+		OriginalSourceQueue: testQueue,
+		SenderID:            Some(testAccountID),
+		FirstReceived:       Some(clock.Now().Add(-time.Minute)),
+		ReceiveCount:        5,
+		Sent:                clock.Now().Add(-5 * time.Minute),
+		LastReceived:        Some(clock.Now().Add(-30 * time.Second)),
+	}
+
+	attributes := m.GetAttributes(types.MessageSystemAttributeNameAll)
+	require.Len(t, attributes, 5)
+
+	require.Equal(t, fmt.Sprint(clock.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
+	require.Equal(t, testQueue.ARN, attributes[string(types.MessageSystemAttributeNameDeadLetterQueueSourceArn)])
+	require.Equal(t, "5", attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
+	require.Equal(t, testAccountID, attributes[string(types.MessageSystemAttributeNameSenderId)])
+	require.Equal(t, fmt.Sprint(clock.Now().Add(-5*time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameSentTimestamp)])
+}
+
+func Test_MessageState_GetAttributes_deadLetterQueueSourceArn_unset(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	m := &MessageState{
+		MessageID:     uuid.V4(),
+		SenderID:      Some(testAccountID),
+		FirstReceived: Some(clock.Now().Add(-time.Minute)),
+		ReceiveCount:  5,
+		Sent:          clock.Now().Add(-5 * time.Minute),
+		LastReceived:  Some(clock.Now().Add(-30 * time.Second)),
+	}
+
+	attributes := m.GetAttributes(types.MessageSystemAttributeNameAll)
+	require.Len(t, attributes, 4)
+
+	require.Equal(t, fmt.Sprint(clock.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
+	require.Equal(t, "5", attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
+	require.Equal(t, testAccountID, attributes[string(types.MessageSystemAttributeNameSenderId)])
+	require.Equal(t, fmt.Sprint(clock.Now().Add(-5*time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameSentTimestamp)])
+}
+
+func Test_MessageState_GetAttributes_subset(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	m := &MessageState{
+		MessageID:     uuid.V4(),
+		SenderID:      Some(testAccountID),
+		FirstReceived: Some(clock.Now().Add(-time.Minute)),
+		ReceiveCount:  5,
+		Sent:          clock.Now().Add(-5 * time.Minute),
+		LastReceived:  Some(clock.Now().Add(-30 * time.Second)),
+	}
+
+	attributes := m.GetAttributes(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp, types.MessageSystemAttributeNameApproximateReceiveCount)
+	require.Len(t, attributes, 2)
+
+	require.Equal(t, fmt.Sprint(clock.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
+	require.Equal(t, "5", attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
+}
+
+func Test_MessageState_GetAttributes_mixesAllAndSubset(t *testing.T) {
+
+	clock := clockwork.NewFakeClock()
+	testQueue := createTestQueue(t, clock)
+	m := &MessageState{
+		MessageID:           uuid.V4(),
+		OriginalSourceQueue: testQueue,
+		SenderID:            Some(testAccountID),
+		FirstReceived:       Some(clock.Now().Add(-time.Minute)),
+		ReceiveCount:        5,
+		Sent:                clock.Now().Add(-5 * time.Minute),
+		LastReceived:        Some(clock.Now().Add(-30 * time.Second)),
+	}
+
+	attributes := m.GetAttributes(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp, types.MessageSystemAttributeNameApproximateReceiveCount, types.MessageSystemAttributeNameAll)
+	require.Len(t, attributes, 5)
+
+	require.Equal(t, fmt.Sprint(clock.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
+	require.Equal(t, testQueue.ARN, attributes[string(types.MessageSystemAttributeNameDeadLetterQueueSourceArn)])
+	require.Equal(t, "5", attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
+	require.Equal(t, testAccountID, attributes[string(types.MessageSystemAttributeNameSenderId)])
+	require.Equal(t, fmt.Sprint(clock.Now().Add(-5*time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameSentTimestamp)])
 }

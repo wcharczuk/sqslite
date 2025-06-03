@@ -44,7 +44,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "read-response-bodies; unable to deserialize source file: %+v\n", err)
 			os.Exit(1)
 		}
-
 		if *flagTarget != "" {
 			header, ok := req.RequestHeaders[sqslite.HeaderAmzTarget]
 			if !ok {

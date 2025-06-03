@@ -18,6 +18,7 @@ func (q *Queue) NewEmptyMessageState() *MessageState {
 		MessageRetentionPeriod: q.MessageRetentionPeriod,
 		ReceiptHandles:         NewSafeSet[string](),
 		OriginalSourceQueue:    q,
+		SenderID:               Some(q.AccountID),
 	}
 }
 
@@ -115,8 +116,48 @@ func (s *MessageState) String() string {
 	return fmt.Sprintf("Message(id=%s)", s.MessageID)
 }
 
-func (s *MessageState) GetSystemAttributes(attributeNames []types.MessageSystemAttributeName) map[string]string {
-	return make(map[string]string)
+func (s *MessageState) GetMessageAttributes(attributes ...string) map[string]types.MessageAttributeValue {
+	return nil
+}
+
+func (s *MessageState) GetAttributes(attributes ...types.MessageSystemAttributeName) map[string]string {
+	distinctAttributes := distinct(flatten(apply(attributes, func(v types.MessageSystemAttributeName) []types.MessageSystemAttributeName {
+		switch v {
+		case types.MessageSystemAttributeNameAll:
+			return v.Values()
+		default:
+			return []types.MessageSystemAttributeName{v}
+		}
+	})))
+	output := make(map[string]string)
+	for _, attribute := range distinctAttributes {
+		value, ok := s.GetAttribute(attribute)
+		if !ok {
+			continue
+		}
+		output[string(attribute)] = value
+	}
+	return output
+}
+
+func (s *MessageState) GetAttribute(attributeName types.MessageSystemAttributeName) (output string, ok bool) {
+	switch attributeName {
+	case types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp:
+		return fmt.Sprint(s.FirstReceived.Value.UnixMilli()), true
+	case types.MessageSystemAttributeNameApproximateReceiveCount:
+		return fmt.Sprint(atomic.LoadUint32(&s.ReceiveCount)), true
+	case types.MessageSystemAttributeNameDeadLetterQueueSourceArn:
+		if s.OriginalSourceQueue != nil {
+			return s.OriginalSourceQueue.ARN, true
+		}
+		return
+	case types.MessageSystemAttributeNameSenderId:
+		return s.SenderID.Value, true
+	case types.MessageSystemAttributeNameSentTimestamp:
+		return fmt.Sprint(s.Sent.UnixMilli()), true
+	default:
+		return
+	}
 }
 
 func (s *MessageState) ForReceiveMessageOutput(input *sqs.ReceiveMessageInput, receiptHandle ReceiptHandle) types.Message {
@@ -124,8 +165,8 @@ func (s *MessageState) ForReceiveMessageOutput(input *sqs.ReceiveMessageInput, r
 		Body:                   s.Body.Ptr(),
 		MD5OfBody:              s.MD5OfBody().Ptr(),
 		MessageId:              aws.String(s.MessageID.String()),
-		MessageAttributes:      s.MessageAttributes,
-		Attributes:             s.GetSystemAttributes(input.MessageSystemAttributeNames),
+		MessageAttributes:      s.GetMessageAttributes(input.MessageAttributeNames...),
+		Attributes:             s.GetAttributes(input.MessageSystemAttributeNames...),
 		ReceiptHandle:          aws.String(receiptHandle.String()),
 		MD5OfMessageAttributes: s.MD5OfMessageAttributes().Ptr(),
 	}
