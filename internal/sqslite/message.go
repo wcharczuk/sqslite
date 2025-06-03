@@ -8,34 +8,57 @@ import (
 )
 
 func NewMessageFromSendMessageInput(input *sqs.SendMessageInput) Message {
+	var maMD5 Optional[string]
+	if len(input.MessageAttributes) > 0 {
+		maMD5 = Some(md5OfMessageAttributes(input.MessageAttributes))
+	}
+	var msaMD5 Optional[string]
+	if len(input.MessageSystemAttributes) > 0 {
+		msaMD5 = Some(md5OfMessageSystemAttributes(input.MessageSystemAttributes))
+	}
 	return Message{
-		MessageID:              uuid.V4(),
-		Body:                   SomePtr(input.MessageBody),
-		MD5OfBody:              Some(md5sum(safeDeref(input.MessageBody))),
-		MD5OfMessageAttributes: Some(md5sum(keysAndValues(input.MessageAttributes)...)),
+		MessageID:                    uuid.V4(),
+		Body:                         SomePtr(input.MessageBody),
+		MessageAttributes:            input.MessageAttributes,
+		MessageSystemAttributes:      input.MessageSystemAttributes,
+		MD5OfBody:                    Some(md5sum(safeDeref(input.MessageBody))),
+		MD5OfMessageAttributes:       maMD5,
+		MD5OfMessageSystemAttributes: msaMD5,
 	}
 }
 
 func NewMessageFromSendMessageBatchEntry(input types.SendMessageBatchRequestEntry) Message {
+	var maMD5 Optional[string]
+	if len(input.MessageAttributes) > 0 {
+		maMD5 = Some(md5OfMessageAttributes(input.MessageAttributes))
+	}
+	var msaMD5 Optional[string]
+	if len(input.MessageSystemAttributes) > 0 {
+		msaMD5 = Some(md5OfMessageSystemAttributes(input.MessageSystemAttributes))
+	}
 	return Message{
-		ID:                     string(*input.Id),
-		MessageID:              uuid.V4(),
-		Body:                   SomePtr(input.MessageBody),
-		MD5OfBody:              Some(md5sum(safeDeref(input.MessageBody))),
-		MD5OfMessageAttributes: Some(md5OfMessageAttributes(input.MessageAttributes)),
+		ID:                           string(*input.Id),
+		MessageID:                    uuid.V4(),
+		Body:                         SomePtr(input.MessageBody),
+		MessageAttributes:            input.MessageAttributes,
+		MessageSystemAttributes:      input.MessageSystemAttributes,
+		MD5OfBody:                    Some(md5sum(safeDeref(input.MessageBody))),
+		MD5OfMessageAttributes:       maMD5,
+		MD5OfMessageSystemAttributes: msaMD5,
 	}
 }
 
 type Message struct {
-	MessageID               uuid.UUID
-	ID                      string
-	ReceiptHandle           Optional[string]
-	MD5OfBody               Optional[string]
-	Body                    Optional[string]
-	Attributes              map[string]string                      `json:"Attributes,omitempty"`
-	MessageAttributes       map[string]types.MessageAttributeValue `json:"MessageAttributes,omitempty"`
-	MessageSystemAttributes map[string]types.MessageAttributeValue `json:"MessageSystemAttributes,omitempty"`
-	MD5OfMessageAttributes  Optional[string]
+	MessageID                    uuid.UUID
+	ID                           string
+	ReceiptHandle                Optional[string]
+	MD5OfBody                    Optional[string]
+	Body                         Optional[string]
+	Attributes                   map[string]string
+	MessageAttributes            map[string]types.MessageAttributeValue
+	MessageSystemAttributes      map[string]types.MessageSystemAttributeValue
+	MD5OfMessageAttributes       Optional[string]
+	MD5OfMessageSystemAttributes Optional[string]
 }
 
 const (

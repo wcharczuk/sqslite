@@ -478,7 +478,6 @@ done:
 			}
 		}
 	}
-
 	serialize(rw, req, &sqs.ReceiveMessageOutput{
 		Messages: apply(allMessages, asTypesMessage),
 	})
@@ -514,12 +513,7 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	queue.Push(msg)
-	serialize(rw, req, &sqs.SendMessageOutput{
-		MessageId:              aws.String(msg.Message.MessageID.String()),
-		MD5OfMessageAttributes: aws.String(msg.Message.MD5OfMessageAttributes.Value),
-		MD5OfMessageBody:       aws.String(msg.Message.MD5OfBody.Value),
-		SequenceNumber:         aws.String(fmt.Sprint(msg.SequenceNumber)),
-	})
+	serialize(rw, req, asTypesSendMessageOutput(msg.Message))
 }
 
 func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
@@ -904,25 +898,48 @@ func requireQueueURL(queueURL *string) *Error {
 	return nil
 }
 
-func asTypesMessage(m Message) types.Message {
-	return types.Message{
-		Attributes:             m.Attributes,
-		MessageAttributes:      m.MessageAttributes,
-		Body:                   aws.String(m.Body.Value),
-		MessageId:              aws.String(m.MessageID.String()),
-		ReceiptHandle:          aws.String(m.ReceiptHandle.Value),
-		MD5OfBody:              aws.String(m.MD5OfBody.Value),
-		MD5OfMessageAttributes: aws.String(m.MD5OfMessageAttributes.Value),
+func asTypesSendMessageOutput(msg Message) *sqs.SendMessageOutput {
+	output := &sqs.SendMessageOutput{
+		MessageId:        aws.String(msg.MessageID.String()),
+		MD5OfMessageBody: aws.String(msg.MD5OfBody.Value),
 	}
+	if msg.MD5OfMessageAttributes.IsSet {
+		output.MD5OfMessageAttributes = aws.String(msg.MD5OfMessageAttributes.Value)
+	}
+	if msg.MD5OfMessageSystemAttributes.IsSet {
+		output.MD5OfMessageSystemAttributes = aws.String(msg.MD5OfMessageSystemAttributes.Value)
+	}
+	return output
 }
 
-func asTypesSendMessageBatchResultEntry(m *MessageState) types.SendMessageBatchResultEntry {
-	return types.SendMessageBatchResultEntry{
-		Id:                     aws.String(m.Message.ID),
-		MessageId:              aws.String(m.Message.MessageID.String()),
-		MD5OfMessageBody:       aws.String(m.Message.MD5OfBody.Value),
-		MD5OfMessageAttributes: aws.String(m.Message.MD5OfMessageAttributes.Value),
+func asTypesMessage(msg Message) types.Message {
+	output := types.Message{
+		Body:              aws.String(msg.Body.Value),
+		MD5OfBody:         aws.String(msg.MD5OfBody.Value),
+		MessageId:         aws.String(msg.MessageID.String()),
+		Attributes:        msg.Attributes,
+		MessageAttributes: msg.MessageAttributes,
+		ReceiptHandle:     aws.String(msg.ReceiptHandle.Value),
 	}
+	if msg.MD5OfMessageAttributes.IsSet {
+		output.MD5OfMessageAttributes = aws.String(msg.MD5OfMessageAttributes.Value)
+	}
+	return output
+}
+
+func asTypesSendMessageBatchResultEntry(msg *MessageState) types.SendMessageBatchResultEntry {
+	output := types.SendMessageBatchResultEntry{
+		Id:               aws.String(msg.Message.ID),
+		MessageId:        aws.String(msg.Message.MessageID.String()),
+		MD5OfMessageBody: aws.String(msg.Message.MD5OfBody.Value),
+	}
+	if msg.Message.MD5OfMessageAttributes.IsSet {
+		output.MD5OfMessageAttributes = aws.String(msg.Message.MD5OfMessageAttributes.Value)
+	}
+	if msg.Message.MD5OfMessageSystemAttributes.IsSet {
+		output.MD5OfMessageSystemAttributes = aws.String(msg.Message.MD5OfMessageSystemAttributes.Value)
+	}
+	return output
 }
 
 func deserialize[V any](req *http.Request) (*V, *Error) {

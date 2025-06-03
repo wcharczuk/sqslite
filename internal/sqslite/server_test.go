@@ -200,12 +200,116 @@ func Test_Server_deleteQueue(t *testing.T) {
 	require.True(t, queue.IsDeleted())
 }
 
-func Test_Server_sendMessage(t *testing.T) {
+func Test_Server_sendMessage_multiple(t *testing.T) {
 	server, testServer := startTestServer(t)
 	queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
 	for range 2 {
 		_ = testHelperSendMessage(t, testServer, testNewSendMessageInput(testDefaultQueueURL))
 	}
+	require.EqualValues(t, int64(2), queue.Stats().NumMessages)
+	require.EqualValues(t, int64(0), queue.Stats().NumMessagesInflight)
+}
+
+func Test_Server_sendMessage(t *testing.T) {
+	_, testServer := startTestServer(t)
+	res := testHelperSendMessage(t, testServer, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(testDefaultQueueURL),
+		MessageBody: aws.String(`{"message_index":1}`),
+	})
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", safeDeref(res.MD5OfMessageBody))
+	require.Nil(t, res.MD5OfMessageAttributes)
+	require.Nil(t, res.MD5OfMessageSystemAttributes)
+}
+
+func Test_Server_sendMessage_attributes(t *testing.T) {
+	_, testServer := startTestServer(t)
+	res := testHelperSendMessage(t, testServer, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(testDefaultQueueURL),
+		MessageBody: aws.String(`{"message_index":1}`),
+		MessageAttributes: map[string]types.MessageAttributeValue{
+			"test-key": {
+				DataType:    aws.String("String"),
+				StringValue: aws.String("test-value"),
+			},
+		},
+	})
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", safeDeref(res.MD5OfMessageBody))
+	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", safeDeref(res.MD5OfMessageAttributes))
+	require.Nil(t, res.MD5OfMessageSystemAttributes)
+}
+
+func Test_Server_sendMessage_attributes_systemAttributes(t *testing.T) {
+	_, testServer := startTestServer(t)
+	res := testHelperSendMessage(t, testServer, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(testDefaultQueueURL),
+		MessageBody: aws.String(`{"message_index":1}`),
+		MessageAttributes: map[string]types.MessageAttributeValue{
+			"test-key": {
+				DataType:    aws.String("String"),
+				StringValue: aws.String("test-value"),
+			},
+		},
+		MessageSystemAttributes: map[string]types.MessageSystemAttributeValue{
+			"AWSTraceHeader": {
+				DataType:    aws.String("String"),
+				StringValue: aws.String("Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"),
+			},
+		},
+	})
+	require.EqualValues(t, "4504dd781f625d681c31cda87e260702", safeDeref(res.MD5OfMessageBody))
+	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", safeDeref(res.MD5OfMessageAttributes))
+	require.EqualValues(t, "5ae4d5d7636402d80f4eb6d213245a88", safeDeref(res.MD5OfMessageSystemAttributes))
+}
+
+func Test_Server_sendMessageBatch(t *testing.T) {
+	server, testServer := startTestServer(t)
+	queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
+	res := testHelperSendMessageBatch(t, testServer, &sqs.SendMessageBatchInput{
+		QueueUrl: aws.String(testDefaultQueueURL),
+		Entries: []types.SendMessageBatchRequestEntry{
+			{
+				Id:          aws.String("1"),
+				MessageBody: aws.String(`{"message_index":1}`),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"test-key": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("test-value"),
+					},
+				},
+				MessageSystemAttributes: map[string]types.MessageSystemAttributeValue{
+					"AWSTraceHeader": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"),
+					},
+				},
+			},
+			{
+				Id:          aws.String("2"),
+				MessageBody: aws.String(`{"message_index":2}`),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"test-key": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("test-value"),
+					},
+				},
+				MessageSystemAttributes: map[string]types.MessageSystemAttributeValue{
+					"AWSTraceHeader": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"),
+					},
+				},
+			},
+		},
+	})
+	require.Len(t, res.Successful, 2)
+
+	require.EqualValues(t, md5sum(`{"message_index":1}`), safeDeref(res.Successful[0].MD5OfMessageBody))
+	require.EqualValues(t, md5sum(`{"message_index":2}`), safeDeref(res.Successful[1].MD5OfMessageBody))
+	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", safeDeref(res.Successful[0].MD5OfMessageAttributes))
+	require.EqualValues(t, "befa18540a897f7d022bf07057754a03", safeDeref(res.Successful[1].MD5OfMessageAttributes))
+	require.EqualValues(t, "5ae4d5d7636402d80f4eb6d213245a88", safeDeref(res.Successful[0].MD5OfMessageSystemAttributes))
+	require.EqualValues(t, "5ae4d5d7636402d80f4eb6d213245a88", safeDeref(res.Successful[1].MD5OfMessageSystemAttributes))
+
 	require.EqualValues(t, int64(2), queue.Stats().NumMessages)
 	require.EqualValues(t, int64(0), queue.Stats().NumMessagesInflight)
 }

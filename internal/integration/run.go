@@ -50,11 +50,7 @@ func (it *Run) Sleep(d time.Duration) {
 }
 
 func (it *Run) CreateQueue() (output Queue) {
-	select {
-	case <-it.ctx.Done():
-		panic(it.ctx.Err())
-	default:
-	}
+	it.checkIfCanceled()
 	queueName := it.formatQueueName(false)
 	queueRes, err := it.sqsClient.CreateQueue(it.ctx, &sqs.CreateQueueInput{
 		QueueName: aws.String(queueName),
@@ -116,12 +112,16 @@ func (it *Run) CreateQueueWithDLQ(dlq Queue) (output Queue) {
 	return
 }
 
-func (it *Run) SendMessage(queue Queue) {
+func (it *Run) checkIfCanceled() {
 	select {
 	case <-it.ctx.Done():
 		panic(it.ctx.Err())
 	default:
 	}
+}
+
+func (it *Run) SendMessage(queue Queue) {
+	it.checkIfCanceled()
 	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
 		QueueUrl:    &queue.QueueURL,
 		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, atomic.AddUint64(&it.messageOrdinal, 1))),
@@ -131,13 +131,33 @@ func (it *Run) SendMessage(queue Queue) {
 	}
 }
 
-func (it *Run) ReceiveMessage(queue Queue) (receiptHandle string, ok bool) {
-	select {
-	case <-it.ctx.Done():
-		panic(it.ctx.Err())
-	default:
+func (it *Run) SendMessageWithAttributes(queue Queue, attributes map[string]types.MessageAttributeValue) {
+	it.checkIfCanceled()
+	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
+		QueueUrl:          &queue.QueueURL,
+		MessageBody:       aws.String(fmt.Sprintf(`{"message_index":%d}`, atomic.AddUint64(&it.messageOrdinal, 1))),
+		MessageAttributes: attributes,
+	})
+	if err != nil {
+		panic(err)
 	}
+}
 
+func (it *Run) SendMessageWithSystemAttributes(queue Queue, attributes map[string]types.MessageAttributeValue, systemAttributes map[string]types.MessageSystemAttributeValue) {
+	it.checkIfCanceled()
+	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
+		QueueUrl:                &queue.QueueURL,
+		MessageBody:             aws.String(fmt.Sprintf(`{"message_index":%d}`, atomic.AddUint64(&it.messageOrdinal, 1))),
+		MessageAttributes:       attributes,
+		MessageSystemAttributes: systemAttributes,
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (it *Run) ReceiveMessage(queue Queue) (receiptHandle string, ok bool) {
+	it.checkIfCanceled()
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            &queue.QueueURL,
 		MaxNumberOfMessages: 1,
@@ -172,12 +192,7 @@ func (it *Run) GetQueueAttributes(queue Queue, attributeNames ...types.QueueAttr
 }
 
 func (it *Run) DeleteMessage(queue Queue, receiptHandle string) {
-	select {
-	case <-it.ctx.Done():
-		panic(it.ctx.Err())
-	default:
-	}
-
+	it.checkIfCanceled()
 	_, err := it.sqsClient.DeleteMessage(it.ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      &queue.QueueURL,
 		ReceiptHandle: &receiptHandle,
@@ -188,11 +203,7 @@ func (it *Run) DeleteMessage(queue Queue, receiptHandle string) {
 }
 
 func (it *Run) ChangeMessageVisibility(queue Queue, receiptHandle string, visibilityTimeout int) {
-	select {
-	case <-it.ctx.Done():
-		panic(it.ctx.Err())
-	default:
-	}
+	it.checkIfCanceled()
 	_, err := it.sqsClient.ChangeMessageVisibility(it.ctx, &sqs.ChangeMessageVisibilityInput{
 		QueueUrl:          &queue.QueueURL,
 		ReceiptHandle:     &receiptHandle,
@@ -205,7 +216,11 @@ func (it *Run) ChangeMessageVisibility(queue Queue, receiptHandle string, visibi
 
 func (it *Run) ExpectFailure(fn func()) {
 	defer func() {
-		if r := recover(); r == nil {
+		r := recover()
+		if r == nil {
+			panic("expected panic to be raised by step")
+		}
+		if r == context.Canceled || r == context.DeadlineExceeded {
 			panic("expected panic to be raised by step")
 		}
 	}()
@@ -213,11 +228,7 @@ func (it *Run) ExpectFailure(fn func()) {
 }
 
 func (it *Run) StartMessagesMoveTask(source, destination Queue) (taskHandle string) {
-	select {
-	case <-it.ctx.Done():
-		panic(it.ctx.Err())
-	default:
-	}
+	it.checkIfCanceled()
 	res, err := it.sqsClient.StartMessageMoveTask(it.ctx, &sqs.StartMessageMoveTaskInput{
 		SourceArn:      &source.QueueArn,
 		DestinationArn: &destination.QueueArn,
@@ -230,11 +241,7 @@ func (it *Run) StartMessagesMoveTask(source, destination Queue) (taskHandle stri
 }
 
 func (it *Run) ListMessagesMoveTasks(source Queue) (tasks []MoveMessagesTask) {
-	select {
-	case <-it.ctx.Done():
-		panic(it.ctx.Err())
-	default:
-	}
+	it.checkIfCanceled()
 	res, err := it.sqsClient.ListMessageMoveTasks(it.ctx, &sqs.ListMessageMoveTasksInput{
 		SourceArn: &source.QueueArn,
 	})

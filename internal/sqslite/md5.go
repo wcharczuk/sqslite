@@ -46,3 +46,31 @@ func md5OfMessageAttributes(attributes map[string]types.MessageAttributeValue) s
 	}
 	return hex.EncodeToString(wr.Sum(nil))
 }
+
+// md5OfMessageAttributes performs a checksum on the message system attribute values.
+//
+// This is required to function when we send messages to the queue.
+func md5OfMessageSystemAttributes(attributes map[string]types.MessageSystemAttributeValue) string {
+	keys := slices.Collect(maps.Keys(attributes))
+	sort.Strings(keys)
+	wr := md5.New()
+	for _, key := range keys {
+		var buffer []byte
+		attribute := attributes[key]
+		buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(key)))
+		buffer = append(buffer, []byte(key)...)
+		buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(*attribute.DataType)))
+		buffer = append(buffer, []byte(*attribute.DataType)...)
+		if attribute.StringValue != nil && *attribute.StringValue != "" {
+			buffer = append(buffer, byte(1))
+			buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(*attribute.StringValue)))
+			buffer = append(buffer, []byte(*attribute.StringValue)...)
+		} else {
+			buffer = append(buffer, byte(2))
+			buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(attribute.BinaryValue)))
+			buffer = append(buffer, attribute.BinaryValue...)
+		}
+		wr.Write(buffer)
+	}
+	return hex.EncodeToString(wr.Sum(nil))
+}

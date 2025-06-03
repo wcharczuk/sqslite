@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/spf13/pflag"
 
@@ -30,16 +31,6 @@ var (
 		strings.Join(slices.Collect(maps.Keys(scenarios)), "|"),
 	))
 )
-
-// assertions
-// - ✅ can recreate queues with the same attributes => yields the same queue url
-// - ✅ what is the missing required parameter error type
-// - ✅ what error is returned by sendMessage if the body is > 256KiB
-// - ✅ sendMessageBatch requires the sum of all the bodes to be < 256KiB
-// - ✅ startMessageMoveTask what happens if you put a MaxNumberOfMessagesPerSecond > 500
-// - startMessageMoveTask what happens if you put a source that isn't a dlq
-// - startMessageMoveTask what happens if you put a destination that disallows a given source with a redriveAllowPolicy
-// - startMessageMoveTask what happens if you delete the destination queue with a huge backlog
 
 func main() {
 	pflag.Parse()
@@ -105,6 +96,8 @@ func main() {
 
 var scenarios = map[string]func(*integration.Run){
 	"send-receive":                 sendReceive,
+	"send-attribute-md5":           sendAttributeMD5,
+	"send-system-attribute-md5":    sendSystemAttributeMD5,
 	"fill-dlq":                     fillDLQ,
 	"messages-move":                messagesMove,
 	"messages-move-invalid-source": messagesMoveInvalidSource,
@@ -122,6 +115,41 @@ func sendReceive(it *integration.Run) {
 		if ok {
 			it.DeleteMessage(mainQueue, receiptHandle)
 		}
+	}
+}
+
+func sendAttributeMD5(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+
+	it.SendMessageWithAttributes(mainQueue, map[string]types.MessageAttributeValue{
+		"test-key": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value"),
+		},
+	})
+	receiptHandle, ok := it.ReceiveMessage(mainQueue)
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func sendSystemAttributeMD5(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+
+	it.SendMessageWithSystemAttributes(mainQueue, map[string]types.MessageAttributeValue{
+		"test-key": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("test-value"),
+		},
+	}, map[string]types.MessageSystemAttributeValue{
+		"AWSTraceHeader": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"),
+		},
+	})
+	receiptHandle, ok := it.ReceiveMessage(mainQueue)
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
 	}
 }
 

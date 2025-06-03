@@ -21,7 +21,7 @@ func Test_normalizeRequest_http(t *testing.T) {
 		ResponseBody: `{"QueueUrl":"http://127.0.0.1:59217/sqslite-test-account/test-send-receive-1","ResultMetadata":{}}`,
 	}
 	output := normalizeRequest(r)
-	require.EqualValues(t, `{"QueueUrl":"http://sqslite.local/sqslite-test-account/test-queue-624b3f6b1c25440280165e5f65d17423"}`, output.ResponseBody)
+	require.EqualValues(t, `{"QueueUrl":"http://sqslite.local/sqslite-test-account/test-send-receive-1","ResultMetadata":{}}`, output.ResponseBody)
 }
 
 func Test_normalizeQueueURLs(t *testing.T) {

@@ -120,9 +120,8 @@ type Queue struct {
 	lastModified time.Time
 	deleted      time.Time
 
-	sequenceNumber uint64
-	lifecycleMu    sync.Mutex
-	mu             sync.Mutex
+	lifecycleMu sync.Mutex
+	mu          sync.Mutex
 
 	clock clockwork.Clock
 
@@ -646,7 +645,6 @@ func (q *Queue) NewMessageState(m Message, created time.Time, delaySeconds int) 
 		Created:                created,
 		MessageRetentionPeriod: q.MessageRetentionPeriod,
 		ReceiptHandles:         NewSafeSet[string](),
-		SequenceNumber:         atomic.AddUint64(&q.sequenceNumber, 1),
 	}
 	if delaySeconds > 0 {
 		sqsm.Delay = Some(time.Duration(delaySeconds) * time.Second)
