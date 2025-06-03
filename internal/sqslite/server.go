@@ -545,23 +545,28 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	messages := make([]*MessageState, 0, len(input.Entries))
+	var failedEntries []BatchResultErrorEntry
 	for _, entry := range input.Entries {
 		if err := requireEntryID(entry.Id); err != nil {
 			serialize(rw, req, err)
 			return
 		}
 		if err := validateMessageBody(entry.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
-			serialize(rw, req, ErrorInvalidMessageContents())
-			return
+			failedEntries = append(failedEntries, BatchResultErrorEntry{
+				Error: *err,
+				ID:    safeDeref(entry.Id),
+			})
+			continue
 		}
 		msg := queue.NewMessageStateFromSendMessageBatchEntry(entry)
 		messages = append(messages, msg)
 	}
 	queue.Push(messages...)
-	serialize(rw, req, &sqs.SendMessageBatchOutput{
+	serialize(rw, req, &SendMessageBatchOutput{
 		Successful: apply(messages, func(ms *MessageState) types.SendMessageBatchResultEntry {
 			return ms.ForSendMessageBatchResultEntry()
 		}),
+		Failed:         failedEntries,
 		ResultMetadata: middleware.Metadata{},
 	})
 }

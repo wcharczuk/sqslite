@@ -193,6 +193,26 @@ func (it *Run) ReceiveMessageWithAttributeNames(queue Queue, attributeNames []st
 	return
 }
 
+func (it *Run) ReceiveMessageWithSystemAttributeNames(queue Queue, attributeNames []string, systemAttributeNames []types.MessageSystemAttributeName) (receiptHandle string, ok bool) {
+	it.checkIfCanceled()
+	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:                    &queue.QueueURL,
+		MaxNumberOfMessages:         1,
+		VisibilityTimeout:           5,
+		MessageAttributeNames:       attributeNames,
+		MessageSystemAttributeNames: systemAttributeNames,
+	})
+	if err != nil {
+		panic(err)
+	}
+	if len(res.Messages) == 0 {
+		return
+	}
+	receiptHandle = safeDeref(res.Messages[0].ReceiptHandle)
+	ok = true
+	return
+}
+
 func (it *Run) GetQueueAttributes(queue Queue, attributeNames ...types.QueueAttributeName) map[string]string {
 	select {
 	case <-it.ctx.Done():

@@ -115,7 +115,7 @@ func (s *MessageState) String() string {
 	return fmt.Sprintf("Message(id=%s)", s.MessageID)
 }
 
-func (s *MessageState) GetAttributes(attributeNames []types.MessageSystemAttributeName) map[string]string {
+func (s *MessageState) GetSystemAttributes(attributeNames []types.MessageSystemAttributeName) map[string]string {
 	return make(map[string]string)
 }
 
@@ -125,7 +125,7 @@ func (s *MessageState) ForReceiveMessageOutput(input *sqs.ReceiveMessageInput, r
 		MD5OfBody:              s.MD5OfBody().Ptr(),
 		MessageId:              aws.String(s.MessageID.String()),
 		MessageAttributes:      s.MessageAttributes,
-		Attributes:             s.GetAttributes(input.MessageSystemAttributeNames),
+		Attributes:             s.GetSystemAttributes(input.MessageSystemAttributeNames),
 		ReceiptHandle:          aws.String(receiptHandle.String()),
 		MD5OfMessageAttributes: s.MD5OfMessageAttributes().Ptr(),
 	}
