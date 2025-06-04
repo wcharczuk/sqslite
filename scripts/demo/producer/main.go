@@ -30,6 +30,8 @@ var (
 func main() {
 	pflag.Parse()
 
+	slog.Info("using queue url", slog.String("queue_url", *flagQueueURL))
+
 	ctx := context.Background()
 	sess, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(*flagAWSRegion),
