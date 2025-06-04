@@ -62,6 +62,11 @@ func testHelperChangeMessageVisibilityBatch(t *testing.T, testServer *httptest.S
 }
 
 // Error helper functions
+func testHelperListDeadLetterSourceQueuesForError(t *testing.T, testServer *httptest.Server, input *sqs.ListDeadLetterSourceQueuesInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodListDeadLetterSourceQueues, input)
+}
+
 func testHelperGetQueueAttributesForError(t *testing.T, testServer *httptest.Server, input *sqs.GetQueueAttributesInput) *Error {
 	t.Helper()
 	return testHelperDoClientMethodForError(t, testServer, MethodGetQueueAttributes, input)
@@ -157,24 +162,47 @@ func Test_Server_listDeadLetterSourceQueues_withPagination(t *testing.T) {
 	require.GreaterOrEqual(t, len(nextResult.QueueUrls), 1)
 }
 
-// Note: Skipping validation error tests due to bug in server.go where
-// validation errors don't return after serializing, causing multiple JSON responses
-
-func Test_Server_listDeadLetterSourceQueues_validMaxResults(t *testing.T) {
+func Test_Server_listDeadLetterSourceQueues_invalidMaxResults(t *testing.T) {
 	_, testServer := startTestServer(t)
 
 	dlq := testHelperCreateQueue(t, testServer, &sqs.CreateQueueInput{
 		QueueName: aws.String("test-dlq"),
 	})
 
-	// Test with valid MaxResults
-	result := testHelperListDeadLetterSourceQueues(t, testServer, &sqs.ListDeadLetterSourceQueuesInput{
+	// Test with invalid MaxResults (too high)
+	err := testHelperListDeadLetterSourceQueuesForError(t, testServer, &sqs.ListDeadLetterSourceQueuesInput{
 		QueueUrl:   dlq.QueueUrl,
-		MaxResults: aws.Int32(100),
+		MaxResults: aws.Int32(1001),
 	})
 
-	require.NotNil(t, result)
-	require.NotNil(t, result.QueueUrls)
+	require.Equal(t, "com.amazonaws.sqs#InvalidAttributeValue", err.Type)
+	require.Contains(t, err.Message, "MaxResults must be greater than 0 and less than 1000")
+
+	// Test with invalid MaxResults (too low)
+	err = testHelperListDeadLetterSourceQueuesForError(t, testServer, &sqs.ListDeadLetterSourceQueuesInput{
+		QueueUrl:   dlq.QueueUrl,
+		MaxResults: aws.Int32(-1),
+	})
+
+	require.Equal(t, "com.amazonaws.sqs#InvalidAttributeValue", err.Type)
+	require.Contains(t, err.Message, "MaxResults must be greater than 0 and less than 1000")
+}
+
+func Test_Server_listDeadLetterSourceQueues_nextTokenWithoutMaxResults(t *testing.T) {
+	_, testServer := startTestServer(t)
+
+	dlq := testHelperCreateQueue(t, testServer, &sqs.CreateQueueInput{
+		QueueName: aws.String("test-dlq"),
+	})
+
+	// Test NextToken without MaxResults
+	err := testHelperListDeadLetterSourceQueuesForError(t, testServer, &sqs.ListDeadLetterSourceQueuesInput{
+		QueueUrl:  dlq.QueueUrl,
+		NextToken: aws.String("some-token"),
+	})
+
+	require.Equal(t, "com.amazonaws.sqs#InvalidAttributeValue", err.Type)
+	require.Contains(t, err.Message, "MaxResults must be set if NextToken is set")
 }
 
 // Tests for getQueueAttributes
@@ -537,9 +565,9 @@ func Test_Server_purgeQueue_emptyQueue(t *testing.T) {
 func Test_Server_deleteMessageBatch(t *testing.T) {
 	server, testServer := startTestServer(t)
 
-	// Create a test queue
+	// Create a test queue with unique name
 	queue := testHelperCreateQueue(t, testServer, &sqs.CreateQueueInput{
-		QueueName: aws.String("test-queue-delete-batch"),
+		QueueName: aws.String("test-queue-delete-batch-main"),
 	})
 
 	// Send some messages
@@ -552,17 +580,24 @@ func Test_Server_deleteMessageBatch(t *testing.T) {
 		messageIds = append(messageIds, *sendResult.MessageId)
 	}
 
-	// Receive messages to get receipt handles
-	receiveResult := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
-		QueueUrl:            queue.QueueUrl,
-		MaxNumberOfMessages: 10,
-	})
+	// Receive messages to get receipt handles (might need multiple calls)
+	var allMessages []types.Message
+	for len(allMessages) < 3 {
+		receiveResult := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
+			QueueUrl:            queue.QueueUrl,
+			MaxNumberOfMessages: 10,
+		})
+		allMessages = append(allMessages, receiveResult.Messages...)
+		if len(receiveResult.Messages) == 0 {
+			break // No more messages available
+		}
+	}
 
-	require.Len(t, receiveResult.Messages, 3)
+	require.Len(t, allMessages, 3)
 
 	// Prepare batch delete entries
 	var entries []types.DeleteMessageBatchRequestEntry
-	for i, msg := range receiveResult.Messages {
+	for i, msg := range allMessages {
 		entries = append(entries, types.DeleteMessageBatchRequestEntry{
 			Id:            aws.String(fmt.Sprintf("entry-%d", i)),
 			ReceiptHandle: msg.ReceiptHandle,
