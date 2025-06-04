@@ -222,6 +222,8 @@ func createTestQueueWithNameWithDLQ(t *testing.T, clock clockwork.Clock, name st
 			}),
 		},
 	})
+	queue.dlqTarget = dlq
+	dlq.AddDLQSources(queue)
 	require.Nil(t, err)
 	return queue
 }

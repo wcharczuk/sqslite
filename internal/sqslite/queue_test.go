@@ -1294,6 +1294,10 @@ func Test_Queue_UpdateDelayedToReady_emptyDelayedIsNoOp(t *testing.T) {
 func Test_Queue_GetQueueAttributes_returnsRequestedAttributes(t *testing.T) {
 	clock := clockwork.NewFakeClock()
 	q := createTestQueue(t, clock)
+	q.RedrivePolicy = Some(RedrivePolicy{
+		DeadLetterTargetArn: "test-queue-arn",
+		MaxReceiveCount:     10,
+	})
 	pushTestMessages(q, 10)
 
 	// Move exactly 2 to inflight
@@ -1317,6 +1321,7 @@ func Test_Queue_GetQueueAttributes_returnsRequestedAttributes(t *testing.T) {
 		types.QueueAttributeNameApproximateNumberOfMessagesNotVisible,
 		types.QueueAttributeNameApproximateNumberOfMessagesDelayed,
 		types.QueueAttributeNameQueueArn,
+		types.QueueAttributeNameRedrivePolicy,
 		types.QueueAttributeNameVisibilityTimeout,
 	)
 
@@ -1326,12 +1331,12 @@ func Test_Queue_GetQueueAttributes_returnsRequestedAttributes(t *testing.T) {
 	expectedInflight := fmt.Sprint(stats.NumMessagesInflight)
 	expectedDelayed := fmt.Sprint(stats.NumMessagesDelayed)
 
-	require.Equal(t, expectedTotal, attributes[string(types.QueueAttributeNameApproximateNumberOfMessages)])
-	require.Equal(t, expectedInflight, attributes[string(types.QueueAttributeNameApproximateNumberOfMessagesNotVisible)])
-	require.Equal(t, expectedDelayed, attributes[string(types.QueueAttributeNameApproximateNumberOfMessagesDelayed)])
-	require.Equal(t, q.ARN, attributes[string(types.QueueAttributeNameQueueArn)])
-	visibilityTimeoutStr := attributes[string(types.QueueAttributeNameVisibilityTimeout)]
-	require.NotEmpty(t, visibilityTimeoutStr) // Should have some visibility timeout value
+	require.EqualValues(t, expectedTotal, attributes[string(types.QueueAttributeNameApproximateNumberOfMessages)])
+	require.EqualValues(t, expectedInflight, attributes[string(types.QueueAttributeNameApproximateNumberOfMessagesNotVisible)])
+	require.EqualValues(t, expectedDelayed, attributes[string(types.QueueAttributeNameApproximateNumberOfMessagesDelayed)])
+	require.EqualValues(t, "{\"deadLetterTargetArn\":\"test-queue-arn\",\"maxReceiveCount\":10}", attributes[string(types.QueueAttributeNameRedrivePolicy)])
+	require.EqualValues(t, q.ARN, attributes[string(types.QueueAttributeNameQueueArn)])
+	require.EqualValues(t, "30", attributes[string(types.QueueAttributeNameVisibilityTimeout)]) // Should have some visibility timeout value
 }
 
 func Test_Queue_GetQueueAttributes_returnsAllWhenRequested(t *testing.T) {
@@ -1357,10 +1362,9 @@ func Test_Queue_GetQueueAttributes_emptyForNonExistentAttributes(t *testing.T) {
 
 	// Should either not include redrive policy, or include empty value
 	// Current implementation returns the marshaled Optional struct
-	if value, exists := attributes[string(types.QueueAttributeNameRedrivePolicy)]; exists {
-		// If it exists, it should indicate the policy is not set
-		require.Contains(t, value, `"IsSet":false`)
-	}
+	value, exists := attributes[string(types.QueueAttributeNameRedrivePolicy)]
+	require.False(t, exists)
+	require.Equal(t, "", value)
 }
 
 func Test_Queue_GetQueueAttributes_includesTimestamps(t *testing.T) {
@@ -1575,10 +1579,6 @@ func Test_Queue_ChangeMessageVisibility_withDLQMovement_respectsMaxReceiveCount(
 	clock := clockwork.NewFakeClock()
 	dlq := createTestQueueWithName(t, clock, "test-dlq")
 	q := createTestQueueWithNameWithDLQ(t, clock, "test-queue", dlq)
-
-	// Manually set up DLQ relationship since we're not using Queues.AddQueue()
-	q.dlqTarget = dlq
-	dlq.AddDLQSources(q)
 
 	pushTestMessages(q, 1)
 	initialDLQStats := dlq.Stats()
