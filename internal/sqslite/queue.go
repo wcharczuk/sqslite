@@ -719,13 +719,21 @@ func (q *Queue) getQueueAttributeUnsafe(attributeName types.QueueAttributeName) 
 	case types.QueueAttributeNameMessageRetentionPeriod:
 		return fmt.Sprint(q.MessageRetentionPeriod)
 	case types.QueueAttributeNamePolicy:
-		return fmt.Sprint(q.Policy)
+		if q.Policy.IsSet {
+			return marshalJSON(q.Policy)
+		}
+		return ""
 	case types.QueueAttributeNameQueueArn:
 		return fmt.Sprint(q.ARN)
 	case types.QueueAttributeNameReceiveMessageWaitTimeSeconds:
 		return fmt.Sprint(q.ReceiveMessageWaitTime / time.Second)
 	case types.QueueAttributeNameVisibilityTimeout:
 		return fmt.Sprint(int(q.VisibilityTimeout / time.Second))
+	case types.QueueAttributeNameDelaySeconds:
+		if q.Delay.IsSet {
+			return fmt.Sprint(q.Delay.Value / time.Second)
+		}
+		return ""
 	case types.QueueAttributeNameRedrivePolicy:
 		if q.RedrivePolicy.IsSet {
 			return marshalJSON(q.RedrivePolicy.Value)
