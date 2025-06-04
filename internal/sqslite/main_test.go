@@ -182,6 +182,8 @@ func testHelperDoClientMethodForError[Input any](t *testing.T, testServer *httpt
 	require.NoError(t, err)
 	defer res.Body.Close()
 
+	require.NotEqualValues(t, http.StatusOK, res.StatusCode)
+
 	bodyData, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 

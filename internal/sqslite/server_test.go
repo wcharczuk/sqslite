@@ -356,33 +356,21 @@ func Test_Server_sendMessageBatch_sizeValidation(t *testing.T) {
 		Entries: []types.SendMessageBatchRequestEntry{
 			{
 				Id:          aws.String("1"),
-				MessageBody: aws.String(strings.Repeat("a", 128)),
+				MessageBody: aws.String(strings.Repeat("a", 256)),
 				MessageAttributes: map[string]types.MessageAttributeValue{
 					"test-key": {
 						DataType:    aws.String("String"),
-						StringValue: aws.String(strings.Repeat("a", 128)),
-					},
-				},
-				MessageSystemAttributes: map[string]types.MessageSystemAttributeValue{
-					"AWSTraceHeader": {
-						DataType:    aws.String("String"),
-						StringValue: aws.String("Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"),
+						StringValue: aws.String(strings.Repeat("a", 256)),
 					},
 				},
 			},
 			{
 				Id:          aws.String("2"),
-				MessageBody: aws.String(strings.Repeat("a", 128)),
+				MessageBody: aws.String(strings.Repeat("a", 256)),
 				MessageAttributes: map[string]types.MessageAttributeValue{
 					"test-key": {
 						DataType:    aws.String("String"),
-						StringValue: aws.String(strings.Repeat("a", 128)),
-					},
-				},
-				MessageSystemAttributes: map[string]types.MessageSystemAttributeValue{
-					"AWSTraceHeader": {
-						DataType:    aws.String("String"),
-						StringValue: aws.String("Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"),
+						StringValue: aws.String(strings.Repeat("a", 256)),
 					},
 				},
 			},
@@ -390,6 +378,7 @@ func Test_Server_sendMessageBatch_sizeValidation(t *testing.T) {
 	})
 
 	require.NotNil(t, err)
+	require.Equal(t, "com.amazonaws.sqs#BatchRequestTooLong", err.Type)
 }
 
 func Test_Server_receiveMessage_awaitsMessages(t *testing.T) {

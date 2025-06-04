@@ -566,13 +566,8 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 			})
 			continue
 		}
-		if err := validateMessageBodyAndAttributes(entry.MessageBody, entry.MessageAttributes, queue.MaximumMessageSizeBytes); err != nil {
-			failedEntries = append(failedEntries, BatchResultErrorEntry{
-				Error: *err,
-				ID:    safeDeref(entry.Id),
-			})
-			continue
-		}
+		// NOTE(wcharczuk): we don't need to check the body size here, as that
+		// would already have been covered by the total check above!
 		msg := queue.NewMessageStateFromSendMessageBatchEntry(entry)
 		messages = append(messages, msg)
 	}
