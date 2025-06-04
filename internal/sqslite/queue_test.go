@@ -1329,6 +1329,7 @@ func Test_Queue_GetQueueAttributes_returnsRequestedAttributes(t *testing.T) {
 
 func Test_Queue_GetQueueAttributes_returnsAllWhenRequested(t *testing.T) {
 	q := createTestQueue(t, clockwork.NewFakeClock())
+	q.Delay = Some(time.Minute)
 
 	attributes := q.GetQueueAttributes(types.QueueAttributeNameAll)
 
@@ -1341,6 +1342,7 @@ func Test_Queue_GetQueueAttributes_returnsAllWhenRequested(t *testing.T) {
 	require.Contains(t, attributes, string(types.QueueAttributeNameReceiveMessageWaitTimeSeconds))
 	require.Contains(t, attributes, string(types.QueueAttributeNameCreatedTimestamp))
 	require.Contains(t, attributes, string(types.QueueAttributeNameLastModifiedTimestamp))
+	require.Contains(t, attributes, string(types.QueueAttributeNameDelaySeconds))
 }
 
 func Test_Queue_GetQueueAttributes_emptyForNonExistentAttributes(t *testing.T) {
