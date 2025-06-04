@@ -218,7 +218,6 @@ func Test_MessageState_GetAttributes_subset(t *testing.T) {
 }
 
 func Test_MessageState_GetAttributes_mixesAllAndSubset(t *testing.T) {
-
 	clock := clockwork.NewFakeClock()
 	testQueue := createTestQueue(t, clock)
 	m := &MessageState{
@@ -239,4 +238,66 @@ func Test_MessageState_GetAttributes_mixesAllAndSubset(t *testing.T) {
 	require.Equal(t, "5", attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
 	require.Equal(t, testAccountID, attributes[string(types.MessageSystemAttributeNameSenderId)])
 	require.Equal(t, fmt.Sprint(clock.Now().Add(-5*time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameSentTimestamp)])
+}
+
+func Test_MessageState_IsVisible(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	testQueue := createTestQueue(t, clock)
+	m := &MessageState{
+		MessageID:           uuid.V4(),
+		OriginalSourceQueue: testQueue,
+		SenderID:            Some(testAccountID),
+		FirstReceived:       Some(clock.Now().Add(-time.Minute)),
+		ReceiveCount:        5,
+		Sent:                clock.Now().Add(-5 * time.Minute),
+		LastReceived:        Some(clock.Now().Add(-30 * time.Second)),
+		VisibilityTimeout:   10 * time.Second,
+		VisibilityDeadline:  Some(clock.Now().Add(-20 * time.Second)),
+	}
+	require.True(t, m.IsVisible(clock.Now()))
+	m.VisibilityDeadline = None[time.Time]()
+	require.True(t, m.IsVisible(clock.Now()))
+	m.VisibilityDeadline = Some(clock.Now().Add(10 * time.Second))
+	require.False(t, m.IsVisible(clock.Now()))
+}
+
+func Test_MessageState_IsDelayed(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	testQueue := createTestQueue(t, clock)
+	m := &MessageState{
+		MessageID:           uuid.V4(),
+		OriginalSourceQueue: testQueue,
+		SenderID:            Some(testAccountID),
+		FirstReceived:       Some(clock.Now().Add(-time.Minute)),
+		ReceiveCount:        5,
+		Sent:                clock.Now().Add(-5 * time.Second),
+		LastReceived:        Some(clock.Now().Add(-30 * time.Second)),
+		VisibilityTimeout:   10 * time.Second,
+		Delay:               Some(10 * time.Second),
+	}
+	require.True(t, m.IsDelayed(clock.Now()))
+	m.Delay = Some(2 * time.Second)
+	require.False(t, m.IsDelayed(clock.Now()))
+	m.Delay = None[time.Duration]()
+	require.False(t, m.IsDelayed(clock.Now()))
+}
+
+func Test_MessageState_IsExpired(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	testQueue := createTestQueue(t, clock)
+	m := &MessageState{
+		MessageID:              uuid.V4(),
+		OriginalSourceQueue:    testQueue,
+		SenderID:               Some(testAccountID),
+		FirstReceived:          Some(clock.Now().Add(-time.Minute)),
+		ReceiveCount:           5,
+		Sent:                   clock.Now().Add(-6 * time.Minute),
+		LastReceived:           Some(clock.Now().Add(-30 * time.Second)),
+		VisibilityTimeout:      10 * time.Second,
+		MessageRetentionPeriod: 5 * time.Minute,
+	}
+
+	require.Equal(t, true, m.IsExpired(clock.Now()))
+	m.MessageRetentionPeriod = 10 * time.Minute
+	require.Equal(t, false, m.IsExpired(clock.Now()))
 }
