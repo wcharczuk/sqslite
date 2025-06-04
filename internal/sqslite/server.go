@@ -232,9 +232,11 @@ func (s Server) listDeadLetterSourceQueues(rw http.ResponseWriter, req *http.Req
 	}
 	if input.MaxResults != nil && (*input.MaxResults < 0 || *input.MaxResults > 1000) {
 		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxResults must be greater than 0 and less than 1000, you put %d", *input.MaxResults))
+		return
 	}
 	if input.NextToken != nil && input.MaxResults == nil {
 		serialize(rw, req, ErrorInvalidAttributeValue().WithMessagef("MaxResults must be set if NextToken is set"))
+		return
 	}
 
 	queues := s.accounts.EnsureQueues(authz.AccountID)
