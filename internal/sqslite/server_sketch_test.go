@@ -269,11 +269,13 @@ func Test_Server_setQueueAttributes(t *testing.T) {
 		QueueName: aws.String("test-queue-attrs"),
 	})
 
-	// Set some attributes (avoiding duration-based attributes due to current bugs)
+	// Set some attributes including duration-based ones
 	result := testHelperSetQueueAttributes(t, testServer, &sqs.SetQueueAttributesInput{
 		QueueUrl: queue.QueueUrl,
 		Attributes: map[string]string{
-			string(types.QueueAttributeNameMaximumMessageSize): "131072",
+			string(types.QueueAttributeNameVisibilityTimeout):             "60",
+			string(types.QueueAttributeNameMaximumMessageSize):            "131072",
+			string(types.QueueAttributeNameReceiveMessageWaitTimeSeconds): "5",
 		},
 	})
 
@@ -283,12 +285,16 @@ func Test_Server_setQueueAttributes(t *testing.T) {
 	getResult := testHelperGetQueueAttributes(t, testServer, &sqs.GetQueueAttributesInput{
 		QueueUrl: queue.QueueUrl,
 		AttributeNames: []types.QueueAttributeName{
+			types.QueueAttributeNameVisibilityTimeout,
 			types.QueueAttributeNameMaximumMessageSize,
-			types.QueueAttributeNameQueueArn, // Should be readable
+			types.QueueAttributeNameReceiveMessageWaitTimeSeconds,
+			types.QueueAttributeNameQueueArn,
 		},
 	})
 
+	require.Equal(t, "60", getResult.Attributes[string(types.QueueAttributeNameVisibilityTimeout)])
 	require.Equal(t, "131072", getResult.Attributes[string(types.QueueAttributeNameMaximumMessageSize)])
+	require.Equal(t, "5", getResult.Attributes[string(types.QueueAttributeNameReceiveMessageWaitTimeSeconds)])
 	require.NotEmpty(t, getResult.Attributes[string(types.QueueAttributeNameQueueArn)])
 }
 
@@ -304,8 +310,6 @@ func Test_Server_setQueueAttributes_delaySeconds(t *testing.T) {
 	})
 
 	// Verify DelaySeconds attribute can be retrieved
-	// Note: There are bugs in duration attribute handling where values
-	// are returned as nanoseconds ("30ns") instead of seconds ("30")
 	getResult := testHelperGetQueueAttributes(t, testServer, &sqs.GetQueueAttributesInput{
 		QueueUrl: queue.QueueUrl,
 		AttributeNames: []types.QueueAttributeName{
@@ -313,8 +317,26 @@ func Test_Server_setQueueAttributes_delaySeconds(t *testing.T) {
 		},
 	})
 
-	// Current buggy behavior returns "30ns" instead of "30"
-	require.Equal(t, "30ns", getResult.Attributes[string(types.QueueAttributeNameDelaySeconds)])
+	// Should return the DelaySeconds value as an integer (seconds)
+	require.Equal(t, "30", getResult.Attributes[string(types.QueueAttributeNameDelaySeconds)])
+
+	// Test setting DelaySeconds via setQueueAttributes
+	testHelperSetQueueAttributes(t, testServer, &sqs.SetQueueAttributesInput{
+		QueueUrl: queue.QueueUrl,
+		Attributes: map[string]string{
+			string(types.QueueAttributeNameDelaySeconds): "60",
+		},
+	})
+
+	// Verify the updated value
+	getResult = testHelperGetQueueAttributes(t, testServer, &sqs.GetQueueAttributesInput{
+		QueueUrl: queue.QueueUrl,
+		AttributeNames: []types.QueueAttributeName{
+			types.QueueAttributeNameDelaySeconds,
+		},
+	})
+
+	require.Equal(t, "60", getResult.Attributes[string(types.QueueAttributeNameDelaySeconds)])
 }
 
 func Test_Server_setQueueAttributes_nonExistentQueue(t *testing.T) {
