@@ -70,6 +70,72 @@ func testHelperDeleteMessage(t *testing.T, testServer *httptest.Server, input *s
 	return testHelperDoClientMethod[sqs.DeleteMessageInput, sqs.DeleteMessageOutput](t, testServer, MethodDeleteMessage, input)
 }
 
+func testHelperListDeadLetterSourceQueues(t *testing.T, testServer *httptest.Server, input *sqs.ListDeadLetterSourceQueuesInput) *sqs.ListDeadLetterSourceQueuesOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.ListDeadLetterSourceQueuesInput, sqs.ListDeadLetterSourceQueuesOutput](t, testServer, MethodListDeadLetterSourceQueues, input)
+}
+
+func testHelperGetQueueAttributes(t *testing.T, testServer *httptest.Server, input *sqs.GetQueueAttributesInput) *sqs.GetQueueAttributesOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.GetQueueAttributesInput, sqs.GetQueueAttributesOutput](t, testServer, MethodGetQueueAttributes, input)
+}
+
+func testHelperSetQueueAttributes(t *testing.T, testServer *httptest.Server, input *sqs.SetQueueAttributesInput) *sqs.SetQueueAttributesOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.SetQueueAttributesInput, sqs.SetQueueAttributesOutput](t, testServer, MethodSetQueueAttributes, input)
+}
+
+func testHelperListQueueTags(t *testing.T, testServer *httptest.Server, input *sqs.ListQueueTagsInput) *sqs.ListQueueTagsOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.ListQueueTagsInput, sqs.ListQueueTagsOutput](t, testServer, MethodListQueueTags, input)
+}
+
+func testHelperTagQueue(t *testing.T, testServer *httptest.Server, input *sqs.TagQueueInput) *sqs.TagQueueOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.TagQueueInput, sqs.TagQueueOutput](t, testServer, MethodTagQueue, input)
+}
+
+func testHelperUntagQueue(t *testing.T, testServer *httptest.Server, input *sqs.UntagQueueInput) *sqs.UntagQueueOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.UntagQueueInput, sqs.UntagQueueOutput](t, testServer, MethodUntagQueue, input)
+}
+
+func testHelperPurgeQueue(t *testing.T, testServer *httptest.Server, input *sqs.PurgeQueueInput) *sqs.PurgeQueueOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.PurgeQueueInput, sqs.PurgeQueueOutput](t, testServer, MethodPurgeQueue, input)
+}
+
+func testHelperDeleteMessageBatch(t *testing.T, testServer *httptest.Server, input *sqs.DeleteMessageBatchInput) *sqs.DeleteMessageBatchOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.DeleteMessageBatchInput, sqs.DeleteMessageBatchOutput](t, testServer, MethodDeleteMessageBatch, input)
+}
+
+func testHelperChangeMessageVisibilityBatch(t *testing.T, testServer *httptest.Server, input *sqs.ChangeMessageVisibilityBatchInput) *sqs.ChangeMessageVisibilityBatchOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.ChangeMessageVisibilityBatchInput, sqs.ChangeMessageVisibilityBatchOutput](t, testServer, MethodChangeMessageVisibilityBatch, input)
+}
+
+// Error helper functions
+func testHelperListDeadLetterSourceQueuesForError(t *testing.T, testServer *httptest.Server, input *sqs.ListDeadLetterSourceQueuesInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodListDeadLetterSourceQueues, input)
+}
+
+func testHelperGetQueueAttributesForError(t *testing.T, testServer *httptest.Server, input *sqs.GetQueueAttributesInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodGetQueueAttributes, input)
+}
+
+func testHelperSetQueueAttributesForError(t *testing.T, testServer *httptest.Server, input *sqs.SetQueueAttributesInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodSetQueueAttributes, input)
+}
+
+func testHelperPurgeQueueForError(t *testing.T, testServer *httptest.Server, input *sqs.PurgeQueueInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodPurgeQueue, input)
+}
+
 func testHelperDoClientMethod[Input, Output any](t *testing.T, testServer *httptest.Server, method string, input *Input) *Output {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
