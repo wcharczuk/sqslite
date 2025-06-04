@@ -186,6 +186,25 @@ func (it *Run) ReceiveMessage(queue Queue) (receiptHandle string, ok bool) {
 	return
 }
 
+func (it *Run) ReceiveMessages(queue Queue) (receiptHandles []string) {
+	it.checkIfCanceled()
+	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            &queue.QueueURL,
+		MaxNumberOfMessages: 10,
+		VisibilityTimeout:   5,
+	})
+	if err != nil {
+		panic(err)
+	}
+	if len(res.Messages) == 0 {
+		return
+	}
+	for _, msg := range res.Messages {
+		receiptHandles = append(receiptHandles, safeDeref(msg.ReceiptHandle))
+	}
+	return
+}
+
 func (it *Run) ReceiveMessageWithAttributeNames(queue Queue, attributeNames []string) (receiptHandle string, ok bool) {
 	it.checkIfCanceled()
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{

@@ -103,6 +103,7 @@ var scenarios = map[string]func(*integration.Run){
 	"send-receive":                           sendReceive,
 	"send-attribute-md5":                     sendAttributeMD5,
 	"send-system-attribute-md5":              sendSystemAttributeMD5,
+	"receive-message-order":                  receiveMessageOrder,
 	"receive-attribute-names":                receiveAttributeNames,
 	"receive-attribute-names-single":         receiveAttributeNamesSingle,
 	"receive-attribute-names-all":            receiveAttributeNamesAll,
@@ -190,6 +191,21 @@ func sendSystemAttributeMD5(it *integration.Run) {
 	receiptHandle, ok := it.ReceiveMessage(mainQueue)
 	if ok {
 		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func receiveMessageOrder(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+	for range 100 {
+		it.SendMessage(mainQueue)
+	}
+	var remaining = 100
+	for {
+		handles := it.ReceiveMessages(mainQueue)
+		remaining = remaining - len(handles)
+		if remaining == 0 {
+			break
+		}
 	}
 }
 

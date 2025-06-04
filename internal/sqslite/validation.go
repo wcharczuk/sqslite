@@ -107,6 +107,34 @@ func validateMessageBody(body *string, maximumMessageSizeBytes int) *Error {
 	return nil
 }
 
+func validateMessageBodyAndAttributes(body *string, attributes map[string]types.MessageAttributeValue, maximumMessageSizeBytes int) *Error {
+	if body == nil || *body == "" {
+		return ErrorInvalidParameterValueException().WithMessage("One or more parameters are invalid. Reason: Message must be at least one character.")
+	}
+	bodySizeBytes := len([]byte(*body))
+	if bodySizeBytes > maximumMessageSizeBytes {
+		return ErrorInvalidParameterValueException().WithMessage(fmt.Sprintf("One or more parameters are invalid. Reason: Message must be shorter than %d bytes.", maximumMessageSizeBytes))
+	}
+	attributeDataSizeBytes := messageAttributesSizeBytes(attributes)
+	if bodySizeBytes+attributeDataSizeBytes > maximumMessageSizeBytes {
+		return ErrorInvalidParameterValueException().WithMessage(fmt.Sprintf("One or more parameters are invalid. Reason: Message must be shorter than %d bytes.", maximumMessageSizeBytes))
+	}
+	return nil
+}
+
+func messageAttributesSizeBytes(attributes map[string]types.MessageAttributeValue) (attributeDataSizeBytes int) {
+	for key, value := range attributes {
+		attributeDataSizeBytes += len([]byte(key))
+		attributeDataSizeBytes += len([]byte(safeDeref(value.DataType)))
+		if stringValue := safeDeref(value.StringValue); stringValue != "" {
+			attributeDataSizeBytes += len([]byte(stringValue))
+		} else {
+			attributeDataSizeBytes += len(value.BinaryValue)
+		}
+	}
+	return
+}
+
 func validateBatchEntryIDs(entryIDs []string) *Error {
 	if len(distinct(entryIDs)) != len(entryIDs) {
 		return ErrorBatchEntryIdsNotDistinct()

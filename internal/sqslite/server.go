@@ -506,6 +506,10 @@ func (s Server) sendMessage(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
+	if err := validateMessageBodyAndAttributes(input.MessageBody, input.MessageAttributes, queue.MaximumMessageSizeBytes); err != nil {
+		serialize(rw, req, err)
+		return
+	}
 	msg := queue.NewMessageStateFromSendMessageInput(input)
 	queue.Push(msg)
 	serialize(rw, req, msg.ForSendMessageOutput())
@@ -530,12 +534,6 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, err)
 		return
 	}
-	totalMessageSizeBytes := sum(apply(input.Entries, func(e types.SendMessageBatchRequestEntry) int { return len([]byte(safeDeref(e.MessageBody))) }))
-	if totalMessageSizeBytes > 256*1024 {
-		serialize(rw, req, ErrorBatchRequestTooLong().WithMessagef("Batch requests cannot be longer than 262144 bytes. You have sent %d bytes.", totalMessageSizeBytes))
-		return
-	}
-
 	authz, ok := GetContextAuthorization(req.Context())
 	if !ok {
 		serialize(rw, req, ErrorResponseInvalidSecurity())
@@ -546,6 +544,14 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorQueueDoesNotExist())
 		return
 	}
+	totalMessageSizeBytes := sum(apply(input.Entries, func(e types.SendMessageBatchRequestEntry) int {
+		return len([]byte(safeDeref(e.MessageBody))) + messageAttributesSizeBytes(e.MessageAttributes)
+	}))
+	if totalMessageSizeBytes > queue.MaximumMessageSizeBytes {
+		serialize(rw, req, ErrorBatchRequestTooLong().WithMessagef("Batch requests cannot be longer than %d bytes. You have sent %d bytes.", queue.MaximumMessageSizeBytes, totalMessageSizeBytes))
+		return
+	}
+
 	messages := make([]*MessageState, 0, len(input.Entries))
 	var failedEntries []BatchResultErrorEntry
 	for _, entry := range input.Entries {
@@ -554,6 +560,13 @@ func (s Server) sendMessageBatch(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if err := validateMessageBody(entry.MessageBody, queue.MaximumMessageSizeBytes); err != nil {
+			failedEntries = append(failedEntries, BatchResultErrorEntry{
+				Error: *err,
+				ID:    safeDeref(entry.Id),
+			})
+			continue
+		}
+		if err := validateMessageBodyAndAttributes(entry.MessageBody, entry.MessageAttributes, queue.MaximumMessageSizeBytes); err != nil {
 			failedEntries = append(failedEntries, BatchResultErrorEntry{
 				Error: *err,
 				ID:    safeDeref(entry.Id),

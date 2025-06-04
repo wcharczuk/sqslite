@@ -33,10 +33,10 @@ func (l logged) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		attributes = append(attributes, slog.String("method", target))
 	}
 	if contentType := rw.Header().Get(HeaderContentType); contentType != "" {
-		attributes = append(attributes, slog.String("content-type", contentType))
+		attributes = append(attributes, slog.String("content_type", contentType))
 	}
 	if contentEncoding := rw.Header().Get(HeaderContentEncoding); contentEncoding != "" {
-		attributes = append(attributes, slog.String("content-encoding", contentEncoding))
+		attributes = append(attributes, slog.String("content_encoding", contentEncoding))
 	}
 	slog.Debug("http-request", attributes...)
 }

@@ -6,7 +6,12 @@ sqslite
 
 [sqslite](https://github.com/wcharczuk/sqslite) is designed to be a lightweight, local development only testing backend for SQS based queue consumers and producers. 
 
-It's meant to mimic the behaviors of the "real" sqs service, but without the cost or complexity of setting up real SQS.
+It's meant to mimic the behaviors of the "real" sqs service, but without the cost or complexity of setting up real SQS, specifically such that you can develop services safely against sqslite and be confident that they will then behave correctly in production.
+
+Critically it:
+- simulates SQS queue sharding; messages come back in semi-random order, and rarely come back in full batches
+- enforces all of the validations and constraints that normal queues impose; e.g. 256KiB size limits, valid utf-8 chars etc.
+- enforces lifecycle constraints like 60s cooloffs on queue deletion
 
 # Getting started
 
@@ -32,10 +37,6 @@ sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
 
 # Limitations
 
-This goes without saying but this server is not strictly perfectly at parity with the live AWS SQS service for things like
-- error messages / codes
-- legacy api calling conventions / formats outside json
-- authentication (outside parsing the request account ID)
-- kms / encryption of message bodies
+FIFO queues are not supported. 
 
-As well FIFO Queues are not currently supported. Support can be added for them later but we don't use them in practice very often, and wanted instead to focus on getting standard queues behaving correctly.
+As well, any features to do with Policies (i.e. IAM) and KMS are not supported.
