@@ -50,9 +50,19 @@ func testHelperSendMessage(t *testing.T, testServer *httptest.Server, input *sqs
 	return testHelperDoClientMethod[sqs.SendMessageInput, sqs.SendMessageOutput](t, testServer, MethodSendMessage, input)
 }
 
+func testHelperSendMessageForError(t *testing.T, testServer *httptest.Server, input *sqs.SendMessageInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodSendMessage, input)
+}
+
 func testHelperSendMessageBatch(t *testing.T, testServer *httptest.Server, input *sqs.SendMessageBatchInput) *sqs.SendMessageBatchOutput {
 	t.Helper()
 	return testHelperDoClientMethod[sqs.SendMessageBatchInput, sqs.SendMessageBatchOutput](t, testServer, MethodSendMessageBatch, input)
+}
+
+func testHelperSendMessageBatchForError(t *testing.T, testServer *httptest.Server, input *sqs.SendMessageBatchInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodSendMessageBatch, input)
 }
 
 func testHelperReceiveMessages(t *testing.T, testServer *httptest.Server, input *sqs.ReceiveMessageInput) *sqs.ReceiveMessageOutput {

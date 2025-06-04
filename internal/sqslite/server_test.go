@@ -222,6 +222,37 @@ func Test_Server_sendMessage(t *testing.T) {
 	require.Nil(t, res.MD5OfMessageSystemAttributes)
 }
 
+func Test_Server_sendMessage_sizeValidatino(t *testing.T) {
+	server, testServer := startTestServer(t)
+	queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
+	queue.MaximumMessageSizeBytes = 1024
+	res := testHelperSendMessage(t, testServer, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(testDefaultQueueURL),
+		MessageBody: aws.String(strings.Repeat("a", 512)),
+	})
+	require.EqualValues(t, "56907396339ca2b099bd12245f936ddc", safeDeref(res.MD5OfMessageBody))
+	require.Nil(t, res.MD5OfMessageAttributes)
+	require.Nil(t, res.MD5OfMessageSystemAttributes)
+
+	err := testHelperSendMessageForError(t, testServer, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(testDefaultQueueURL),
+		MessageBody: aws.String(strings.Repeat("a", 1025)),
+	})
+	require.NotNil(t, err)
+
+	err = testHelperSendMessageForError(t, testServer, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(testDefaultQueueURL),
+		MessageBody: aws.String(strings.Repeat("a", 512)),
+		MessageAttributes: map[string]types.MessageAttributeValue{
+			"test-key": {
+				DataType:    aws.String("String"),
+				StringValue: aws.String(strings.Repeat("a", 512)),
+			},
+		},
+	})
+	require.NotNil(t, err)
+}
+
 func Test_Server_sendMessage_attributes(t *testing.T) {
 	_, testServer := startTestServer(t)
 	res := testHelperSendMessage(t, testServer, &sqs.SendMessageInput{
@@ -313,6 +344,52 @@ func Test_Server_sendMessageBatch(t *testing.T) {
 
 	require.EqualValues(t, int64(2), queue.Stats().NumMessages)
 	require.EqualValues(t, int64(0), queue.Stats().NumMessagesInflight)
+}
+
+func Test_Server_sendMessageBatch_sizeValidation(t *testing.T) {
+	/* the idea here is that the bodies alone would be ok, but with the attributes we should fail */
+	server, testServer := startTestServer(t)
+	queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
+	queue.MaximumMessageSizeBytes = 1024
+	err := testHelperSendMessageBatchForError(t, testServer, &sqs.SendMessageBatchInput{
+		QueueUrl: aws.String(testDefaultQueueURL),
+		Entries: []types.SendMessageBatchRequestEntry{
+			{
+				Id:          aws.String("1"),
+				MessageBody: aws.String(strings.Repeat("a", 128)),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"test-key": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String(strings.Repeat("a", 128)),
+					},
+				},
+				MessageSystemAttributes: map[string]types.MessageSystemAttributeValue{
+					"AWSTraceHeader": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"),
+					},
+				},
+			},
+			{
+				Id:          aws.String("2"),
+				MessageBody: aws.String(strings.Repeat("a", 128)),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"test-key": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String(strings.Repeat("a", 128)),
+					},
+				},
+				MessageSystemAttributes: map[string]types.MessageSystemAttributeValue{
+					"AWSTraceHeader": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"),
+					},
+				},
+			},
+		},
+	})
+
+	require.NotNil(t, err)
 }
 
 func Test_Server_receiveMessage_awaitsMessages(t *testing.T) {
