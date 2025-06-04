@@ -113,7 +113,7 @@ func ErrorBatchEntryIdsNotDistinct() *Error {
 func ErrorInvalidBatchEntryID() *Error {
 	return &Error{
 		StatusCode: http.StatusBadRequest,
-		Type:       "com.amazonaws.sqs# InvalidBatchEntryId ",
+		Type:       "com.amazonaws.sqs#InvalidBatchEntryId",
 	}
 }
 

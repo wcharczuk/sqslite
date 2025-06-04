@@ -63,7 +63,7 @@ func main() {
 			os.Exit(1)
 		}
 		count++
-		if *flagLimit > 0 && count > *flagLimit {
+		if *flagLimit > 0 && count >= *flagLimit {
 			break
 		}
 	}

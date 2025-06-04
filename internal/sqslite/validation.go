@@ -2,6 +2,7 @@ package sqslite
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strconv"
 	"time"
@@ -26,10 +27,11 @@ func validateQueueName(queueName string) *Error {
 }
 
 func validateDelay(delay time.Duration) *Error {
+	// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_CreateQueue.html
 	if delay < 0 {
 		return ErrorInvalidParameterValueException().WithMessagef("DelaySeconds must be greater than or equal to 0, you put: %v", delay)
 	}
-	if delay > 90*time.Second {
+	if delay > 900*time.Second { // 15 minutes
 		return ErrorInvalidParameterValueException().WithMessagef("DelaySeconds must be less than or equal to 90 seconds, you put: %v", delay)
 	}
 	return nil
@@ -94,24 +96,15 @@ func validateRedrivePolicy(redrivePolicy RedrivePolicy) *Error {
 
 func validateMessageBody(body *string, maximumMessageSizeBytes int) *Error {
 	if body == nil || *body == "" {
-		return nil
+		return ErrorInvalidParameterValueException().WithMessage("One or more parameters are invalid. Reason: Message must be at least one character.")
 	}
 	if len([]byte(*body)) > maximumMessageSizeBytes {
-		return ErrorInvalidParameterValueException().WithMessage("One or more parameters are invalid. Reason: Message must be shorter than 262144 bytes.")
+		return ErrorInvalidParameterValueException().WithMessage(fmt.Sprintf("One or more parameters are invalid. Reason: Message must be shorter than %d bytes.", maximumMessageSizeBytes))
 	}
-	if isMessageBodyExclusivelyInvalidCharacters(*body) {
+	if !utf8.ValidString(*body) {
 		return ErrorInvalidParameterValueException().WithMessagef("Message body must contain at least one valid character")
 	}
 	return nil
-}
-
-func isMessageBodyExclusivelyInvalidCharacters(body string) bool {
-	for _, r := range body {
-		if utf8.ValidRune(r) {
-			return false
-		}
-	}
-	return true
 }
 
 func validateBatchEntryIDs(entryIDs []string) *Error {
@@ -129,6 +122,9 @@ func validateBatchEntryIDs(entryIDs []string) *Error {
 var validBatchEntryIDRegexp = regexp.MustCompile("^[0-9,a-z,A-Z,_,-]+$")
 
 func validateBatchEntryID(entryID string) *Error {
+	if len(entryID) == 0 {
+		return ErrorInvalidBatchEntryID().WithMessage("Id must be non-empty")
+	}
 	if len(entryID) > 80 {
 		return ErrorInvalidBatchEntryID().WithMessagef("Id must be fewer than 80 characters; you put %d", len(entryID))
 	}
@@ -164,7 +160,7 @@ func readAttributeDurationSeconds(attributes map[string]string, attributeName ty
 	return
 }
 
-func readAttributeDurationInt(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[int], err *Error) {
+func readAttributeInt(attributes map[string]string, attributeName types.QueueAttributeName) (output Optional[int], err *Error) {
 	value, ok := attributes[string(attributeName)]
 	if !ok {
 		return

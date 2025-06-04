@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/jonboulle/clockwork"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
+	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 type Run struct {
@@ -125,6 +126,17 @@ func (it *Run) SendMessage(queue Queue) {
 	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
 		QueueUrl:    &queue.QueueURL,
 		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, atomic.AddUint64(&it.messageOrdinal, 1))),
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (it *Run) SendMessageWithBody(queue Queue, body string) {
+	it.checkIfCanceled()
+	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
+		QueueUrl:    &queue.QueueURL,
+		MessageBody: aws.String(body),
 	})
 	if err != nil {
 		panic(err)
@@ -299,10 +311,11 @@ func (it *Run) ListMessagesMoveTasks(source Queue) (tasks []MoveMessagesTask) {
 }
 
 func (it *Run) formatQueueName(isDLQ bool) string {
+	randomID := uuid.V4()
 	if isDLQ {
-		return fmt.Sprintf("test-%s-%d-dlq", it.id, atomic.AddUint64(&it.queueOrdinal, 1))
+		return fmt.Sprintf("test-%s-%d-%s-dlq", it.id, atomic.AddUint64(&it.queueOrdinal, 1), randomID.ShortString())
 	}
-	return fmt.Sprintf("test-%s-%d", it.id, atomic.AddUint64(&it.queueOrdinal, 1))
+	return fmt.Sprintf("test-%s-%d-%s", it.id, atomic.AddUint64(&it.queueOrdinal, 1), randomID.ShortString())
 }
 
 type MoveMessagesTask struct {

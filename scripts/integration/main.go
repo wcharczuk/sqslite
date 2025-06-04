@@ -97,6 +97,9 @@ func main() {
 }
 
 var scenarios = map[string]func(*integration.Run){
+	"send-body-raw-text":                     sendBodyRawText,
+	"send-body-invalid-json":                 sendBodyInvalidJSON,
+	"send-body-invalid-string":               sendBodyInvalidString,
 	"send-receive":                           sendReceive,
 	"send-attribute-md5":                     sendAttributeMD5,
 	"send-system-attribute-md5":              sendSystemAttributeMD5,
@@ -110,6 +113,34 @@ var scenarios = map[string]func(*integration.Run){
 	"fill-dlq":                               fillDLQ,
 	"messages-move":                          messagesMove,
 	"messages-move-invalid-source":           messagesMoveInvalidSource,
+}
+
+func sendBodyRawText(it *integration.Run) {
+	dlq := it.CreateQueue()
+	mainQueue := it.CreateQueueWithDLQ(dlq)
+	it.SendMessageWithBody(mainQueue, "this is a test")
+	receiptHandle, ok := it.ReceiveMessage(mainQueue)
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func sendBodyInvalidJSON(it *integration.Run) {
+	dlq := it.CreateQueue()
+	mainQueue := it.CreateQueueWithDLQ(dlq)
+	it.SendMessageWithBody(mainQueue, `{"message_index`)
+	receiptHandle, ok := it.ReceiveMessage(mainQueue)
+	if ok {
+		it.DeleteMessage(mainQueue, receiptHandle)
+	}
+}
+
+func sendBodyInvalidString(it *integration.Run) {
+	dlq := it.CreateQueue()
+	mainQueue := it.CreateQueueWithDLQ(dlq)
+	it.ExpectFailure(func() {
+		it.SendMessageWithBody(mainQueue, string([]byte{0xC0, 0xAF, 0xFE, 0xFF}))
+	})
 }
 
 func sendReceive(it *integration.Run) {

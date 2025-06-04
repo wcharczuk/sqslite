@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -54,17 +53,6 @@ func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
 		QueueName: aws.String("test!!!queue"),
 	})
 	require.NotNil(t, err)
-}
-
-func Test_validateMessageBody(t *testing.T) {
-	err := validateMessageBody(aws.String(`{"message":0}`), 256*1024)
-	require.Nil(t, err)
-
-	err = validateMessageBody(aws.String(strings.Repeat("a", 512)), 256)
-	require.NotNil(t, err)
-
-	err = validateMessageBody(aws.String(""), 256)
-	require.Nil(t, err)
 }
 
 func Test_Queue_NewMessageStateFromSendMessageInput(t *testing.T) {

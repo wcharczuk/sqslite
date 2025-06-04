@@ -750,7 +750,7 @@ func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, 
 		q.Delay = delay
 	}
 
-	maximumMessageSizeBytes, err := readAttributeDurationInt(messageAttributes, types.QueueAttributeNameMaximumMessageSize)
+	maximumMessageSizeBytes, err := readAttributeInt(messageAttributes, types.QueueAttributeNameMaximumMessageSize)
 	if err != nil {
 		return err
 	}
