@@ -1147,18 +1147,22 @@ func Test_Server_changeMessageVisibilityBatch(t *testing.T) {
 		})
 	}
 
-	// Receive messages to get receipt handles
-	receiveResult := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
-		QueueUrl:            queue.QueueUrl,
-		MaxNumberOfMessages: 10,
-		VisibilityTimeout:   5, // Short visibility timeout
-	})
+	var messages []types.Message
+	for range 3 {
+		// Receive messages to get receipt handles
+		receiveResult := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
+			QueueUrl:            queue.QueueUrl,
+			MaxNumberOfMessages: 1,
+			VisibilityTimeout:   5, // Short visibility timeout
+		})
+		messages = append(messages, receiveResult.Messages...)
+	}
 
-	require.Len(t, receiveResult.Messages, 3)
+	require.Len(t, messages, 3)
 
 	// Prepare batch change visibility entries
 	var entries []types.ChangeMessageVisibilityBatchRequestEntry
-	for i, msg := range receiveResult.Messages {
+	for i, msg := range messages {
 		entries = append(entries, types.ChangeMessageVisibilityBatchRequestEntry{
 			Id:                aws.String(fmt.Sprintf("entry-%d", i)),
 			ReceiptHandle:     msg.ReceiptHandle,
