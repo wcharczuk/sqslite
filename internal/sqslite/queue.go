@@ -300,9 +300,6 @@ func (q *Queue) Push(msgs ...*MessageState) {
 
 	now := q.clock.Now()
 	for _, m := range msgs {
-		if m.OriginalSourceQueue == nil {
-			m.OriginalSourceQueue = q
-		}
 		// only apply the queue level default if
 		// - it's set
 		// - the message does not specify a delay

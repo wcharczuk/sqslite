@@ -44,6 +44,38 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	require.Equal(t, 120000, q.MaximumMessagesInflight)
 }
 
+func Test_RedriveAllowPolicy_AllowSource_RedrivePermissionAllowAll(t *testing.T) {
+	rap := RedriveAllowPolicy{
+		RedrivePermission: RedrivePermissionAllowAll,
+	}
+	require.True(t, rap.AllowSource("any-01"))
+	require.True(t, rap.AllowSource("any-02"))
+
+	rap = RedriveAllowPolicy{
+		RedrivePermission: RedrivePermissionDenyAll,
+	}
+	require.False(t, rap.AllowSource("any-01"))
+	require.False(t, rap.AllowSource("any-02"))
+
+	rap = RedriveAllowPolicy{
+		RedrivePermission: RedrivePermissionByQueue,
+		SourceQueueARNs: []string{
+			"any-02",
+			"any-03",
+			"any-04",
+		},
+	}
+	require.False(t, rap.AllowSource("any-01"))
+	require.True(t, rap.AllowSource("any-02"))
+	require.True(t, rap.AllowSource("any-03"))
+
+	rap = RedriveAllowPolicy{
+		RedrivePermission: RedrivePermission("not real"),
+	}
+	require.False(t, rap.AllowSource("any-01"))
+	require.False(t, rap.AllowSource("any-02"))
+}
+
 func Test_Queue_NewQueueFromCreateQueueInput_invalidName(t *testing.T) {
 	_, err := NewQueueFromCreateQueueInput(clockwork.NewFakeClock(), Authorization{
 		Region:    Some("us-west-2"),

@@ -2,6 +2,7 @@ package sqslite
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jonboulle/clockwork"
@@ -46,6 +47,38 @@ func Test_Accounts_EnsureQueues_multipleKeys(t *testing.T) {
 
 	require.NotNil(t, queues01.deletedQueueWorker)
 	require.NotNil(t, queues01.deletedQueueWorkerCancel)
+}
+
+func Test_Accounts_EachQueue(t *testing.T) {
+	clock := clockwork.NewFakeClock()
+	accounts := NewAccounts(clock)
+	defer accounts.Close()
+
+	var nameOrdinal uint32
+	queues00 := accounts.EnsureQueues("test-account-id-00")
+	queues00.AddQueue(createTestQueueWithName(t, clock, fmt.Sprintf("test-queue-%d", atomic.AddUint32(&nameOrdinal, 1))))
+	queues01 := accounts.EnsureQueues("test-account-id-01")
+	queues01.AddQueue(createTestQueueWithName(t, clock, fmt.Sprintf("test-queue-%d", atomic.AddUint32(&nameOrdinal, 1))))
+	queues01.AddQueue(createTestQueueWithName(t, clock, fmt.Sprintf("test-queue-%d", atomic.AddUint32(&nameOrdinal, 1))))
+	queues02 := accounts.EnsureQueues("test-account-id-02")
+	queues02.AddQueue(createTestQueueWithName(t, clock, fmt.Sprintf("test-queue-%d", atomic.AddUint32(&nameOrdinal, 1))))
+	queues02.AddQueue(createTestQueueWithName(t, clock, fmt.Sprintf("test-queue-%d", atomic.AddUint32(&nameOrdinal, 1))))
+	queues02.AddQueue(createTestQueueWithName(t, clock, fmt.Sprintf("test-queue-%d", atomic.AddUint32(&nameOrdinal, 1))))
+
+	var queues []string
+	for queue := range accounts.EachQueue() {
+		queues = append(queues, queue.URL)
+	}
+	require.Len(t, queues, 6)
+
+	var shortQueues []string
+	for queue := range accounts.EachQueue() {
+		shortQueues = append(shortQueues, queue.URL)
+		if len(shortQueues) == 3 {
+			break
+		}
+	}
+	require.Len(t, queues, 6)
 }
 
 func requireHasKey[K comparable, V any](t *testing.T, key K, m map[K]V, msgAndArgs ...any) {
