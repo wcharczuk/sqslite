@@ -734,10 +734,6 @@ func (s Server) startMessageMoveTask(rw http.ResponseWriter, req *http.Request) 
 		serialize(rw, req, ErrorInvalidAddress().WithMessagef("SourceArn is required"))
 		return
 	}
-	if input.DestinationArn == nil || *input.DestinationArn == "" {
-		serialize(rw, req, ErrorInvalidAddress().WithMessagef("DestinationArn is required"))
-		return
-	}
 	if input.MaxNumberOfMessagesPerSecond != nil && (*input.MaxNumberOfMessagesPerSecond < 0 || *input.MaxNumberOfMessagesPerSecond > 500) {
 		serialize(rw, req, ErrorInvalidParameterValueException().WithMessagef("MaxNumberOfMessagesPerSecond must be less than 500, you put %d", *input.MaxNumberOfMessagesPerSecond))
 		return
@@ -748,7 +744,7 @@ func (s Server) startMessageMoveTask(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 	queues := s.accounts.EnsureQueues(authz.AccountID)
-	mmt, err := queues.StartMoveMessageTask(s.clock, *input.SourceArn, *input.DestinationArn, safeDeref(input.MaxNumberOfMessagesPerSecond))
+	mmt, err := queues.StartMoveMessageTask(s.clock, *input.SourceArn, safeDeref(input.DestinationArn), safeDeref(input.MaxNumberOfMessagesPerSecond))
 	if err != nil {
 		serialize(rw, req, err)
 		return

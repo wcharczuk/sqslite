@@ -125,6 +125,31 @@ func testHelperChangeMessageVisibilityBatch(t *testing.T, testServer *httptest.S
 	return testHelperDoClientMethod[sqs.ChangeMessageVisibilityBatchInput, sqs.ChangeMessageVisibilityBatchOutput](t, testServer, MethodChangeMessageVisibilityBatch, input)
 }
 
+func testHelperStartMessageMoveTask(t *testing.T, testServer *httptest.Server, input *sqs.StartMessageMoveTaskInput) *sqs.StartMessageMoveTaskOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.StartMessageMoveTaskInput, sqs.StartMessageMoveTaskOutput](t, testServer, MethodStartMessageMoveTask, input)
+}
+
+func testHelperStartMessageMoveTaskForError(t *testing.T, testServer *httptest.Server, input *sqs.StartMessageMoveTaskInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodStartMessageMoveTask, input)
+}
+
+func testHelperCancelMessageMoveTaskForError(t *testing.T, testServer *httptest.Server, input *sqs.CancelMessageMoveTaskInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodCancelMessageMoveTask, input)
+}
+
+func testHelperListMessageMoveTasks(t *testing.T, testServer *httptest.Server, input *sqs.ListMessageMoveTasksInput) *sqs.ListMessageMoveTasksOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.ListMessageMoveTasksInput, sqs.ListMessageMoveTasksOutput](t, testServer, MethodListMessageMoveTasks, input)
+}
+
+func testHelperListMessageMoveTasksForError(t *testing.T, testServer *httptest.Server, input *sqs.ListMessageMoveTasksInput) *Error {
+	t.Helper()
+	return testHelperDoClientMethodForError(t, testServer, MethodListMessageMoveTasks, input)
+}
+
 // Error helper functions
 func testHelperListDeadLetterSourceQueuesForError(t *testing.T, testServer *httptest.Server, input *sqs.ListDeadLetterSourceQueuesInput) *Error {
 	t.Helper()
@@ -321,4 +346,13 @@ func pushTestMessages(q *Queue, count int) []*MessageState {
 	}
 	q.Push(messages...)
 	return messages
+}
+
+func getQueueARN(server *Server, queueURL string) string {
+	queues := server.accounts.EnsureQueues(testAccountID)
+	queue, ok := queues.GetQueue(queueURL)
+	if !ok {
+		return ""
+	}
+	return queue.ARN
 }
