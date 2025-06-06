@@ -6,10 +6,21 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *' # Run every day, at 2AM UTC.
+
+env:
+  GOPATH: ${{ github.workspace }}
+  WORKING_DIR: ./src/github.com/wcharczuk/sqslite
 
 jobs:
   tests:
     name: "Tests"
+
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
     runs-on: ubuntu-latest
 
     env:
@@ -25,7 +36,14 @@ jobs:
         go-version: '1.24'
 
     - name: Run all tests
-      run: go test -count 10 ./...
+      run: |
+        go version
+        ./scripts/test.sh
+
+    - name: Code coverage
+      uses: codecov/codecov-action@ad3126e916f78f00edff4ed0317cf185271ccc2d # v5.4.2
+      with:
+        file: ${{ env.WORKING_DIR }}/coverage.txt
 
   lint:
     name: "Lint"
