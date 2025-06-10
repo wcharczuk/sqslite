@@ -97,6 +97,8 @@ func main() {
 }
 
 var scenarios = map[string]func(*integration.Run){
+	"get-queue-url":                          getQueueURL,
+	"get-queue-url-by-account-id":            getQueueURLByAccountID,
 	"send-body-raw-text":                     sendBodyRawText,
 	"send-body-invalid-json":                 sendBodyInvalidJSON,
 	"send-body-invalid-string":               sendBodyInvalidString,
@@ -114,6 +116,16 @@ var scenarios = map[string]func(*integration.Run){
 	"fill-dlq":                               fillDLQ,
 	"messages-move":                          messagesMove,
 	"messages-move-invalid-source":           messagesMoveInvalidSource,
+}
+
+func getQueueURL(it *integration.Run) {
+	dlq := it.CreateQueue()
+	_ = it.GetQueueURL(dlq.QueueName)
+}
+
+func getQueueURLByAccountID(it *integration.Run) {
+	dlq := it.CreateQueue()
+	_ = it.GetQueueURLByAccountID(dlq.QueueName, "test-account-id")
 }
 
 func sendBodyRawText(it *integration.Run) {

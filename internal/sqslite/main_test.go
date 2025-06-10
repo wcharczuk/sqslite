@@ -85,6 +85,11 @@ func testHelperListDeadLetterSourceQueues(t *testing.T, testServer *httptest.Ser
 	return testHelperDoClientMethod[sqs.ListDeadLetterSourceQueuesInput, sqs.ListDeadLetterSourceQueuesOutput](t, testServer, MethodListDeadLetterSourceQueues, input)
 }
 
+func testHelperGetQueueURL(t *testing.T, testServer *httptest.Server, input *sqs.GetQueueUrlInput) *sqs.GetQueueUrlOutput {
+	t.Helper()
+	return testHelperDoClientMethod[sqs.GetQueueUrlInput, sqs.GetQueueUrlOutput](t, testServer, MethodGetQueueURL, input)
+}
+
 func testHelperGetQueueAttributes(t *testing.T, testServer *httptest.Server, input *sqs.GetQueueAttributesInput) *sqs.GetQueueAttributesOutput {
 	t.Helper()
 	return testHelperDoClientMethod[sqs.GetQueueAttributesInput, sqs.GetQueueAttributesOutput](t, testServer, MethodGetQueueAttributes, input)
@@ -234,6 +239,8 @@ func testHelperDoClientMethodWithoutAuth(t *testing.T, testServer *httptest.Serv
 const (
 	testAccountID           = "test-account"
 	testMaxReceiveCount     = 3
+	testDefaultQueueName    = "default"
+	testDefaultDLQQueueName = "default-dlq"
 	testDefaultQueueURL     = "http://sqslite.local/test-account/default"
 	testDefaultDLQQueueURL  = "http://sqslite.local/test-account/default-dlq"
 	testAuthorizationHeader = "AWS4-HMAC-SHA256 Credential=test-account/20250522/us-east-1/sqs/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-date;x-amz-security-token;x-amz-target;x-amzn-query-mode, Signature=DEADBEEF"

@@ -121,6 +121,31 @@ func (it *Run) checkIfCanceled() {
 	}
 }
 
+func (it *Run) GetQueueURL(queueName string) (queueURL string) {
+	it.checkIfCanceled()
+	getQueueUrlRes, err := it.sqsClient.GetQueueUrl(it.ctx, &sqs.GetQueueUrlInput{
+		QueueName: aws.String(queueName),
+	})
+	if err != nil {
+		panic(err)
+	}
+	queueURL = safeDeref(getQueueUrlRes.QueueUrl)
+	return
+}
+
+func (it *Run) GetQueueURLByAccountID(queueName, accountID string) (queueURL string) {
+	it.checkIfCanceled()
+	getQueueUrlRes, err := it.sqsClient.GetQueueUrl(it.ctx, &sqs.GetQueueUrlInput{
+		QueueName:              aws.String(queueName),
+		QueueOwnerAWSAccountId: aws.String(accountID),
+	})
+	if err != nil {
+		panic(err)
+	}
+	queueURL = safeDeref(getQueueUrlRes.QueueUrl)
+	return
+}
+
 func (it *Run) SendMessage(queue Queue) {
 	it.checkIfCanceled()
 	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{

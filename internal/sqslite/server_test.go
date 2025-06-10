@@ -660,6 +660,29 @@ func Test_Server_listDeadLetterSourceQueues_nextTokenWithoutMaxResults(t *testin
 	require.Contains(t, err.Message, "MaxResults must be set if NextToken is set")
 }
 
+func Test_Server_getQueueURL(t *testing.T) {
+	_, testServer := startTestServer(t)
+	result := testHelperGetQueueURL(t, testServer, &sqs.GetQueueUrlInput{
+		QueueName: aws.String(testDefaultQueueName),
+	})
+	require.Equal(t, testDefaultQueueURL, safeDeref(result.QueueUrl))
+}
+
+func Test_Server_getQueueURL_accountID(t *testing.T) {
+	server, testServer := startTestServer(t)
+
+	altQueue := createTestQueueWithName(t, server.clock, "alternate-queue")
+
+	queues := server.Accounts().EnsureQueues("test-account-id-alt")
+	queues.AddQueue(altQueue)
+
+	result := testHelperGetQueueURL(t, testServer, &sqs.GetQueueUrlInput{
+		QueueName:              aws.String("alternate-queue"),
+		QueueOwnerAWSAccountId: aws.String("test-account-id-alt"),
+	})
+	require.Equal(t, altQueue.URL, safeDeref(result.QueueUrl))
+}
+
 // Tests for getQueueAttributes
 
 func Test_Server_getQueueAttributes(t *testing.T) {

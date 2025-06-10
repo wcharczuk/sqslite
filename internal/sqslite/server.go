@@ -88,6 +88,8 @@ func (s Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		s.listQueues(rw, req)
 	case MethodListDeadLetterSourceQueues:
 		s.listDeadLetterSourceQueues(rw, req)
+	case MethodGetQueueURL:
+		s.getQueueURL(rw, req)
 	case MethodGetQueueAttributes:
 		s.getQueueAttributes(rw, req)
 	case MethodSetQueueAttributes:
@@ -272,6 +274,33 @@ func (s Server) listDeadLetterSourceQueues(rw http.ResponseWriter, req *http.Req
 	serialize(rw, req, &sqs.ListDeadLetterSourceQueuesOutput{
 		QueueUrls: queueURLs,
 		NextToken: nextToken,
+	})
+}
+
+func (s Server) getQueueURL(rw http.ResponseWriter, req *http.Request) {
+	input, err := deserialize[sqs.GetQueueUrlInput](req)
+	if err != nil {
+		serialize(rw, req, err)
+		return
+	}
+	authz, ok := GetContextAuthorization(req.Context())
+	if !ok {
+		serialize(rw, req, ErrorResponseInvalidSecurity())
+		return
+	}
+
+	accountID := authz.AccountID
+	if ownerAccountID := safeDeref(input.QueueOwnerAWSAccountId); ownerAccountID != "" {
+		accountID = ownerAccountID
+	}
+
+	queueURL, ok := s.accounts.EnsureQueues(accountID).GetQueueURL(safeDeref(input.QueueName))
+	if !ok {
+		serialize(rw, req, ErrorQueueDoesNotExist())
+		return
+	}
+	serialize(rw, req, &sqs.GetQueueUrlOutput{
+		QueueUrl: aws.String(queueURL),
 	})
 }
 

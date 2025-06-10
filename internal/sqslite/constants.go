@@ -34,6 +34,7 @@ const (
 	MethodCreateQueue                  = "AmazonSQS.CreateQueue"
 	MethodListQueues                   = "AmazonSQS.ListQueues"
 	MethodListDeadLetterSourceQueues   = "AmazonSQS.ListDeadLetterSourceQueues"
+	MethodGetQueueURL                  = "AmazonSQS.GetQueueUrl"
 	MethodGetQueueAttributes           = "AmazonSQS.GetQueueAttributes"
 	MethodSetQueueAttributes           = "AmazonSQS.SetQueueAttributes"
 	MethodListQueueTags                = "AmazonSQS.ListQueueTags"
