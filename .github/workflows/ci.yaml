@@ -10,24 +10,16 @@ on:
     - cron: '0 2 * * *' # Run every day, at 2AM UTC.
 
 env:
-  GOPATH: ${{ github.workspace }}
-  WORKING_DIR: ./src/github.com/wcharczuk/sqslite
+  GOOS: "linux"
+  GOARCH: "amd64"
+  GO111MODULE: "on"
+  CGO_ENABLED: "0"
 
 jobs:
   tests:
     name: "Tests"
 
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
-
     runs-on: ubuntu-latest
-
-    env:
-      GOOS: "linux"
-      GOARCH: "amd64"
-      GO111MODULE: "on"
-      CGO_ENABLED: "0"
 
     steps:
     - uses: actions/checkout@v4
