@@ -144,6 +144,9 @@ func (q *Queues) StartMoveMessageTask(clock clockwork.Clock, sourceArn, destinat
 
 	var destinationQueue *Queue
 	if destinationArn != "" {
+		// if the user starting the task is specifying
+		// a specific queue we should first validate it exists
+		// and it allows the source queue (the dlq) as a source.
 		destinationQueueURL, ok := q.queueARNs[destinationArn]
 		if !ok {
 			return nil, ErrorResourceNotFoundException().WithMessage("DestinationArn")

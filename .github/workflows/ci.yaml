@@ -38,7 +38,7 @@ jobs:
     - name: Run all tests
       run: |
         go version
-        ./scripts/test.sh
+        go test -race ./...
 
   lint:
     name: "Lint"
