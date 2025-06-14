@@ -34,7 +34,7 @@ func (s Server) adminGetAccounts(w http.ResponseWriter, r *http.Request, ps http
 	accounts := slices.Collect(s.accounts.EachAccount())
 	w.Header().Set(httputil.HeaderContentType, httputil.ContentTypeApplicationJSON)
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(output)
+	_ = json.NewEncoder(w).Encode(accounts)
 }
 
 func (s Server) adminGetQueues(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {

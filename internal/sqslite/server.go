@@ -26,8 +26,7 @@ func NewServer(clock clockwork.Clock) *Server {
 		clock:    clock,
 	}
 
-	server.router.GET("/admin/:account_id/queues", server.adminGetQueues)
-	server.router.GET("/admin/:account_id/queue/:queue_name", server.adminGetQueue)
+	server.RegisterAdmin()
 	return server
 }
 
