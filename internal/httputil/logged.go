@@ -6,7 +6,9 @@ import (
 	"time"
 )
 
-// Logged wraps an input handler with logging at [slog.LevelDebug] level.
+// Logged wraps an input handler with per-request logging at [slog.LevelDebug] level.
+//
+// The passed handler is called directly outside logging which happens _after_ the request finishes.
 func Logged(h http.Handler) http.Handler {
 	return &logged{
 		next: h,
