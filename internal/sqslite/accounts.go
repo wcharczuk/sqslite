@@ -35,6 +35,19 @@ func (a *Accounts) EnsureQueues(accountID string) *Queues {
 }
 
 // EachQueue returns an iterator for every queue in the server across all accounts.
+func (a *Accounts) EachAccount() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		for accountID := range a.accounts {
+			if !yield(accountID) {
+				return
+			}
+		}
+	}
+}
+
+// EachQueue returns an iterator for every queue in the server across all accounts.
 func (a *Accounts) EachQueue() iter.Seq[*Queue] {
 	return func(yield func(*Queue) bool) {
 		a.mu.Lock()

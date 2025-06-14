@@ -24,6 +24,19 @@ type adminQueue struct {
 	Stats QueueStats
 }
 
+func (s Server) RegisterAdmin() {
+	s.router.GET("/admin/accounts", s.adminGetAccounts)
+	s.router.GET("/admin/:account_id/queues", s.adminGetQueues)
+	s.router.GET("/admin/:account_id/queue/:queue_name", s.adminGetQueue)
+}
+
+func (s Server) adminGetAccounts(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	accounts := slices.Collect(s.accounts.EachAccount())
+	w.Header().Set(httputil.HeaderContentType, httputil.ContentTypeApplicationJSON)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(output)
+}
+
 func (s Server) adminGetQueues(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	accountID := ps.ByName("account_id")
 	if accountID == "" {
