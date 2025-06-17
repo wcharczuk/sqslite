@@ -26,8 +26,8 @@ type adminQueue struct {
 
 func (s Server) RegisterAdmin() {
 	s.router.GET("/admin/accounts", s.adminGetAccounts)
-	s.router.GET("/admin/:account_id/queues", s.adminGetQueues)
-	s.router.GET("/admin/:account_id/queue/:queue_name", s.adminGetQueue)
+	s.router.GET("/admin/account/:account_id/queues", s.adminGetQueues)
+	s.router.GET("/admin/account/:account_id/queue/:queue_name", s.adminGetQueue)
 }
 
 func (s Server) adminGetAccounts(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
