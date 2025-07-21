@@ -20,7 +20,12 @@ import (
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
-func main() {}
+func main() {
+	if err := root.Run(context.Background(), os.Args); err != nil {
+		fmt.Fprintf(os.Stderr, "%+v\n", err)
+		os.Exit(1)
+	}
+}
 
 var root = &cli.Command{
 	Name:  "sqsctl",
@@ -157,8 +162,47 @@ var queueCreate = &cli.Command{
 var queueUpdate = &cli.Command{
 	Name:  "update",
 	Usage: "Update a queue",
-	Flags: defaultFlags,
+	Flags: append(defaultFlags,
+		&cli.StringFlag{
+			Name:  "queue-url",
+			Usage: "The Queue URL to target",
+			Value: sqslite.FormatQueueURL(sqslite.DefaultAuthorization, sqslite.DefaultQueueName),
+		},
+		&cli.StringMapFlag{
+			Name:  "attribute",
+			Usage: "The sqs queue attributes",
+		},
+		&cli.StringMapFlag{
+			Name:  "tag",
+			Usage: "The sqs queue tags",
+		},
+	),
 	Action: func(ctx context.Context, c *cli.Command) error {
+		sess, err := config.LoadDefaultConfig(ctx,
+			config.WithRegion(c.String("region")),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+		)
+		if err != nil {
+			return err
+		}
+		sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
+			o.BaseEndpoint = aws.String(c.String("endpoint"))
+			o.AppID = "sqslite-demo-producer"
+		})
+		_, err = sqsClient.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+			QueueUrl:   aws.String(c.String("queue-url")),
+			Attributes: c.StringMap("attribute"),
+		})
+		if err != nil {
+			return err
+		}
+		_, err = sqsClient.TagQueue(ctx, &sqs.TagQueueInput{
+			QueueUrl: aws.String(c.String("queue-url")),
+			Tags:     c.StringMap("tag"),
+		})
+		if err != nil {
+			return err
+		}
 		return nil
 	},
 }
