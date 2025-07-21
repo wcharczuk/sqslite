@@ -35,7 +35,13 @@ var root = &cli.Command{
 	},
 }
 
+var debugEnabled bool
+
 var defaultFlags = []cli.Flag{
+	&cli.BoolFlag{
+		Name:        "debug",
+		Destination: &debugEnabled,
+	},
 	&cli.StringFlag{
 		Name:  "region",
 		Usage: "The aws region to configure the client with",
@@ -46,6 +52,12 @@ var defaultFlags = []cli.Flag{
 		Usage: "The endpoint to configure the client with",
 		Value: "http://localhost:4566",
 	},
+}
+
+func debugf(format string, args ...any) {
+	if debugEnabled {
+		fmt.Fprintln(os.Stderr, "[DEBUG] "+fmt.Sprintf(format, args...))
+	}
 }
 
 var sendMessage = &cli.Command{
@@ -138,6 +150,7 @@ var queueCreate = &cli.Command{
 		},
 	),
 	Action: func(ctx context.Context, c *cli.Command) error {
+		debugf("creating queue %s", c.String("name"))
 		sess, err := config.LoadDefaultConfig(ctx,
 			config.WithRegion(c.String("region")),
 			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
@@ -227,7 +240,9 @@ var queuesList = &cli.Command{
 			o.AppID = "sqslite-demo-producer"
 		})
 
-		res, err := sqsClient.ListQueues(ctx, &sqs.ListQueuesInput{})
+		res, err := sqsClient.ListQueues(ctx, &sqs.ListQueuesInput{
+			MaxResults: aws.Int32(100),
+		})
 		if err != nil {
 			return err
 		}
@@ -236,7 +251,8 @@ var queuesList = &cli.Command{
 		}
 		for res.NextToken != nil {
 			res, err = sqsClient.ListQueues(ctx, &sqs.ListQueuesInput{
-				NextToken: res.NextToken,
+				NextToken:  res.NextToken,
+				MaxResults: aws.Int32(100),
 			})
 			if err != nil {
 				return err
