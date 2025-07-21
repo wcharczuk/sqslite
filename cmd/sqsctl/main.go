@@ -31,6 +31,7 @@ var root = &cli.Command{
 	Name:  "sqsctl",
 	Usage: "Control sqslite servers",
 	Commands: []*cli.Command{
+		sendMessage,
 		queues,
 	},
 }
