@@ -8,7 +8,7 @@ import (
 
 // WriteOutput returns a function that performs an interlocked write to
 // a given output. The lock is referenced from the transitive closure of the
-// funciton returned.
+// function returned.
 func WriteOutput(output io.Writer) func(Request) {
 	encoderMu := &sync.Mutex{}
 	encoder := json.NewEncoder(output)

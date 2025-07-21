@@ -98,6 +98,9 @@ var sendMessage = &cli.Command{
 			DelaySeconds:      delaySeconds,
 			MessageAttributes: formatMessageAttributes(c.StringMap("attribute")),
 		})
+		if err != nil {
+			return err
+		}
 		fmt.Println(*output.MessageId)
 		return nil
 	},
