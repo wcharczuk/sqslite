@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/pmezard/go-difflib/difflib"
-	sqslite_httputil "github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/httpz"
 	"github.com/wcharczuk/sqslite/internal/spy"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
@@ -63,7 +63,7 @@ var (
 		sqslite.HeaderAmzQueryMode,
 	}
 	responseHeadersShouldMatch = []string{
-		sqslite_httputil.HeaderContentType,
+		httpz.HeaderContentType,
 	}
 	responseHeadersShouldBePresent = []string{
 		sqslite.HeaderAmznRequestID,

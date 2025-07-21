@@ -19,7 +19,7 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/httpz"
 	"github.com/wcharczuk/sqslite/internal/slant"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
@@ -113,10 +113,10 @@ func main() {
 	var handler http.Handler
 	if *flagGzip {
 		slog.Info("using gzip compression on responses")
-		handler = httputil.Logged(httputil.Gzipped(server))
+		handler = httpz.Logged(httpz.Gzipped(server))
 	} else {
 		slog.Info("skipping gzip compression on responses")
-		handler = httputil.Logged(server)
+		handler = httpz.Logged(server)
 	}
 
 	httpSrv := &http.Server{

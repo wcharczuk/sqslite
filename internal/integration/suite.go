@@ -19,7 +19,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	"golang.org/x/sync/errgroup"
 
-	sqslite_httputil "github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/httpz"
 	"github.com/wcharczuk/sqslite/internal/spy"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 )
@@ -130,7 +130,7 @@ func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
 		defer sqsliteListener.Close()
 
 		sqsliteServer := &http.Server{
-			Handler: sqslite_httputil.Logged(sqslite.NewServer(s.ClockOrDefault())),
+			Handler: httpz.Logged(sqslite.NewServer(s.ClockOrDefault())),
 		}
 
 		go sqsliteServer.Serve(sqsliteListener)

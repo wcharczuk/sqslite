@@ -4,14 +4,14 @@ import "iter"
 
 func NewOrderedSet[T comparable]() *OrderedSet[T] {
 	return &OrderedSet[T]{
-		ordered: new(LinkedList[T]),
-		lookup:  make(map[T]*LinkedListNode[T]),
+		ordered: new(List[T]),
+		lookup:  make(map[T]*ListNode[T]),
 	}
 }
 
 type OrderedSet[T comparable] struct {
-	ordered *LinkedList[T]
-	lookup  map[T]*LinkedListNode[T]
+	ordered *List[T]
+	lookup  map[T]*ListNode[T]
 }
 
 func (os *OrderedSet[T]) Len() int {
@@ -29,7 +29,7 @@ func (os *OrderedSet[T]) Has(v T) (ok bool) {
 }
 
 func (os *OrderedSet[T]) Del(v T) (ok bool) {
-	var node *LinkedListNode[T]
+	var node *ListNode[T]
 	node, ok = os.lookup[v]
 	if !ok {
 		return

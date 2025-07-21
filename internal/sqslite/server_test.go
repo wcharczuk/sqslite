@@ -16,13 +16,13 @@ import (
 	"github.com/aws/smithy-go/middleware"
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
-	"github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/httpz"
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 func Test_serialize(t *testing.T) {
 	buf := new(bytes.Buffer)
-	rw := httputil.NewMockResponseWriter(buf)
+	rw := httpz.NewMockResponseWriter(buf)
 	serialize(rw, new(http.Request), &sqs.CreateQueueOutput{
 		QueueUrl:       aws.String("test-queue-url"),
 		ResultMetadata: middleware.Metadata{},
@@ -860,8 +860,8 @@ func Test_Server_listQueueTags_nonExistentQueue(t *testing.T) {
 		QueueUrl: aws.String("http://sqslite.local/test-account/non-existent"),
 	})))
 	require.NoError(t, err)
-	req.Header.Set(httputil.HeaderAuthorization, testAuthorizationHeader)
-	req.Header.Set(httputil.HeaderContentType, ContentTypeAmzJSON)
+	req.Header.Set(httpz.HeaderAuthorization, testAuthorizationHeader)
+	req.Header.Set(httpz.HeaderContentType, ContentTypeAmzJSON)
 	req.Header.Set(HeaderAmzTarget, MethodListQueueTags)
 	req.Header.Set(HeaderAmzQueryMode, "true")
 
@@ -1387,8 +1387,8 @@ func Test_Server_changeMessageVisibilityBatch_invalidVisibilityTimeout(t *testin
 		},
 	})))
 	require.NoError(t, err)
-	req.Header.Set(httputil.HeaderAuthorization, testAuthorizationHeader)
-	req.Header.Set(httputil.HeaderContentType, ContentTypeAmzJSON)
+	req.Header.Set(httpz.HeaderAuthorization, testAuthorizationHeader)
+	req.Header.Set(httpz.HeaderContentType, ContentTypeAmzJSON)
 	req.Header.Set(HeaderAmzTarget, MethodChangeMessageVisibilityBatch)
 	req.Header.Set(HeaderAmzQueryMode, "true")
 

@@ -43,7 +43,7 @@ func Test_ShardedLinkedList_RemoveNode(t *testing.T) {
 	for x := range 100 {
 		node := q.Push(fmt.Sprint(x))
 		require.NotNil(t, node)
-		require.EqualValues(t, fmt.Sprint(x), node.LinkedListNode.Value)
+		require.EqualValues(t, fmt.Sprint(x), node.ListNode.Value)
 		require.True(t, node.ShardIndex < 32)
 		nodes = append(nodes, node)
 	}

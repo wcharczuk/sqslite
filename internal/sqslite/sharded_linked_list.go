@@ -7,18 +7,18 @@ func NewShardedLinkedList[T any](shardCount int) *ShardedLinkedList[T] {
 		panic("sharded linked list cannot have 0 shards")
 	}
 	return &ShardedLinkedList[T]{
-		shards: make([]LinkedList[T], shardCount),
+		shards: make([]List[T], shardCount),
 	}
 }
 
 type ShardedLinkedList[T any] struct {
-	shards []LinkedList[T]
+	shards []List[T]
 	len    int
 }
 
 // ShardedLinkedListNode is a linked list node with a shard index.
 type ShardedLinkedListNode[T any] struct {
-	LinkedListNode[T]
+	ListNode[T]
 	ShardIndex uint32
 }
 
@@ -31,8 +31,8 @@ func (sll *ShardedLinkedList[T]) Push(value T) *ShardedLinkedListNode[T] {
 	node := sll.shards[randomShardIndex].Push(value)
 	sll.len++
 	return &ShardedLinkedListNode[T]{
-		LinkedListNode: *node,
-		ShardIndex:     uint32(randomShardIndex),
+		ListNode:   *node,
+		ShardIndex: uint32(randomShardIndex),
 	}
 }
 
@@ -54,7 +54,7 @@ func (sll *ShardedLinkedList[T]) Pop() (out T, ok bool) {
 
 func (sll *ShardedLinkedList[T]) Remove(node *ShardedLinkedListNode[T]) {
 	sll.len--
-	sll.shards[node.ShardIndex].Remove(&node.LinkedListNode)
+	sll.shards[node.ShardIndex].Remove(&node.ListNode)
 }
 
 // Clear clears the linked list.

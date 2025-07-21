@@ -9,6 +9,10 @@ import (
 	"net/http"
 )
 
+var _ http.ResponseWriter = (*responseWriter)(nil)
+
+// responseWriter is a [http.ResponseWriter] that captures the response into a [bytes.Buffer]
+// allowing you to dump the response later, as well captures the status code and content length of the response.
 type responseWriter struct {
 	inner         http.ResponseWriter
 	response      *bytes.Buffer

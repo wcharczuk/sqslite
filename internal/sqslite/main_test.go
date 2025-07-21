@@ -14,8 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
-
-	"github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/httpz"
 )
 
 func testNewSendMessageInput(queueURL string) *sqs.SendMessageInput {
@@ -180,8 +179,8 @@ func testHelperDoClientMethod[Input, Output any](t *testing.T, testServer *httpt
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
 	require.NoError(t, err)
-	req.Header.Set(httputil.HeaderAuthorization, testAuthorizationHeader)
-	req.Header.Set(httputil.HeaderContentType, ContentTypeAmzJSON)
+	req.Header.Set(httpz.HeaderAuthorization, testAuthorizationHeader)
+	req.Header.Set(httpz.HeaderContentType, ContentTypeAmzJSON)
 	req.Header.Set(HeaderAmzTarget, method)
 	req.Header.Set(HeaderAmzQueryMode, "true")
 	res, sendErr := testServer.Client().Do(req)
@@ -204,8 +203,8 @@ func testHelperDoClientMethodForError[Input any](t *testing.T, testServer *httpt
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
 	require.NoError(t, err)
-	req.Header.Set(httputil.HeaderAuthorization, testAuthorizationHeader)
-	req.Header.Set(httputil.HeaderContentType, ContentTypeAmzJSON)
+	req.Header.Set(httpz.HeaderAuthorization, testAuthorizationHeader)
+	req.Header.Set(httpz.HeaderContentType, ContentTypeAmzJSON)
 	req.Header.Set(HeaderAmzTarget, method)
 	req.Header.Set(HeaderAmzQueryMode, "true")
 	res, err := testServer.Client().Do(req)
@@ -228,7 +227,7 @@ func testHelperDoClientMethodWithoutAuth(t *testing.T, testServer *httptest.Serv
 	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBufferString(marshalJSON(input)))
 	require.NoError(t, err)
 	// req.Header.Set(httputil.HeaderAuthorization, testAuthorizationHeader)
-	req.Header.Set(httputil.HeaderContentType, ContentTypeAmzJSON)
+	req.Header.Set(httpz.HeaderContentType, ContentTypeAmzJSON)
 	req.Header.Set(HeaderAmzTarget, method)
 	req.Header.Set(HeaderAmzQueryMode, "true")
 	res, sendErr := testServer.Client().Do(req)
@@ -268,7 +267,7 @@ func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	})
 	defaultQueue.Start(t.Context())
 	server.accounts.EnsureQueues(testAccountID).AddQueue(defaultQueue)
-	svr := httptest.NewServer(httputil.Logged(server))
+	svr := httptest.NewServer(httpz.Logged(server))
 	t.Cleanup(server.Close)
 	t.Cleanup(svr.Close)
 	return server, svr

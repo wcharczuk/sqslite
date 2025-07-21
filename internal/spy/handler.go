@@ -2,32 +2,31 @@ package spy
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/httpz"
 )
 
+var _ http.Handler = (*Handler)(nil)
+
+// Handler implements [http.Handler] and captures the details of a request and response
+// that flows through it, calling the [Handler.Do] function once the request and response complete.
+//
+// You can use the provided [WriteOutput] helper to take the [Request] metadata and serialize it as json and write
+// to the given writer (i.e. [os.Stdout]).
+//
+// Use the [Handler.Next] field to wrap another handler with the capturing mechanics of the spy handler, for example
+// you may want to add a reverse proxy as the next handler.
 type Handler struct {
 	Do   func(Request)
 	Next http.Handler
 }
 
-func WriteOutput(output io.Writer) func(Request) {
-	encoderMu := &sync.Mutex{}
-	encoder := json.NewEncoder(output)
-	return func(details Request) {
-		encoderMu.Lock()
-		defer encoderMu.Unlock()
-		_ = encoder.Encode(details)
-	}
-}
-
+// ServeHTTP implements [http.Handler].
 func (l *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	var details Request
 	start := time.Now()
@@ -37,7 +36,7 @@ func (l *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	details.RequestHeaders = make(map[string]string)
 
 	for key, values := range req.Header {
-		if strings.EqualFold(key, httputil.HeaderAuthorization) {
+		if strings.EqualFold(key, httpz.HeaderAuthorization) {
 			details.RequestHeaders[key] = "<redacted>"
 			continue
 		}

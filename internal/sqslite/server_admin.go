@@ -7,21 +7,19 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
-	"github.com/wcharczuk/sqslite/internal/httputil"
+	"github.com/wcharczuk/sqslite/internal/httpz"
 )
 
-type adminQueue struct {
-	AccountID string
-	QueueURL  string
-	QueueArn  string
-	QueueName string
-
+type QueueInfo struct {
+	AccountID    string
+	QueueURL     string
+	QueueArn     string
+	QueueName    string
 	Created      time.Time
 	LastModified time.Time
 	Deleted      time.Time
-
-	IsDLQ bool
-	Stats QueueStats
+	IsDLQ        bool
+	Stats        QueueStats
 }
 
 func (s Server) RegisterAdmin() {
@@ -32,7 +30,7 @@ func (s Server) RegisterAdmin() {
 
 func (s Server) adminGetAccounts(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	accounts := slices.Collect(s.accounts.EachAccount())
-	w.Header().Set(httputil.HeaderContentType, httputil.ContentTypeApplicationJSON)
+	w.Header().Set(httpz.HeaderContentType, httpz.ContentTypeApplicationJSON)
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(accounts)
 }
@@ -44,8 +42,8 @@ func (s Server) adminGetQueues(w http.ResponseWriter, r *http.Request, ps httpro
 		return
 	}
 	queues := slices.Collect(s.accounts.EnsureQueues(accountID).EachQueue())
-	output := apply(queues, func(q *Queue) adminQueue {
-		return adminQueue{
+	output := apply(queues, func(q *Queue) QueueInfo {
+		return QueueInfo{
 			AccountID:    q.AccountID,
 			QueueURL:     q.URL,
 			QueueArn:     q.ARN,
@@ -57,7 +55,7 @@ func (s Server) adminGetQueues(w http.ResponseWriter, r *http.Request, ps httpro
 			Stats:        q.Stats(),
 		}
 	})
-	w.Header().Set(httputil.HeaderContentType, httputil.ContentTypeApplicationJSON)
+	w.Header().Set(httpz.HeaderContentType, httpz.ContentTypeApplicationJSON)
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(output)
 }
@@ -78,7 +76,7 @@ func (s Server) adminGetQueue(w http.ResponseWriter, r *http.Request, ps httprou
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set(httputil.HeaderContentType, httputil.ContentTypeApplicationJSON)
+	w.Header().Set(httpz.HeaderContentType, httpz.ContentTypeApplicationJSON)
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(queue)
 }
