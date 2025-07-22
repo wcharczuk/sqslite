@@ -4,22 +4,18 @@ import (
 	"context"
 	"iter"
 	"sync"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // NewAccounts returns a new accounts set.
-func NewAccounts(clock clockwork.Clock) *Accounts {
+func NewAccounts() *Accounts {
 	return &Accounts{
 		accounts: map[string]*Queues{},
-		clock:    clock,
 	}
 }
 
 type Accounts struct {
 	mu       sync.Mutex
 	accounts map[string]*Queues
-	clock    clockwork.Clock
 }
 
 func (a *Accounts) EnsureQueues(accountID string) *Queues {
@@ -28,7 +24,7 @@ func (a *Accounts) EnsureQueues(accountID string) *Queues {
 	if queues, ok := a.accounts[accountID]; ok {
 		return queues
 	}
-	newQueues := NewQueues(a.clock, accountID)
+	newQueues := NewQueues(accountID)
 	newQueues.Start(context.Background())
 	a.accounts[accountID] = newQueues
 	return newQueues

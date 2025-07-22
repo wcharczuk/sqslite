@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 	"github.com/wcharczuk/sqslite/internal/httpz"
 )
@@ -247,16 +246,16 @@ const (
 
 func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
-	server := NewServer(clockwork.NewFakeClock())
+	server := NewServer()
 	authz := Authorization{
 		AccountID: testAccountID,
 	}
-	dlq, _ := NewQueueFromCreateQueueInput(server.Clock(), authz, &sqs.CreateQueueInput{
+	dlq, _ := NewQueueFromCreateQueueInput(authz, &sqs.CreateQueueInput{
 		QueueName: aws.String("default-dlq"),
 	})
 	dlq.Start(t.Context())
 	server.accounts.EnsureQueues(testAccountID).AddQueue(dlq)
-	defaultQueue, _ := NewQueueFromCreateQueueInput(server.Clock(), authz, &sqs.CreateQueueInput{
+	defaultQueue, _ := NewQueueFromCreateQueueInput(authz, &sqs.CreateQueueInput{
 		QueueName: aws.String("default"),
 		Attributes: map[string]string{
 			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(RedrivePolicy{
@@ -273,9 +272,9 @@ func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	return server, svr
 }
 
-func createTestQueue(t *testing.T, clock clockwork.Clock) *Queue {
+func createTestQueue(t *testing.T) *Queue {
 	t.Helper()
-	q, err := NewQueueFromCreateQueueInput(clock, Authorization{
+	q, err := NewQueueFromCreateQueueInput(Authorization{
 		Region:    Some("us-west-2"),
 		Host:      Some("sqslite.local"),
 		AccountID: testAccountID,
@@ -287,9 +286,9 @@ func createTestQueue(t *testing.T, clock clockwork.Clock) *Queue {
 	return q
 }
 
-func createTestQueueWithName(t *testing.T, clock clockwork.Clock, name string) *Queue {
+func createTestQueueWithName(t *testing.T, name string) *Queue {
 	t.Helper()
-	queue, err := NewQueueFromCreateQueueInput(clock, Authorization{
+	queue, err := NewQueueFromCreateQueueInput(Authorization{
 		Region:    Some("us-west-2"),
 		Host:      Some("sqslite.local"),
 		AccountID: testAccountID,
@@ -300,9 +299,9 @@ func createTestQueueWithName(t *testing.T, clock clockwork.Clock, name string) *
 	return queue
 }
 
-func createTestQueueWithNameWithRedriveAllowPolicy(t *testing.T, clock clockwork.Clock, name string, rap RedriveAllowPolicy) *Queue {
+func createTestQueueWithNameWithRedriveAllowPolicy(t *testing.T, name string, rap RedriveAllowPolicy) *Queue {
 	t.Helper()
-	queue, err := NewQueueFromCreateQueueInput(clock, Authorization{
+	queue, err := NewQueueFromCreateQueueInput(Authorization{
 		Region:    Some("us-west-2"),
 		Host:      Some("sqslite.local"),
 		AccountID: testAccountID,
@@ -316,9 +315,9 @@ func createTestQueueWithNameWithRedriveAllowPolicy(t *testing.T, clock clockwork
 	return queue
 }
 
-func createTestQueueWithNameWithDLQ(t *testing.T, clock clockwork.Clock, name string, dlq *Queue) *Queue {
+func createTestQueueWithNameWithDLQ(t *testing.T, name string, dlq *Queue) *Queue {
 	t.Helper()
-	queue, err := NewQueueFromCreateQueueInput(clock, Authorization{
+	queue, err := NewQueueFromCreateQueueInput(Authorization{
 		Region:    Some("us-west-2"),
 		Host:      Some("sqslite.local"),
 		AccountID: testAccountID,

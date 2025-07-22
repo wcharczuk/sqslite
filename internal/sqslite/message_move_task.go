@@ -8,20 +8,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/wcharczuk/sqslite/internal/uuid"
 	"golang.org/x/time/rate"
 )
 
 // NewMessagesMoveTask returns a new move message task.
-func NewMessagesMoveTask(clock clockwork.Clock, source /*must not be nil*/, destination /*can be nil*/ *Queue, maxNumberOfMessagesPerSecond int) *MessageMoveTask {
+func NewMessagesMoveTask(source /*must not be nil*/, destination /*can be nil*/ *Queue, maxNumberOfMessagesPerSecond int) *MessageMoveTask {
 	mmt := &MessageMoveTask{
 		AccountID:                    source.AccountID,
 		TaskHandle:                   uuid.V4().String(),
 		SourceQueue:                  source,
 		DestinationQueue:             destination,
 		MaxNumberOfMessagesPerSecond: maxNumberOfMessagesPerSecond,
-		started:                      clock.Now(),
+		started:                      time.Now(),
 	}
 	if maxNumberOfMessagesPerSecond > 0 {
 		mmt.limiter = rate.NewLimiter(rate.Limit(maxNumberOfMessagesPerSecond), 1 /*burstBalance has to be > 0*/)

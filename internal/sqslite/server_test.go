@@ -8,13 +8,13 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/smithy-go/middleware"
-	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 	"github.com/wcharczuk/sqslite/internal/httpz"
 	"github.com/wcharczuk/sqslite/internal/uuid"
@@ -382,28 +382,29 @@ func Test_Server_sendMessageBatch_sizeValidation(t *testing.T) {
 }
 
 func Test_Server_receiveMessage_awaitsMessages(t *testing.T) {
-	server, testServer := startTestServer(t)
-	queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
-	serverClock, _ := server.Clock().(*clockwork.FakeClock)
-	startedReceiveRequest := make(chan struct{})
-	completedReceiveRequest := make(chan struct{})
-	go func() {
-		close(startedReceiveRequest)
-		defer close(completedReceiveRequest)
-		received := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
-			QueueUrl:            aws.String(testDefaultQueueURL),
-			MaxNumberOfMessages: 5,
-		})
-		require.True(t, len(received.Messages) > 0)
-	}()
-	<-startedReceiveRequest
-	for range 2 {
-		_ = testHelperSendMessage(t, testServer, testNewSendMessageInput(testDefaultQueueURL))
-	}
-	serverClock.Advance(200 * time.Millisecond)
-	<-completedReceiveRequest
-	require.Equal(t, int64(2), queue.Stats().NumMessages)
-	require.True(t, queue.Stats().NumMessagesInflight > 0)
+	synctest.Run(func() {
+		server, testServer := startTestServer(t)
+		queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
+		startedReceiveRequest := make(chan struct{})
+		completedReceiveRequest := make(chan struct{})
+		go func() {
+			close(startedReceiveRequest)
+			defer close(completedReceiveRequest)
+			received := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
+				QueueUrl:            aws.String(testDefaultQueueURL),
+				MaxNumberOfMessages: 5,
+			})
+			require.True(t, len(received.Messages) > 0)
+		}()
+		<-startedReceiveRequest
+		for range 2 {
+			_ = testHelperSendMessage(t, testServer, testNewSendMessageInput(testDefaultQueueURL))
+		}
+		time.Sleep(200 * time.Millisecond)
+		<-completedReceiveRequest
+		require.Equal(t, int64(2), queue.Stats().NumMessages)
+		require.True(t, queue.Stats().NumMessagesInflight > 0)
+	})
 }
 
 func Test_Server_rejectsNonPostMethod(t *testing.T) {
@@ -671,7 +672,7 @@ func Test_Server_getQueueURL(t *testing.T) {
 func Test_Server_getQueueURL_accountID(t *testing.T) {
 	server, testServer := startTestServer(t)
 
-	altQueue := createTestQueueWithName(t, server.clock, "alternate-queue")
+	altQueue := createTestQueueWithName(t, "alternate-queue")
 
 	queues := server.Accounts().EnsureQueues("test-account-id-alt")
 	queues.AddQueue(altQueue)

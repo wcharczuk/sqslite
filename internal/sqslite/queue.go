@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/jonboulle/clockwork"
 
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
@@ -21,7 +20,7 @@ import (
 const DefaultQueueShardCount = 32
 
 // NewQueueFromCreateQueueInput returns a new queue for a given [sqs.CreateQueueInput].
-func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, input *sqs.CreateQueueInput) (*Queue, *Error) {
+func NewQueueFromCreateQueueInput(authz Authorization, input *sqs.CreateQueueInput) (*Queue, *Error) {
 	if err := validateQueueName(*input.QueueName); err != nil {
 		return nil, err
 	}
@@ -30,8 +29,8 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 		AccountID:                       authz.AccountID,
 		URL:                             FormatQueueURL(authz, *input.QueueName),
 		ARN:                             FormatQueueARN(authz, *input.QueueName),
-		created:                         clock.Now(),
-		lastModified:                    clock.Now(),
+		created:                         time.Now(),
+		lastModified:                    time.Now(),
 		messagesReadyOrdered:            NewShardedLinkedList[*MessageState](DefaultQueueShardCount),
 		messagesReady:                   make(map[uuid.UUID]*ShardedLinkedListNode[*MessageState]),
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
@@ -41,7 +40,6 @@ func NewQueueFromCreateQueueInput(clock clockwork.Clock, authz Authorization, in
 		MaximumMessagesInflight:         120000,
 		Attributes:                      input.Attributes,
 		Tags:                            input.Tags,
-		clock:                           clock,
 	}
 	if err := queue.applyQueueAttributesUnsafe(input.Attributes, true /*applyDefaults*/); err != nil {
 		return nil, err
@@ -125,8 +123,6 @@ type Queue struct {
 	lifecycleMu sync.Mutex
 	mu          sync.Mutex
 
-	clock clockwork.Clock
-
 	isDLQ      uint32
 	dlqTarget  *Queue
 	dlqSources map[string]*Queue
@@ -209,17 +205,17 @@ func (q *Queue) Start(ctx context.Context) {
 
 	var retentionCtx context.Context
 	retentionCtx, q.retentionWorkerCancel = context.WithCancel(ctx)
-	q.retentionWorker = &retentionWorker{queue: q, clock: q.clock}
+	q.retentionWorker = &retentionWorker{queue: q}
 	go q.retentionWorker.Start(retentionCtx)
 
 	var visibilityCtx context.Context
 	visibilityCtx, q.visibilityWorkerCancel = context.WithCancel(ctx)
-	q.visibilityWorker = &visibilityWorker{queue: q, clock: q.clock}
+	q.visibilityWorker = &visibilityWorker{queue: q}
 	go q.visibilityWorker.Start(visibilityCtx)
 
 	var delayCtx context.Context
 	delayCtx, q.delayWorkerCancel = context.WithCancel(ctx)
-	q.delayWorker = &delayWorker{queue: q, clock: q.clock}
+	q.delayWorker = &delayWorker{queue: q}
 	go q.delayWorker.Start(delayCtx)
 }
 
@@ -266,11 +262,6 @@ func (q *Queue) IsDLQ() bool {
 	return atomic.LoadUint32(&q.isDLQ) == 1
 }
 
-// Clock returns the timesource for the queue.
-func (q *Queue) Clock() clockwork.Clock {
-	return q.clock
-}
-
 func (q *Queue) Tag(tags map[string]string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -298,7 +289,7 @@ func (q *Queue) Push(msgs ...*MessageState) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	now := q.clock.Now()
+	now := time.Now()
 	for _, m := range msgs {
 		// only apply the queue level default if
 		// - it's set
@@ -347,7 +338,7 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
 		atomic.AddInt64(&q.stats.NumMessagesInflight, 1)
 
-		now := q.clock.Now()
+		now := time.Now()
 		msg.MaybeSetFirstReceived(now)
 		msg.IncrementApproximateReceiveCount()
 		msg.UpdateVisibilityTimeout(effectiveVisibilityTimeout, now)
@@ -405,7 +396,7 @@ func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibili
 	if !ok {
 		return
 	}
-	now := q.clock.Now()
+	now := time.Now()
 	atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
 	msg.UpdateVisibilityTimeout(visibilityTimeout, now)
 	if visibilityTimeout == 0 {
@@ -421,7 +412,7 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	var ok bool
 
 	var readyMessages []*MessageState
-	now := q.clock.Now()
+	now := time.Now()
 	for _, entry := range entries {
 		messageID, ok = q.messagesInflightByReceiptHandle[safeDeref(entry.ReceiptHandle)]
 		if !ok {
@@ -544,7 +535,7 @@ func (q *Queue) PurgeExpired() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	now := q.clock.Now()
+	now := time.Now()
 
 	deleted := make(map[uuid.UUID]struct{})
 	var toDeleteDelayed []uuid.UUID
@@ -594,7 +585,7 @@ func (q *Queue) UpdateInflightVisibility() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	now := q.clock.Now()
+	now := time.Now()
 
 	var ready []*MessageState
 	for _, msg := range q.messagesInflight {
@@ -612,7 +603,7 @@ func (q *Queue) UpdateDelayedToReady() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	now := q.clock.Now()
+	now := time.Now()
 
 	var ready []*MessageState
 	for _, msg := range q.messagesDelayed {
@@ -742,7 +733,7 @@ func (q *Queue) getQueueAttributeUnsafe(attributeName types.QueueAttributeName) 
 }
 
 func (q *Queue) applyQueueAttributesUnsafe(messageAttributes map[string]string, applyDefaults bool) *Error {
-	q.lastModified = q.clock.Now()
+	q.lastModified = time.Now()
 
 	delay, err := readAttributeDurationSeconds(messageAttributes, types.QueueAttributeNameDelaySeconds)
 	if err != nil {

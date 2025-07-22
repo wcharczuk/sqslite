@@ -12,18 +12,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/smithy-go/middleware"
-	"github.com/jonboulle/clockwork"
 	"github.com/julienschmidt/httprouter"
 
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 // NewServer returns a new server.
-func NewServer(clock clockwork.Clock) *Server {
+func NewServer() *Server {
 	server := &Server{
-		accounts: NewAccounts(clock),
+		accounts: NewAccounts(),
 		router:   httprouter.New(),
-		clock:    clock,
 	}
 
 	server.RegisterAdmin()
@@ -36,12 +34,6 @@ var _ http.Handler = (*Server)(nil)
 type Server struct {
 	accounts *Accounts
 	router   *httprouter.Router
-	clock    clockwork.Clock
-}
-
-// Clock returns the server's [clockwork.Clock] instance.
-func (s *Server) Clock() clockwork.Clock {
-	return s.clock
 }
 
 // Queues returns the underlying queues storage.
@@ -146,7 +138,7 @@ func (s Server) createQueue(rw http.ResponseWriter, req *http.Request) {
 		serialize(rw, req, ErrorResponseInvalidSecurity())
 		return
 	}
-	queue, err := NewQueueFromCreateQueueInput(s.clock, authz, input)
+	queue, err := NewQueueFromCreateQueueInput(authz, input)
 	if err != nil {
 		serialize(rw, req, err)
 		return
@@ -486,9 +478,9 @@ func (s Server) receiveMessage(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	waitTime := coalesceZero(waitTimeout, queue.ReceiveMessageWaitTime)
-	ticker := s.clock.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	waitDeadline := s.clock.NewTimer(waitTime)
+	waitDeadline := time.NewTimer(waitTime)
 	defer waitDeadline.Stop()
 
 done:
@@ -496,9 +488,9 @@ done:
 		select {
 		case <-req.Context().Done():
 			return
-		case <-waitDeadline.Chan():
+		case <-waitDeadline.C:
 			break done
-		case <-ticker.Chan():
+		case <-ticker.C:
 			allMessages = queue.Receive(input)
 			if len(allMessages) > 0 {
 				break done
@@ -772,7 +764,7 @@ func (s Server) startMessageMoveTask(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 	queues := s.accounts.EnsureQueues(authz.AccountID)
-	mmt, err := queues.StartMoveMessageTask(s.clock, *input.SourceArn, safeDeref(input.DestinationArn), safeDeref(input.MaxNumberOfMessagesPerSecond))
+	mmt, err := queues.StartMoveMessageTask(*input.SourceArn, safeDeref(input.DestinationArn), safeDeref(input.MaxNumberOfMessagesPerSecond))
 	if err != nil {
 		serialize(rw, req, err)
 		return

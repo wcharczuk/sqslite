@@ -11,7 +11,7 @@ import (
 )
 
 // NewQueues returns a new queues storage.
-func NewQueues(clock clockwork.Clock, accountID string) *Queues {
+func NewQueues(accountID string) *Queues {
 	return &Queues{
 		accountID:                   accountID,
 		queueURLs:                   make(map[string]string),
@@ -19,7 +19,6 @@ func NewQueues(clock clockwork.Clock, accountID string) *Queues {
 		queues:                      make(map[string]*Queue),
 		moveMessageTasks:            make(map[string]*MessageMoveTask),
 		moveMessageTasksBySourceArn: make(map[string]*OrderedSet[string]),
-		clock:                       clock,
 	}
 }
 
@@ -36,8 +35,6 @@ type Queues struct {
 
 	deletedQueueWorker       *deletedQueueWorker
 	deletedQueueWorkerCancel func()
-
-	clock clockwork.Clock
 }
 
 func (q *Queues) AccountID() string { return q.accountID }
@@ -48,7 +45,7 @@ func (q *Queues) Start(ctx context.Context) {
 
 	var deletedQueueWorkerCtx context.Context
 	deletedQueueWorkerCtx, q.deletedQueueWorkerCancel = context.WithCancel(ctx)
-	q.deletedQueueWorker = &deletedQueueWorker{queues: q, clock: q.clock}
+	q.deletedQueueWorker = &deletedQueueWorker{queues: q}
 	go q.deletedQueueWorker.Start(deletedQueueWorkerCtx)
 }
 
@@ -238,7 +235,7 @@ func (q *Queues) DeleteQueue(queueURL string) (ok bool) {
 	if !ok {
 		return
 	}
-	queue.deleted = q.clock.Now()
+	queue.deleted = time.Now()
 	return
 }
 
@@ -246,7 +243,7 @@ func (q *Queues) PurgeDeletedQueues() {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
 
-	now := q.clock.Now()
+	now := time.Now()
 	var toDelete []string
 	for _, queue := range q.queues {
 		if !queue.IsDeleted() {

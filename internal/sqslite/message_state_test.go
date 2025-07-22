@@ -14,7 +14,7 @@ import (
 )
 
 func Test_NewMessageStateFromSendMessageInput(t *testing.T) {
-	q := createTestQueue(t, clockwork.NewFakeClock())
+	q := createTestQueue(t)
 
 	msgInput := &sqs.SendMessageInput{
 		QueueUrl:    aws.String("https://sqslite.local/sqslite-test-account/test-queue"),
@@ -44,7 +44,7 @@ func Test_NewMessageStateFromSendMessageInput(t *testing.T) {
 }
 
 func Test_NewMessageStateFromSendMessageInput_noSystemAttributes(t *testing.T) {
-	q := createTestQueue(t, clockwork.NewFakeClock())
+	q := createTestQueue(t)
 
 	msgInput := &sqs.SendMessageInput{
 		QueueUrl:    aws.String("https://sqslite.local/sqslite-test-account/test-queue"),
@@ -68,7 +68,7 @@ func Test_NewMessageStateFromSendMessageInput_noSystemAttributes(t *testing.T) {
 }
 
 func Test_NewMessageStateFromSendMessageInput_noSystemAttributes_noAttributes(t *testing.T) {
-	q := createTestQueue(t, clockwork.NewFakeClock())
+	q := createTestQueue(t)
 	msgInput := &sqs.SendMessageInput{
 		QueueUrl:     aws.String("https://sqslite.local/sqslite-test-account/test-queue"),
 		MessageBody:  aws.String(fmt.Sprintf(`{"message_index":%d}`, 1)),
@@ -85,7 +85,7 @@ func Test_NewMessageStateFromSendMessageInput_noSystemAttributes_noAttributes(t 
 }
 
 func Test_NewMessageStateFromSendMessageBatchEntry(t *testing.T) {
-	q := createTestQueue(t, clockwork.NewFakeClock())
+	q := createTestQueue(t)
 
 	msgInput := types.SendMessageBatchRequestEntry{
 		Id:          aws.String("test-message-id"),
@@ -115,7 +115,7 @@ func Test_NewMessageStateFromSendMessageBatchEntry(t *testing.T) {
 }
 
 func Test_NewMessageFromSendMessageBatchEntry_noSystemAttributes(t *testing.T) {
-	q := createTestQueue(t, clockwork.NewFakeClock())
+	q := createTestQueue(t)
 
 	msgInput := types.SendMessageBatchRequestEntry{
 		Id:          aws.String("test-message-id"),
@@ -139,7 +139,7 @@ func Test_NewMessageFromSendMessageBatchEntry_noSystemAttributes(t *testing.T) {
 }
 
 func Test_NewMessageFromSendMessageBatchEntry_noSystemAttributes_noAttributes(t *testing.T) {
-	q := createTestQueue(t, clockwork.NewFakeClock())
+	q := createTestQueue(t)
 
 	msgInput := types.SendMessageBatchRequestEntry{
 		Id:           aws.String("test-message-id"),

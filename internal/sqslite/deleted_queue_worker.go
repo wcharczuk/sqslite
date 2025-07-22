@@ -3,14 +3,11 @@ package sqslite
 import (
 	"context"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 type deletedQueueWorker struct {
 	queues       *Queues
 	tickInterval time.Duration
-	clock        clockwork.Clock
 }
 
 func (q *deletedQueueWorker) TickInterval() time.Duration {
@@ -21,13 +18,13 @@ func (q *deletedQueueWorker) TickInterval() time.Duration {
 }
 
 func (q *deletedQueueWorker) Start(ctx context.Context) error {
-	tick := q.clock.NewTicker(q.TickInterval())
+	tick := time.NewTicker(q.TickInterval())
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-tick.Chan():
+		case <-tick.C:
 			q.queues.PurgeDeletedQueues()
 			continue
 		}
