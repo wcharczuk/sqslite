@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"testing/synctest"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -386,23 +385,17 @@ func Test_Server_receiveMessage_awaitsMessages(t *testing.T) {
 	synctest.Run(func() {
 		server, testServer := startTestServer(t)
 		queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
-		startedReceiveRequest := make(chan struct{})
-		completedReceiveRequest := make(chan struct{})
 		go func() {
-			close(startedReceiveRequest)
-			defer close(completedReceiveRequest)
 			received := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
 				QueueUrl:            aws.String(testDefaultQueueURL),
 				MaxNumberOfMessages: 5,
 			})
 			require.True(t, len(received.Messages) > 0)
 		}()
-		<-startedReceiveRequest
 		for range 2 {
 			_ = testHelperSendMessage(t, testServer, testNewSendMessageInput(testDefaultQueueURL))
 		}
-		time.Sleep(200 * time.Millisecond)
-		<-completedReceiveRequest
+		synctest.Wait()
 		require.Equal(t, int64(2), queue.Stats().NumMessages)
 		require.True(t, queue.Stats().NumMessagesInflight > 0)
 	})
