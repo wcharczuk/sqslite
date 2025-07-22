@@ -8,7 +8,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.5
 	github.com/aws/smithy-go v1.22.2
-	github.com/jonboulle/clockwork v0.5.0
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/spf13/pflag v1.0.6
