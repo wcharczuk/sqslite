@@ -403,9 +403,10 @@ func Test_Queue_Created_returnsCreationTime(t *testing.T) {
 }
 
 func Test_Queue_LastModified_initiallyEqualsCreated(t *testing.T) {
-	q := createTestQueue(t)
-
-	require.Equal(t, q.Created(), q.LastModified())
+	synctest.Run(func() {
+		q := createTestQueue(t)
+		require.Equal(t, q.Created(), q.LastModified())
+	})
 }
 
 func Test_Queue_LastModified_updatesOnAttributeChange(t *testing.T) {
