@@ -157,26 +157,25 @@ func Test_NewMessageFromSendMessageBatchEntry_noSystemAttributes_noAttributes(t 
 }
 
 func Test_MessageState_GetAttributes_all(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	testQueue := createTestQueue(t, clock)
+	testQueue := createTestQueue(t)
 	m := &MessageState{
 		MessageID:           uuid.V4(),
 		OriginalSourceQueue: testQueue,
 		SenderID:            Some(testAccountID),
-		FirstReceived:       Some(clock.Now().Add(-time.Minute)),
+		FirstReceived:       Some(time.Now().Add(-time.Minute)),
 		ReceiveCount:        5,
-		Sent:                clock.Now().Add(-5 * time.Minute),
-		LastReceived:        Some(clock.Now().Add(-30 * time.Second)),
+		Sent:                time.Now().Add(-5 * time.Minute),
+		LastReceived:        Some(time.Now().Add(-30 * time.Second)),
 	}
 
 	attributes := m.GetAttributes(types.MessageSystemAttributeNameAll)
 	require.Len(t, attributes, 5)
 
-	require.Equal(t, fmt.Sprint(clock.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
+	require.Equal(t, fmt.Sprint(time.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
 	require.Equal(t, testQueue.ARN, attributes[string(types.MessageSystemAttributeNameDeadLetterQueueSourceArn)])
 	require.Equal(t, "5", attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
 	require.Equal(t, testAccountID, attributes[string(types.MessageSystemAttributeNameSenderId)])
-	require.Equal(t, fmt.Sprint(clock.Now().Add(-5*time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameSentTimestamp)])
+	require.Equal(t, fmt.Sprint(time.Now().Add(-5*time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameSentTimestamp)])
 }
 
 func Test_MessageState_GetAttributes_deadLetterQueueSourceArn_unset(t *testing.T) {
@@ -218,86 +217,82 @@ func Test_MessageState_GetAttributes_subset(t *testing.T) {
 }
 
 func Test_MessageState_GetAttributes_mixesAllAndSubset(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	testQueue := createTestQueue(t, clock)
+	testQueue := createTestQueue(t)
 	m := &MessageState{
 		MessageID:           uuid.V4(),
 		OriginalSourceQueue: testQueue,
 		SenderID:            Some(testAccountID),
-		FirstReceived:       Some(clock.Now().Add(-time.Minute)),
+		FirstReceived:       Some(time.Now().Add(-time.Minute)),
 		ReceiveCount:        5,
-		Sent:                clock.Now().Add(-5 * time.Minute),
-		LastReceived:        Some(clock.Now().Add(-30 * time.Second)),
+		Sent:                time.Now().Add(-5 * time.Minute),
+		LastReceived:        Some(time.Now().Add(-30 * time.Second)),
 	}
 
 	attributes := m.GetAttributes(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp, types.MessageSystemAttributeNameApproximateReceiveCount, types.MessageSystemAttributeNameAll)
 	require.Len(t, attributes, 5)
 
-	require.Equal(t, fmt.Sprint(clock.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
+	require.Equal(t, fmt.Sprint(time.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
 	require.Equal(t, testQueue.ARN, attributes[string(types.MessageSystemAttributeNameDeadLetterQueueSourceArn)])
 	require.Equal(t, "5", attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
 	require.Equal(t, testAccountID, attributes[string(types.MessageSystemAttributeNameSenderId)])
-	require.Equal(t, fmt.Sprint(clock.Now().Add(-5*time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameSentTimestamp)])
+	require.Equal(t, fmt.Sprint(time.Now().Add(-5*time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameSentTimestamp)])
 }
 
 func Test_MessageState_IsVisible(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	testQueue := createTestQueue(t, clock)
+	testQueue := createTestQueue(t)
 	m := &MessageState{
 		MessageID:           uuid.V4(),
 		OriginalSourceQueue: testQueue,
 		SenderID:            Some(testAccountID),
-		FirstReceived:       Some(clock.Now().Add(-time.Minute)),
+		FirstReceived:       Some(time.Now().Add(-time.Minute)),
 		ReceiveCount:        5,
-		Sent:                clock.Now().Add(-5 * time.Minute),
-		LastReceived:        Some(clock.Now().Add(-30 * time.Second)),
+		Sent:                time.Now().Add(-5 * time.Minute),
+		LastReceived:        Some(time.Now().Add(-30 * time.Second)),
 		VisibilityTimeout:   10 * time.Second,
-		VisibilityDeadline:  Some(clock.Now().Add(-20 * time.Second)),
+		VisibilityDeadline:  Some(time.Now().Add(-20 * time.Second)),
 	}
-	require.True(t, m.IsVisible(clock.Now()))
+	require.True(t, m.IsVisible(time.Now()))
 	m.VisibilityDeadline = None[time.Time]()
-	require.True(t, m.IsVisible(clock.Now()))
-	m.VisibilityDeadline = Some(clock.Now().Add(10 * time.Second))
-	require.False(t, m.IsVisible(clock.Now()))
+	require.True(t, m.IsVisible(time.Now()))
+	m.VisibilityDeadline = Some(time.Now().Add(10 * time.Second))
+	require.False(t, m.IsVisible(time.Now()))
 }
 
 func Test_MessageState_IsDelayed(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	testQueue := createTestQueue(t, clock)
+	testQueue := createTestQueue(t)
 	m := &MessageState{
 		MessageID:           uuid.V4(),
 		OriginalSourceQueue: testQueue,
 		SenderID:            Some(testAccountID),
-		FirstReceived:       Some(clock.Now().Add(-time.Minute)),
+		FirstReceived:       Some(time.Now().Add(-time.Minute)),
 		ReceiveCount:        5,
-		Sent:                clock.Now().Add(-5 * time.Second),
-		LastReceived:        Some(clock.Now().Add(-30 * time.Second)),
+		Sent:                time.Now().Add(-5 * time.Second),
+		LastReceived:        Some(time.Now().Add(-30 * time.Second)),
 		VisibilityTimeout:   10 * time.Second,
 		Delay:               Some(10 * time.Second),
 	}
-	require.True(t, m.IsDelayed(clock.Now()))
+	require.True(t, m.IsDelayed(time.Now()))
 	m.Delay = Some(2 * time.Second)
-	require.False(t, m.IsDelayed(clock.Now()))
+	require.False(t, m.IsDelayed(time.Now()))
 	m.Delay = None[time.Duration]()
-	require.False(t, m.IsDelayed(clock.Now()))
+	require.False(t, m.IsDelayed(time.Now()))
 }
 
 func Test_MessageState_IsExpired(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	testQueue := createTestQueue(t, clock)
+	testQueue := createTestQueue(t)
 	m := &MessageState{
 		MessageID:              uuid.V4(),
 		OriginalSourceQueue:    testQueue,
 		SenderID:               Some(testAccountID),
-		FirstReceived:          Some(clock.Now().Add(-time.Minute)),
+		FirstReceived:          Some(time.Now().Add(-time.Minute)),
 		ReceiveCount:           5,
-		Sent:                   clock.Now().Add(-6 * time.Minute),
-		LastReceived:           Some(clock.Now().Add(-30 * time.Second)),
+		Sent:                   time.Now().Add(-6 * time.Minute),
+		LastReceived:           Some(time.Now().Add(-30 * time.Second)),
 		VisibilityTimeout:      10 * time.Second,
 		MessageRetentionPeriod: 5 * time.Minute,
 	}
 
-	require.Equal(t, true, m.IsExpired(clock.Now()))
+	require.Equal(t, true, m.IsExpired(time.Now()))
 	m.MessageRetentionPeriod = 10 * time.Minute
-	require.Equal(t, false, m.IsExpired(clock.Now()))
+	require.Equal(t, false, m.IsExpired(time.Now()))
 }

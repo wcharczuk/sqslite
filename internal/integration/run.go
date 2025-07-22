@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/jonboulle/clockwork"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
@@ -23,7 +22,6 @@ type Run struct {
 	sqsClient      *sqs.Client
 	messageOrdinal uint64
 	queueOrdinal   uint64
-	clock          clockwork.Clock
 	after          []func()
 
 	crashed uint32
@@ -40,12 +38,12 @@ func (it *Run) After(fn func()) {
 }
 
 func (it *Run) Sleep(d time.Duration) {
-	timer := it.clock.NewTimer(d)
+	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-it.ctx.Done():
 		panic(context.Canceled)
-	case <-timer.Chan():
+	case <-timer.C:
 		return
 	}
 }

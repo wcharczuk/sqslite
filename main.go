@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/jonboulle/clockwork"
 	"github.com/spf13/pflag"
 	"golang.org/x/sync/errgroup"
 
@@ -79,8 +78,7 @@ func main() {
 	// server setup
 	//
 
-	serverClock := clockwork.NewRealClock()
-	server := sqslite.NewServer(serverClock)
+	server := sqslite.NewServer()
 
 	//
 	// create the default queue(s)
@@ -90,14 +88,14 @@ func main() {
 		Region:    sqslite.Some(*flagAWSRegion),
 		AccountID: sqslite.DefaultAccountID,
 	}
-	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
+	defaultQueueDLQ, _ := sqslite.NewQueueFromCreateQueueInput(defaultAuthorization, &sqs.CreateQueueInput{
 		QueueName: aws.String(sqslite.DefaultDLQQueueName),
 	})
 	defaultQueueDLQ.Start(context.Background())
 	_ = server.Accounts().EnsureQueues(sqslite.DefaultAccountID).AddQueue(defaultQueueDLQ)
 	slog.Info("created default queue dlq with url", slog.String("queue_url", defaultQueueDLQ.URL))
 
-	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(server.Clock(), defaultAuthorization, &sqs.CreateQueueInput{
+	defaultQueue, _ := sqslite.NewQueueFromCreateQueueInput(defaultAuthorization, &sqs.CreateQueueInput{
 		QueueName: aws.String(sqslite.DefaultQueueName),
 		Attributes: map[string]string{
 			string(types.QueueAttributeNameRedrivePolicy): marshalJSON(sqslite.RedrivePolicy{

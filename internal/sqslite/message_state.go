@@ -14,7 +14,7 @@ import (
 func (q *Queue) NewEmptyMessageState() *MessageState {
 	return &MessageState{
 		MessageID:              uuid.V4(),
-		Sent:                   q.clock.Now(),
+		Sent:                   time.Now(),
 		MessageRetentionPeriod: q.MessageRetentionPeriod,
 		ReceiptHandles:         NewSafeSet[string](),
 		OriginalSourceQueue:    q,

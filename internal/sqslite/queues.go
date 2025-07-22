@@ -6,8 +6,6 @@ import (
 	"reflect"
 	"sync"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // NewQueues returns a new queues storage.
@@ -124,7 +122,7 @@ func (q *Queues) EachQueue() iter.Seq[*Queue] {
 	}
 }
 
-func (q *Queues) StartMoveMessageTask(clock clockwork.Clock, sourceArn, destinationArn string, rateLimit int32) (*MessageMoveTask, *Error) {
+func (q *Queues) StartMoveMessageTask(sourceArn, destinationArn string, rateLimit int32) (*MessageMoveTask, *Error) {
 	q.queuesMu.Lock()
 	defer q.queuesMu.Unlock()
 	sourceQueueURL, ok := q.queueARNs[sourceArn]
@@ -160,7 +158,7 @@ func (q *Queues) StartMoveMessageTask(clock clockwork.Clock, sourceArn, destinat
 		}
 	}
 
-	mmt := NewMessagesMoveTask(clock, sourceQueue, destinationQueue, int(rateLimit))
+	mmt := NewMessagesMoveTask(sourceQueue, destinationQueue, int(rateLimit))
 	mmt.Start(context.Background())
 	q.moveMessageTasks[mmt.TaskHandle] = mmt
 	if _, ok := q.moveMessageTasksBySourceArn[sourceArn]; !ok {

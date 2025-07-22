@@ -1151,85 +1151,87 @@ func Test_Queue_PurgeExpired_keepsNonExpiredMessages(t *testing.T) {
 }
 
 func Test_Queue_PurgeExpired_emptyQueueIsNoOp(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
-	initialStats := q.Stats()
+	synctest.Run(func() {
+		q := createTestQueue(t)
+		initialStats := q.Stats()
 
-	clock.Advance(2 * time.Hour)
-	q.PurgeExpired()
+		time.Sleep(2 * time.Hour)
+		q.PurgeExpired()
 
-	updatedStats := q.Stats()
-	require.Equal(t, initialStats, updatedStats)
+		updatedStats := q.Stats()
+		require.Equal(t, initialStats, updatedStats)
+	})
 }
 
 // Tests for Queue.UpdateInflightVisibility()
 func Test_Queue_UpdateInflightVisibility_movesVisibleMessagesToReady(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
-	pushTestMessages(q, 10)
+	synctest.Run(func() {
+		q := createTestQueue(t)
+		pushTestMessages(q, 10)
 
-	// Receive messages with short visibility timeout - get at least 3
-	var allReceived []types.Message
-	for len(allReceived) < 3 {
-		batch := q.Receive(&sqs.ReceiveMessageInput{
-			MaxNumberOfMessages: 10,
-			VisibilityTimeout:   10, // 10 seconds
-		})
-		allReceived = append(allReceived, batch...)
-		if len(batch) == 0 {
-			break
+		// Receive messages with short visibility timeout - get at least 3
+		var allReceived []types.Message
+		for len(allReceived) < 3 {
+			batch := q.Receive(&sqs.ReceiveMessageInput{
+				MaxNumberOfMessages: 10,
+				VisibilityTimeout:   10, // 10 seconds
+			})
+			allReceived = append(allReceived, batch...)
+			if len(batch) == 0 {
+				break
+			}
 		}
-	}
-	require.GreaterOrEqual(t, len(allReceived), 3)
+		require.GreaterOrEqual(t, len(allReceived), 3)
 
-	initialInflight := q.Stats().NumMessagesInflight
-	initialReady := q.Stats().NumMessagesReady
+		initialInflight := q.Stats().NumMessagesInflight
+		initialReady := q.Stats().NumMessagesReady
 
-	// Advance time beyond visibility timeout
-	clock.Advance(15 * time.Second)
+		// Advance time beyond visibility timeout
+		time.Sleep(15 * time.Second)
 
-	q.UpdateInflightVisibility()
+		q.UpdateInflightVisibility()
 
-	updatedStats := q.Stats()
-	require.Equal(t, int64(0), updatedStats.NumMessagesInflight)
-	require.Equal(t, initialReady+initialInflight, updatedStats.NumMessagesReady)
-	require.Equal(t, uint64(initialInflight), updatedStats.TotalMessagesInflightToReady)
+		updatedStats := q.Stats()
+		require.Equal(t, int64(0), updatedStats.NumMessagesInflight)
+		require.Equal(t, initialReady+initialInflight, updatedStats.NumMessagesReady)
+		require.Equal(t, uint64(initialInflight), updatedStats.TotalMessagesInflightToReady)
+	})
 }
 
 func Test_Queue_UpdateInflightVisibility_keepsNonVisibleMessages(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
-	pushTestMessages(q, 10)
+	synctest.Run(func() {
+		q := createTestQueue(t)
+		pushTestMessages(q, 10)
 
-	// Receive messages with long visibility timeout - get at least 2
-	var allReceived []types.Message
-	for len(allReceived) < 2 {
-		batch := q.Receive(&sqs.ReceiveMessageInput{
-			MaxNumberOfMessages: 10,
-			VisibilityTimeout:   3600, // 1 hour
-		})
-		allReceived = append(allReceived, batch...)
-		if len(batch) == 0 {
-			break
+		// Receive messages with long visibility timeout - get at least 2
+		var allReceived []types.Message
+		for len(allReceived) < 2 {
+			batch := q.Receive(&sqs.ReceiveMessageInput{
+				MaxNumberOfMessages: 10,
+				VisibilityTimeout:   3600, // 1 hour
+			})
+			allReceived = append(allReceived, batch...)
+			if len(batch) == 0 {
+				break
+			}
 		}
-	}
-	require.GreaterOrEqual(t, len(allReceived), 2)
+		require.GreaterOrEqual(t, len(allReceived), 2)
 
-	initialStats := q.Stats()
+		initialStats := q.Stats()
 
-	// Advance time but not beyond visibility timeout
-	clock.Advance(30 * time.Minute)
+		// Advance time but not beyond visibility timeout
+		time.Sleep(30 * time.Minute)
 
-	q.UpdateInflightVisibility()
+		q.UpdateInflightVisibility()
 
-	updatedStats := q.Stats()
-	require.Equal(t, initialStats.NumMessagesInflight, updatedStats.NumMessagesInflight)
-	require.Equal(t, initialStats.NumMessagesReady, updatedStats.NumMessagesReady)
+		updatedStats := q.Stats()
+		require.Equal(t, initialStats.NumMessagesInflight, updatedStats.NumMessagesInflight)
+		require.Equal(t, initialStats.NumMessagesReady, updatedStats.NumMessagesReady)
+	})
 }
 
 func Test_Queue_UpdateInflightVisibility_emptyInflightIsNoOp(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	q := createTestQueue(t)
 	initialStats := q.Stats()
 
 	q.UpdateInflightVisibility()
@@ -1240,57 +1242,58 @@ func Test_Queue_UpdateInflightVisibility_emptyInflightIsNoOp(t *testing.T) {
 
 // Tests for Queue.UpdateDelayedToReady()
 func Test_Queue_UpdateDelayedToReady_movesReadyDelayedMessages(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	synctest.Run(func() {
+		q := createTestQueue(t)
 
-	// Add delayed messages
-	for i := range 3 {
-		msg := createTestSendMessageInput(fmt.Sprintf("delayed %d", i))
-		msg.DelaySeconds = 10
-		msgState := q.NewMessageStateFromSendMessageInput(msg)
-		q.Push(msgState)
-	}
+		// Add delayed messages
+		for i := range 3 {
+			msg := createTestSendMessageInput(fmt.Sprintf("delayed %d", i))
+			msg.DelaySeconds = 10
+			msgState := q.NewMessageStateFromSendMessageInput(msg)
+			q.Push(msgState)
+		}
 
-	initialStats := q.Stats()
-	require.Equal(t, int64(3), initialStats.NumMessagesDelayed)
-	require.Equal(t, int64(0), initialStats.NumMessagesReady)
+		initialStats := q.Stats()
+		require.Equal(t, int64(3), initialStats.NumMessagesDelayed)
+		require.Equal(t, int64(0), initialStats.NumMessagesReady)
 
-	// Advance time beyond delay
-	clock.Advance(15 * time.Second)
+		// Advance time beyond delay
+		time.Sleep(15 * time.Second)
 
-	q.UpdateDelayedToReady()
+		q.UpdateDelayedToReady()
 
-	updatedStats := q.Stats()
-	require.Equal(t, int64(0), updatedStats.NumMessagesDelayed)
-	require.Equal(t, int64(3), updatedStats.NumMessagesReady)
-	require.Equal(t, uint64(3), updatedStats.TotalMessagesDelayedToReady)
+		updatedStats := q.Stats()
+		require.Equal(t, int64(0), updatedStats.NumMessagesDelayed)
+		require.Equal(t, int64(3), updatedStats.NumMessagesReady)
+		require.Equal(t, uint64(3), updatedStats.TotalMessagesDelayedToReady)
+	})
 }
 
 func Test_Queue_UpdateDelayedToReady_keepsStillDelayedMessages(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	synctest.Run(func() {
+		q := createTestQueue(t)
 
-	// Add delayed message
-	msg := createTestSendMessageInput("delayed")
-	msg.DelaySeconds = 3600 // 1 hour
-	msgState := q.NewMessageStateFromSendMessageInput(msg)
-	q.Push(msgState)
+		// Add delayed message
+		msg := createTestSendMessageInput("delayed")
+		msg.DelaySeconds = 3600 // 1 hour
+		msgState := q.NewMessageStateFromSendMessageInput(msg)
+		q.Push(msgState)
 
-	initialStats := q.Stats()
+		initialStats := q.Stats()
 
-	// Advance time but not beyond delay
-	clock.Advance(30 * time.Minute)
+		// Advance time but not beyond delay
+		time.Sleep(30 * time.Minute)
 
-	q.UpdateDelayedToReady()
+		q.UpdateDelayedToReady()
 
-	updatedStats := q.Stats()
-	require.Equal(t, initialStats.NumMessagesDelayed, updatedStats.NumMessagesDelayed)
-	require.Equal(t, initialStats.NumMessagesReady, updatedStats.NumMessagesReady)
+		updatedStats := q.Stats()
+		require.Equal(t, initialStats.NumMessagesDelayed, updatedStats.NumMessagesDelayed)
+		require.Equal(t, initialStats.NumMessagesReady, updatedStats.NumMessagesReady)
+	})
 }
 
 func Test_Queue_UpdateDelayedToReady_emptyDelayedIsNoOp(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	q := createTestQueue(t)
 	initialStats := q.Stats()
 
 	q.UpdateDelayedToReady()
@@ -1301,8 +1304,7 @@ func Test_Queue_UpdateDelayedToReady_emptyDelayedIsNoOp(t *testing.T) {
 
 // Tests for Queue.GetQueueAttributes()
 func Test_Queue_GetQueueAttributes_returnsRequestedAttributes(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	q := createTestQueue(t)
 	q.RedrivePolicy = Some(RedrivePolicy{
 		DeadLetterTargetArn: "test-queue-arn",
 		MaxReceiveCount:     10,
@@ -1379,19 +1381,20 @@ func Test_Queue_GetQueueAttributes_emptyForNonExistentAttributes(t *testing.T) {
 }
 
 func Test_Queue_GetQueueAttributes_includesTimestamps(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	synctest.Run(func() {
+		q := createTestQueue(t)
 
-	attributes := q.GetQueueAttributes(
-		types.QueueAttributeNameCreatedTimestamp,
-		types.QueueAttributeNameLastModifiedTimestamp,
-	)
+		attributes := q.GetQueueAttributes(
+			types.QueueAttributeNameCreatedTimestamp,
+			types.QueueAttributeNameLastModifiedTimestamp,
+		)
 
-	createdTimestamp := attributes[string(types.QueueAttributeNameCreatedTimestamp)]
-	lastModifiedTimestamp := attributes[string(types.QueueAttributeNameLastModifiedTimestamp)]
+		createdTimestamp := attributes[string(types.QueueAttributeNameCreatedTimestamp)]
+		lastModifiedTimestamp := attributes[string(types.QueueAttributeNameLastModifiedTimestamp)]
 
-	require.Equal(t, fmt.Sprint(clock.Now().Unix()), createdTimestamp)
-	require.Equal(t, fmt.Sprint(clock.Now().Unix()), lastModifiedTimestamp)
+		require.Equal(t, fmt.Sprint(time.Now().Unix()), createdTimestamp)
+		require.Equal(t, fmt.Sprint(time.Now().Unix()), lastModifiedTimestamp)
+	})
 }
 
 // Tests for concurrent operations and race conditions
@@ -1530,8 +1533,7 @@ func Test_Queue_Receive_withMaximumMessagesInflightReached_returnsEmpty(t *testi
 }
 
 func Test_Queue_Push_withQueueDelayAndMessageDelay_messageDelayTakesPrecedence(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	q := createTestQueue(t)
 	q.Delay = Some(30 * time.Second) // Queue default delay
 
 	// Message with explicit delay
@@ -1548,8 +1550,7 @@ func Test_Queue_Push_withQueueDelayAndMessageDelay_messageDelayTakesPrecedence(t
 }
 
 func Test_Queue_Push_withOnlyQueueDelay_appliesQueueDelay(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	q := createTestQueue(t)
 	q.Delay = Some(30 * time.Second)
 
 	// Message with no explicit delay
@@ -1587,36 +1588,37 @@ func Test_Queue_Receive_randomizesMessageCount_withinBounds(t *testing.T) {
 }
 
 func Test_Queue_ChangeMessageVisibility_withDLQMovement_respectsMaxReceiveCount(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	dlq := createTestQueueWithName(t, clock, "test-dlq")
-	q := createTestQueueWithNameWithDLQ(t, clock, "test-queue", dlq)
+	synctest.Run(func() {
+		dlq := createTestQueueWithName(t, "test-dlq")
+		q := createTestQueueWithNameWithDLQ(t, "test-queue", dlq)
 
-	pushTestMessages(q, 1)
-	initialDLQStats := dlq.Stats()
+		pushTestMessages(q, 1)
+		initialDLQStats := dlq.Stats()
 
-	// Receive and let visibility timeout expire multiple times to trigger DLQ movement
-	var messageReceiveCount uint32
-	for range 4 { // One more than max receive count
-		received := q.Receive(&sqs.ReceiveMessageInput{MaxNumberOfMessages: 1})
-		if len(received) == 0 {
-			break // Message moved to DLQ
+		// Receive and let visibility timeout expire multiple times to trigger DLQ movement
+		var messageReceiveCount uint32
+		for range 4 { // One more than max receive count
+			received := q.Receive(&sqs.ReceiveMessageInput{MaxNumberOfMessages: 1})
+			if len(received) == 0 {
+				break // Message moved to DLQ
+			}
+			require.Len(t, received, 1)
+			receiptHandle := *received[0].ReceiptHandle
+			messageReceiveCount++
+
+			// Let message become visible again
+			q.ChangeMessageVisibility(receiptHandle, 0)
 		}
-		require.Len(t, received, 1)
-		receiptHandle := *received[0].ReceiptHandle
-		messageReceiveCount++
 
-		// Let message become visible again
-		q.ChangeMessageVisibility(receiptHandle, 0)
-	}
+		// Check that message was received multiple times and potentially moved to DLQ
+		require.GreaterOrEqual(t, messageReceiveCount, uint32(3))
 
-	// Check that message was received multiple times and potentially moved to DLQ
-	require.GreaterOrEqual(t, messageReceiveCount, uint32(3))
-
-	// If max receive count exceeded, message should be in DLQ
-	finalDLQStats := dlq.Stats()
-	if messageReceiveCount >= 3 {
-		require.GreaterOrEqual(t, finalDLQStats.NumMessages, initialDLQStats.NumMessages)
-	}
+		// If max receive count exceeded, message should be in DLQ
+		finalDLQStats := dlq.Stats()
+		if messageReceiveCount >= 3 {
+			require.GreaterOrEqual(t, finalDLQStats.NumMessages, initialDLQStats.NumMessages)
+		}
+	})
 }
 
 func Test_Queue_DeleteBatch_withInconsistentState_handlesGracefully(t *testing.T) {
@@ -1741,51 +1743,53 @@ func Test_Queue_GetQueueAttributes_withRedrivePolicy_returnsJSONString(t *testin
 }
 
 func Test_Queue_PurgeExpired_withMixedExpiryTimes_onlyRemovesExpired(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
-	q.MessageRetentionPeriod = 1 * time.Hour
+	synctest.Run(func() {
+		q := createTestQueue(t)
+		q.MessageRetentionPeriod = 1 * time.Hour
 
-	// Add messages at different times
-	pushTestMessages(q, 2) // Fresh messages
+		// Add messages at different times
+		pushTestMessages(q, 2) // Fresh messages
 
-	// Advance time and add more messages
-	clock.Advance(30 * time.Minute)
-	pushTestMessages(q, 2) // Half-aged messages
+		// Advance time and add more messages
+		time.Sleep(30 * time.Minute)
+		pushTestMessages(q, 2) // Half-aged messages
 
-	// Advance time to expire first batch but not second
-	clock.Advance(45 * time.Minute) // Total: 75 minutes (> 1 hour for first batch)
+		// Advance time to expire first batch but not second
+		time.Sleep(45 * time.Minute) // Total: 75 minutes (> 1 hour for first batch)
 
-	q.PurgeExpired()
+		q.PurgeExpired()
 
-	stats := q.Stats()
-	require.Equal(t, int64(2), stats.NumMessages) // Only second batch should remain
-	require.Equal(t, uint64(2), stats.TotalMessagesPurged)
+		stats := q.Stats()
+		require.Equal(t, int64(2), stats.NumMessages) // Only second batch should remain
+		require.Equal(t, uint64(2), stats.TotalMessagesPurged)
+	})
 }
 
 func Test_Queue_UpdateDelayedToReady_withVariousDelays_onlyMovesReady(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	q := createTestQueue(t, clock)
+	synctest.Run(func() {
+		q := createTestQueue(t)
 
-	// Add messages with different delays
-	msg1 := createTestSendMessageInput("short delay")
-	msg1.DelaySeconds = 10
-	msgState1 := q.NewMessageStateFromSendMessageInput(msg1)
+		// Add messages with different delays
+		msg1 := createTestSendMessageInput("short delay")
+		msg1.DelaySeconds = 10
+		msgState1 := q.NewMessageStateFromSendMessageInput(msg1)
 
-	msg2 := createTestSendMessageInput("long delay")
-	msg2.DelaySeconds = 3600 // 1 hour
-	msgState2 := q.NewMessageStateFromSendMessageInput(msg2)
+		msg2 := createTestSendMessageInput("long delay")
+		msg2.DelaySeconds = 3600 // 1 hour
+		msgState2 := q.NewMessageStateFromSendMessageInput(msg2)
 
-	q.Push(msgState1, msgState2)
+		q.Push(msgState1, msgState2)
 
-	// Advance time to expire only first message
-	clock.Advance(15 * time.Second)
+		// Advance time to expire only first message
+		time.Sleep(15 * time.Second)
 
-	q.UpdateDelayedToReady()
+		q.UpdateDelayedToReady()
 
-	stats := q.Stats()
-	require.Equal(t, int64(1), stats.NumMessagesReady)   // Only msg1 should be ready
-	require.Equal(t, int64(1), stats.NumMessagesDelayed) // msg2 should still be delayed
-	require.Equal(t, uint64(1), stats.TotalMessagesDelayedToReady)
+		stats := q.Stats()
+		require.Equal(t, int64(1), stats.NumMessagesReady)   // Only msg1 should be ready
+		require.Equal(t, int64(1), stats.NumMessagesDelayed) // msg2 should still be delayed
+		require.Equal(t, uint64(1), stats.TotalMessagesDelayedToReady)
+	})
 }
 
 // Test that tests the original source queue tracking
@@ -1806,9 +1810,8 @@ func Test_Queue_Push_setsOriginalSourceQueue(t *testing.T) {
 }
 
 func Test_Queue_Push_preservesExistingOriginalSourceQueue(t *testing.T) {
-	clock := clockwork.NewFakeClock()
-	originalQueue := createTestQueueWithName(t, clock, "original")
-	targetQueue := createTestQueueWithName(t, clock, "target")
+	originalQueue := createTestQueueWithName(t, "original")
+	targetQueue := createTestQueueWithName(t, "target")
 
 	msg := createTestSendMessageInput("test")
 	msgState := originalQueue.NewMessageStateFromSendMessageInput(msg)

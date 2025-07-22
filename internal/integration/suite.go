@@ -16,7 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	"github.com/jonboulle/clockwork"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/wcharczuk/sqslite/internal/httpz"
@@ -28,7 +27,6 @@ type Suite struct {
 	Local      bool
 	Region     string
 	Mode       Mode
-	Clock      clockwork.Clock
 	ShowOutput bool
 	OutputPath string
 }
@@ -52,13 +50,6 @@ func (s *Suite) ModeOrDefault() Mode {
 		return s.Mode
 	}
 	return ModeVerify
-}
-
-func (s *Suite) ClockOrDefault() clockwork.Clock {
-	if s.Clock != nil {
-		return s.Clock
-	}
-	return clockwork.NewRealClock()
 }
 
 type Mode string
@@ -130,7 +121,7 @@ func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
 		defer sqsliteListener.Close()
 
 		sqsliteServer := &http.Server{
-			Handler: httpz.Logged(sqslite.NewServer(s.ClockOrDefault())),
+			Handler: httpz.Logged(sqslite.NewServer()),
 		}
 
 		go sqsliteServer.Serve(sqsliteListener)
@@ -166,7 +157,6 @@ func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
 		id:        id,
 		ctx:       groupContext,
 		sqsClient: sqsClient,
-		clock:     s.ClockOrDefault(),
 	}
 	suiteExited := make(chan struct{})
 	group.Go(func() (err error) {
