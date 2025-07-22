@@ -102,9 +102,6 @@ github.com/aws/smithy-go/transport/http/internal/io
 # github.com/davecgh/go-spew v1.1.1
 ## explicit
 github.com/davecgh/go-spew/spew
-# github.com/jonboulle/clockwork v0.5.0
-## explicit; go 1.21
-github.com/jonboulle/clockwork
 # github.com/julienschmidt/httprouter v1.3.0
 ## explicit; go 1.7
 github.com/julienschmidt/httprouter
