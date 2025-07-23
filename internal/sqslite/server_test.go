@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"testing/synctest"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -381,24 +380,26 @@ func Test_Server_sendMessageBatch_sizeValidation(t *testing.T) {
 }
 
 func Test_Server_receiveMessage_awaitsMessages(t *testing.T) {
-	t.Skip("doesn't work with synctest, not sure why")
-	synctest.Run(func() {
-		server, testServer := startTestServer(t)
-		queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
-		go func() {
-			received := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
-				QueueUrl:            aws.String(testDefaultQueueURL),
-				MaxNumberOfMessages: 5,
-			})
-			require.True(t, len(received.Messages) > 0)
-		}()
-		for range 2 {
-			_ = testHelperSendMessage(t, testServer, testNewSendMessageInput(testDefaultQueueURL))
-		}
-		synctest.Wait()
-		require.Equal(t, int64(2), queue.Stats().NumMessages)
-		require.True(t, queue.Stats().NumMessagesInflight > 0)
-	})
+	server, testServer := startTestServer(t)
+	queue := server.accounts.accounts[testAccountID].queues[testDefaultQueueURL]
+	startedReceiveRequest := make(chan struct{})
+	completedReceiveRequest := make(chan struct{})
+	go func() {
+		close(startedReceiveRequest)
+		defer close(completedReceiveRequest)
+		received := testHelperReceiveMessages(t, testServer, &sqs.ReceiveMessageInput{
+			QueueUrl:            aws.String(testDefaultQueueURL),
+			MaxNumberOfMessages: 5,
+		})
+		require.True(t, len(received.Messages) > 0)
+	}()
+	<-startedReceiveRequest
+	for range 2 {
+		_ = testHelperSendMessage(t, testServer, testNewSendMessageInput(testDefaultQueueURL))
+	}
+	<-completedReceiveRequest
+	require.Equal(t, int64(2), queue.Stats().NumMessages)
+	require.True(t, queue.Stats().NumMessagesInflight > 0)
 }
 
 func Test_Server_rejectsNonPostMethod(t *testing.T) {
