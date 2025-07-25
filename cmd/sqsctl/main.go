@@ -53,6 +53,11 @@ var defaultFlags = []cli.Flag{
 		Usage: "The endpoint to configure the client with",
 		Value: "http://localhost:4566",
 	},
+	&cli.StringFlag{
+		Name:  "account-id",
+		Usage: "The account ID to query with",
+		Value: sqslite.DefaultAccountID,
+	},
 }
 
 func debugf(format string, args ...any) {
@@ -69,7 +74,6 @@ var sendMessage = &cli.Command{
 		&cli.StringFlag{
 			Name:  "queue-url",
 			Usage: "The Queue URL to target",
-			Value: sqslite.FormatQueueURL(sqslite.DefaultAuthorization, sqslite.DefaultQueueName),
 		},
 		&cli.StringFlag{
 			Name:  "id",
@@ -92,7 +96,7 @@ var sendMessage = &cli.Command{
 		}
 		sess, err := config.LoadDefaultConfig(ctx,
 			config.WithRegion(c.String("region")),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.String("account-id"), "test-secret-key", "test-secret-key-token")),
 		)
 		if err != nil {
 			return err
@@ -105,8 +109,10 @@ var sendMessage = &cli.Command{
 		if delay := c.Duration("delay"); delay > 0 {
 			delaySeconds = int32(delay / time.Second)
 		}
+
+		queueURL := resolveQueueURL(c)
 		output, err := sqsClient.SendMessage(ctx, &sqs.SendMessageInput{
-			QueueUrl:          aws.String(c.String("queue-url")),
+			QueueUrl:          aws.String(queueURL),
 			MessageBody:       aws.String(string(contents)),
 			DelaySeconds:      delaySeconds,
 			MessageAttributes: formatMessageAttributes(c.StringMap("attribute")),
@@ -154,7 +160,7 @@ var queueCreate = &cli.Command{
 		debugf("creating queue %s", c.String("name"))
 		sess, err := config.LoadDefaultConfig(ctx,
 			config.WithRegion(c.String("region")),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.String("account-id"), "test-secret-key", "test-secret-key-token")),
 		)
 		if err != nil {
 			return err
@@ -183,7 +189,6 @@ var queueUpdate = &cli.Command{
 		&cli.StringFlag{
 			Name:  "queue-url",
 			Usage: "The Queue URL to target",
-			Value: sqslite.FormatQueueURL(sqslite.DefaultAuthorization, sqslite.DefaultQueueName),
 		},
 		&cli.StringMapFlag{
 			Name:  "attribute",
@@ -197,7 +202,7 @@ var queueUpdate = &cli.Command{
 	Action: func(ctx context.Context, c *cli.Command) error {
 		sess, err := config.LoadDefaultConfig(ctx,
 			config.WithRegion(c.String("region")),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.String("account-id"), "test-secret-key", "test-secret-key-token")),
 		)
 		if err != nil {
 			return err
@@ -207,7 +212,7 @@ var queueUpdate = &cli.Command{
 			o.AppID = "sqslite-demo-producer"
 		})
 		_, err = sqsClient.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
-			QueueUrl:   aws.String(c.String("queue-url")),
+			QueueUrl:   aws.String(resolveQueueURL(c)),
 			Attributes: c.StringMap("attribute"),
 		})
 		if err != nil {
@@ -231,7 +236,7 @@ var queuesList = &cli.Command{
 	Action: func(ctx context.Context, c *cli.Command) error {
 		sess, err := config.LoadDefaultConfig(ctx,
 			config.WithRegion(c.String("region")),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.String("account-id"), "test-secret-key", "test-secret-key-token")),
 		)
 		if err != nil {
 			return err
@@ -273,13 +278,12 @@ var queueDescribe = &cli.Command{
 		&cli.StringFlag{
 			Name:  "queue-url",
 			Usage: "The Queue URL to target",
-			Value: sqslite.FormatQueueURL(sqslite.DefaultAuthorization, sqslite.DefaultQueueName),
 		},
 	),
 	Action: func(ctx context.Context, c *cli.Command) error {
 		sess, err := config.LoadDefaultConfig(ctx,
 			config.WithRegion(c.String("region")),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.String("account-id"), "test-secret-key", "test-secret-key-token")),
 		)
 		if err != nil {
 			return err
@@ -289,7 +293,7 @@ var queueDescribe = &cli.Command{
 			o.AppID = "sqslite-demo-producer"
 		})
 		res, err := sqsClient.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
-			QueueUrl:       aws.String(c.String("queue-url")),
+			QueueUrl:       aws.String(resolveQueueURL(c)),
 			AttributeNames: types.QueueAttributeNameAll.Values(),
 		})
 		if err != nil {
@@ -309,13 +313,12 @@ var queueDelete = &cli.Command{
 		&cli.StringFlag{
 			Name:  "queue-url",
 			Usage: "The Queue URL to target",
-			Value: sqslite.FormatQueueURL(sqslite.DefaultAuthorization, sqslite.DefaultQueueName),
 		},
 	),
 	Action: func(ctx context.Context, c *cli.Command) error {
 		sess, err := config.LoadDefaultConfig(ctx,
 			config.WithRegion(c.String("region")),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.String("account-id"), "test-secret-key", "test-secret-key-token")),
 		)
 		if err != nil {
 			return err
@@ -325,7 +328,7 @@ var queueDelete = &cli.Command{
 			o.AppID = "sqslite-demo-producer"
 		})
 		_, err = sqsClient.DeleteQueue(ctx, &sqs.DeleteQueueInput{
-			QueueUrl: aws.String(c.String("queue-url")),
+			QueueUrl: aws.String(resolveQueueURL(c)),
 		})
 		if err != nil {
 			return err
@@ -333,6 +336,18 @@ var queueDelete = &cli.Command{
 		fmt.Printf("deleted queue %s\n", c.String("queue-url"))
 		return nil
 	},
+}
+
+func resolveQueueURL(c *cli.Command) string {
+	if queueURL := c.String("queue-url"); queueURL != "" {
+		return queueURL
+	}
+	if accountID := c.String("account-id"); accountID != "" {
+		return sqslite.FormatQueueURL(sqslite.Authorization{
+			AccountID: accountID,
+		}, sqslite.DefaultQueueName)
+	}
+	return sqslite.FormatQueueURL(sqslite.DefaultAuthorization, sqslite.DefaultQueueName)
 }
 
 func formatMessageAttributes(attributes map[string]string) map[string]types.MessageAttributeValue {
