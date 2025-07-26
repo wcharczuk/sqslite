@@ -455,7 +455,7 @@ func messagesMoveInvalidSource(it *integration.Run) {
 
 func fairQueueLimits(it *integration.Run) {
 	mainQueue := it.CreateQueue()
-	it.Log("writing ~160_000 messages with group(s) 'one', 'two', and 'three'")
+	it.Log("writing ~210_000 messages with group(s) 'one', 'two', and 'three'")
 	g := new(errgroup.Group)
 	for range 32 {
 		g.Go(func() (err error) {
@@ -477,7 +477,7 @@ func fairQueueLimits(it *integration.Run) {
 					err = fmt.Errorf("publishing messages for a shard of'two' threw: %v", r)
 				}
 			}()
-			for range 2000 / 4 {
+			for range 3000 / 4 {
 				it.SendMessagesWithGroup(mainQueue, "two", 10)
 			}
 			return
@@ -490,7 +490,7 @@ func fairQueueLimits(it *integration.Run) {
 					err = fmt.Errorf("publishing messages for a shard of 'three' threw: %v", r)
 				}
 			}()
-			for range 2000 / 4 {
+			for range 3000 / 4 {
 				it.SendMessagesWithGroup(mainQueue, "three", 10)
 			}
 			return
@@ -506,9 +506,13 @@ func fairQueueLimits(it *integration.Run) {
 
 	var muGroupIDs sync.Mutex
 	groupIDs := make(map[string]int)
+
+	var muMessageIDs sync.Mutex
+	messageIDs := make(map[string]int)
+
 	var totalCount uint32
 	startedReading := time.Now()
-	for range 32 {
+	for range 64 {
 		g.Go(func() (err error) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -516,18 +520,21 @@ func fairQueueLimits(it *integration.Run) {
 				}
 			}()
 			var thisPass int
-			for thisPass < (130_000 / 32) {
+			for thisPass < (150_000 / 64) {
 				if time.Since(startedReading) > 30*time.Second {
-					err = fmt.Errorf("exceeded 30 seconds; likely going to start seeing the same messages again")
+					err = fmt.Errorf("exceeded 30 seconds; likely going to start seeing the same messages again, read %d messages so far", len(messageIDs))
 					return
 				}
-				_, gids := it.ReceiveMessagesWithGroupIDs(mainQueue)
-				for _, id := range gids {
+				_, mids, gids := it.ReceiveMessagesWithGroupIDs(mainQueue)
+				for index := range len(gids) {
 					thisPass++
 					atomic.AddUint32(&totalCount, 1)
 					muGroupIDs.Lock()
-					groupIDs[id]++
+					groupIDs[gids[index]]++
 					muGroupIDs.Unlock()
+					muMessageIDs.Lock()
+					messageIDs[mids[index]]++
+					muMessageIDs.Unlock()
 				}
 			}
 			return
@@ -553,6 +560,12 @@ func fairQueueLimits(it *integration.Run) {
 	if ok {
 		it.Logf("possibly ok after 120_001 read? %v", ok)
 	}
+
+	stats := it.GetQueueStats(mainQueue)
+
 	groupIDs[groupID]++
 	it.Logf("groupIDs: %#v", groupIDs)
+	it.Logf("total messages: %d", len(messageIDs))
+	it.Logf("stats messages: %d", stats.ApproximateNumberOfMessages)
+	it.Logf("stats not visible messages: %d", stats.ApproximateNumberOfMessagesNotVisible)
 }

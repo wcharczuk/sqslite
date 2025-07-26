@@ -325,7 +325,7 @@ func (it *Run) ReceiveMessages(queue Queue) (receiptHandles []string) {
 	return
 }
 
-func (it *Run) ReceiveMessagesWithGroupIDs(queue Queue) (receiptHandles, groupIDs []string) {
+func (it *Run) ReceiveMessagesWithGroupIDs(queue Queue) (receiptHandles, messageIDs, groupIDs []string) {
 	it.checkIfCanceled()
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            &queue.QueueURL,
@@ -343,6 +343,7 @@ func (it *Run) ReceiveMessagesWithGroupIDs(queue Queue) (receiptHandles, groupID
 	}
 	for _, msg := range res.Messages {
 		receiptHandles = append(receiptHandles, safeDeref(msg.ReceiptHandle))
+		messageIDs = append(messageIDs, safeDeref(msg.MessageId))
 		groupIDs = append(groupIDs, msg.Attributes["MessageGroupId"])
 	}
 	return
