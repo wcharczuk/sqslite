@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -25,10 +27,28 @@ type Run struct {
 	after          []func()
 }
 
+func (it *Run) Context() context.Context {
+	return it.ctx
+}
+
+// GetMessageOrdinal gets the messages ordinal (or index) for the run.
+func (it *Run) GetMessageOrdinal() (messageOrdinal uint64) {
+	messageOrdinal = atomic.LoadUint64(&it.messageOrdinal)
+	return
+}
+
 func (it *Run) Cleanup() {
 	for _, fn := range it.after {
 		fn()
 	}
+}
+
+func (it *Run) Log(message string) {
+	slog.Info(message)
+}
+
+func (it *Run) Logf(format string, args ...any) {
+	slog.Info(fmt.Sprintf(format, args...))
 }
 
 func (it *Run) After(fn func()) {
@@ -153,6 +173,28 @@ func (it *Run) SendMessage(queue Queue) {
 	}
 }
 
+func (it *Run) SendMessages(queue Queue, count int) {
+	it.checkIfCanceled()
+	input := &sqs.SendMessageBatchInput{
+		QueueUrl: &queue.QueueURL,
+	}
+	for range count {
+		id := atomic.AddUint64(&it.messageOrdinal, 1)
+		input.Entries = append(input.Entries,
+			types.SendMessageBatchRequestEntry{
+				Id:          aws.String(fmt.Sprint(id)),
+				MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, id)),
+			})
+	}
+	res, err := it.sqsClient.SendMessageBatch(it.ctx, input)
+	if err != nil {
+		panic(err)
+	}
+	if len(res.Failed) > 0 {
+		panic(fmt.Errorf("failed message: %#v", res.Failed[0]))
+	}
+}
+
 func (it *Run) SendMessageWithGroup(queue Queue, groupID string) {
 	it.checkIfCanceled()
 	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
@@ -162,6 +204,29 @@ func (it *Run) SendMessageWithGroup(queue Queue, groupID string) {
 	})
 	if err != nil {
 		panic(err)
+	}
+}
+
+func (it *Run) SendMessagesWithGroup(queue Queue, groupID string, count int) {
+	it.checkIfCanceled()
+	input := &sqs.SendMessageBatchInput{
+		QueueUrl: &queue.QueueURL,
+	}
+	for range count {
+		id := atomic.AddUint64(&it.messageOrdinal, 1)
+		input.Entries = append(input.Entries,
+			types.SendMessageBatchRequestEntry{
+				Id:             aws.String(fmt.Sprint(id)),
+				MessageGroupId: aws.String(groupID),
+				MessageBody:    aws.String(fmt.Sprintf(`{"message_index":%d}`, id)),
+			})
+	}
+	res, err := it.sqsClient.SendMessageBatch(it.ctx, input)
+	if err != nil {
+		panic(err)
+	}
+	if len(res.Failed) > 0 {
+		panic(fmt.Errorf("failed message: %#v", res.Failed[0]))
 	}
 }
 
@@ -219,6 +284,28 @@ func (it *Run) ReceiveMessage(queue Queue) (receiptHandle string, ok bool) {
 	return
 }
 
+func (it *Run) ReceiveMessageWithGroupID(queue Queue) (receiptHandle, groupID string, ok bool) {
+	it.checkIfCanceled()
+	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            &queue.QueueURL,
+		MaxNumberOfMessages: 1,
+		VisibilityTimeout:   5,
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+			types.MessageSystemAttributeNameMessageGroupId,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	if len(res.Messages) == 0 {
+		return
+	}
+	receiptHandle = safeDeref(res.Messages[0].ReceiptHandle)
+	groupID, _ = res.Messages[0].Attributes["MessageGroupId"]
+	ok = true
+	return
+}
+
 func (it *Run) ReceiveMessages(queue Queue) (receiptHandles []string) {
 	it.checkIfCanceled()
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
@@ -234,6 +321,29 @@ func (it *Run) ReceiveMessages(queue Queue) (receiptHandles []string) {
 	}
 	for _, msg := range res.Messages {
 		receiptHandles = append(receiptHandles, safeDeref(msg.ReceiptHandle))
+	}
+	return
+}
+
+func (it *Run) ReceiveMessagesWithGroupIDs(queue Queue) (receiptHandles, groupIDs []string) {
+	it.checkIfCanceled()
+	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            &queue.QueueURL,
+		MaxNumberOfMessages: 10,
+		VisibilityTimeout:   30,
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+			types.MessageSystemAttributeNameMessageGroupId,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	if len(res.Messages) == 0 {
+		return
+	}
+	for _, msg := range res.Messages {
+		receiptHandles = append(receiptHandles, safeDeref(msg.ReceiptHandle))
+		groupIDs = append(groupIDs, msg.Attributes["MessageGroupId"])
 	}
 	return
 }
@@ -278,12 +388,7 @@ func (it *Run) ReceiveMessageWithSystemAttributeNames(queue Queue, attributeName
 }
 
 func (it *Run) GetQueueAttributes(queue Queue, attributeNames ...types.QueueAttributeName) map[string]string {
-	select {
-	case <-it.ctx.Done():
-		panic(it.ctx.Err())
-	default:
-	}
-
+	it.checkIfCanceled()
 	res, err := it.sqsClient.GetQueueAttributes(it.ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl:       &queue.QueueURL,
 		AttributeNames: attributeNames,
@@ -292,6 +397,43 @@ func (it *Run) GetQueueAttributes(queue Queue, attributeNames ...types.QueueAttr
 		panic(err)
 	}
 	return res.Attributes
+}
+
+type QueueStats struct {
+	ApproximateNumberOfMessages           int
+	ApproximateNumberOfMessagesDelayed    int
+	ApproximateNumberOfMessagesNotVisible int
+}
+
+func (q QueueStats) TotalNumberOfMessages() int {
+	return q.ApproximateNumberOfMessages + q.ApproximateNumberOfMessagesDelayed + q.ApproximateNumberOfMessagesNotVisible
+}
+
+func (it *Run) GetQueueStats(queue Queue) (queueStats QueueStats) {
+	it.checkIfCanceled()
+	res, err := it.sqsClient.GetQueueAttributes(it.ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl: &queue.QueueURL,
+		AttributeNames: []types.QueueAttributeName{
+			types.QueueAttributeNameApproximateNumberOfMessages,
+			types.QueueAttributeNameApproximateNumberOfMessagesDelayed,
+			types.QueueAttributeNameApproximateNumberOfMessagesNotVisible,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	queueStats = readQueueStatsFromAttributes(res)
+	return
+}
+
+func readQueueStatsFromAttributes(res *sqs.GetQueueAttributesOutput) (output QueueStats) {
+	if res.Attributes == nil {
+		return
+	}
+	output.ApproximateNumberOfMessages, _ = strconv.Atoi(res.Attributes[string(types.QueueAttributeNameApproximateNumberOfMessages)])
+	output.ApproximateNumberOfMessagesDelayed, _ = strconv.Atoi(res.Attributes[string(types.QueueAttributeNameApproximateNumberOfMessagesDelayed)])
+	output.ApproximateNumberOfMessagesNotVisible, _ = strconv.Atoi(res.Attributes[string(types.QueueAttributeNameApproximateNumberOfMessagesNotVisible)])
+	return
 }
 
 func (it *Run) DeleteMessage(queue Queue, receiptHandle string) {

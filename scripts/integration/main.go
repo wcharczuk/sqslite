@@ -9,11 +9,14 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/spf13/pflag"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/wcharczuk/sqslite/internal/integration"
 	"github.com/wcharczuk/sqslite/internal/slant"
@@ -21,12 +24,14 @@ import (
 )
 
 var (
-	flagLogLevel   = pflag.String("log-level", slog.LevelInfo.String(), "The logger level")
-	flagLogFormat  = pflag.String("log-format", "json", "The logger format (json|text)")
-	flagAWSRegion  = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
-	flagLocal      = pflag.Bool("local", false, "If we should target a locally running instance for the upstream (versus the real sqs service)")
-	flagOutputPath = pflag.String("output-path", "testdata/integration", "The output path to save the request response output")
-	flagScenarios  = pflag.StringSlice("scenario", nil, fmt.Sprintf(
+	flagLogLevel        = pflag.String("log-level", slog.LevelInfo.String(), "The logger level")
+	flagLogFormat       = pflag.String("log-format", "json", "The logger format (json|text)")
+	flagAWSRegion       = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
+	flagLocal           = pflag.Bool("local", false, "If we should target a locally running instance for the upstream (versus the real sqs service)")
+	flagSkipShowOutput  = pflag.Bool("skip-show-output", true, "Skip showing the output in stdout")
+	flagSkipWriteOutput = pflag.Bool("skip-write-output", true, "Skip writing the output to the output path")
+	flagOutputPath      = pflag.String("output-path", "testdata/integration", "The output path to save the request response output")
+	flagScenarios       = pflag.StringSlice("scenario", nil, fmt.Sprintf(
 		"The integration test scenarios to run (%s)",
 		strings.Join(slices.Collect(maps.Keys(scenarios)), "|"),
 	))
@@ -65,9 +70,11 @@ func main() {
 	slog.Error("using log level", slog.String("log_level", logLeveler.Level().String()))
 
 	it := integration.Suite{
-		Region:     *flagAWSRegion,
-		OutputPath: *flagOutputPath,
-		Local:      *flagLocal,
+		Region:          *flagAWSRegion,
+		SkipShowOutput:  *flagSkipShowOutput,
+		SkipWriteOutput: *flagSkipWriteOutput,
+		OutputPath:      *flagOutputPath,
+		Local:           *flagLocal,
 	}
 
 	var enabledScenarios []string
@@ -114,8 +121,7 @@ var scenarios = map[string]func(*integration.Run){
 	"fill-dlq":                               fillDLQ,
 	"messages-move":                          messagesMove,
 	"messages-move-invalid-source":           messagesMoveInvalidSource,
-
-	"fair-queue-limits": fairQueueLimits,
+	"fair-queue-limits":                      fairQueueLimits,
 }
 
 func getQueueURL(it *integration.Run) {
@@ -449,7 +455,104 @@ func messagesMoveInvalidSource(it *integration.Run) {
 
 func fairQueueLimits(it *integration.Run) {
 	mainQueue := it.CreateQueue()
-	for range 240_000 {
-		it.SendMessage(mainQueue)
+	it.Log("writing ~160_000 messages with group(s) 'one', 'two', and 'three'")
+	g := new(errgroup.Group)
+	for range 32 {
+		g.Go(func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("publishing messages for a shard of 'one' threw: %v", r)
+				}
+			}()
+			for range 15_000 / 32 {
+				it.SendMessagesWithGroup(mainQueue, "one", 10)
+			}
+			return
+		})
 	}
+	for range 4 {
+		g.Go(func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("publishing messages for a shard of'two' threw: %v", r)
+				}
+			}()
+			for range 2000 / 4 {
+				it.SendMessagesWithGroup(mainQueue, "two", 10)
+			}
+			return
+		})
+	}
+	for range 4 {
+		g.Go(func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("publishing messages for a shard of 'three' threw: %v", r)
+				}
+			}()
+			for range 2000 / 4 {
+				it.SendMessagesWithGroup(mainQueue, "three", 10)
+			}
+			return
+		})
+	}
+
+	err := g.Wait()
+	if err != nil {
+		panic(err)
+	}
+
+	it.Log("done publishing messages, starting to read messages")
+
+	var muGroupIDs sync.Mutex
+	groupIDs := make(map[string]int)
+	var totalCount uint32
+	startedReading := time.Now()
+	for range 32 {
+		g.Go(func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("reading messages: %v", r)
+				}
+			}()
+			var thisPass int
+			for thisPass < (130_000 / 32) {
+				if time.Since(startedReading) > 30*time.Second {
+					err = fmt.Errorf("exceeded 30 seconds; likely going to start seeing the same messages again")
+					return
+				}
+				_, gids := it.ReceiveMessagesWithGroupIDs(mainQueue)
+				for _, id := range gids {
+					thisPass++
+					atomic.AddUint32(&totalCount, 1)
+					muGroupIDs.Lock()
+					groupIDs[id]++
+					muGroupIDs.Unlock()
+				}
+			}
+			return
+		})
+	}
+
+	err = g.Wait()
+	if err != nil {
+		panic(err)
+	}
+
+	_, groupID, ok := it.ReceiveMessageWithGroupID(mainQueue)
+	if ok {
+		it.Logf("possibly ok after 119_999 read? %v", ok)
+	}
+	groupIDs[groupID]++
+	_, groupID, ok = it.ReceiveMessageWithGroupID(mainQueue)
+	if ok {
+		it.Logf("possibly ok after 120_000 read? %v", ok)
+	}
+	groupIDs[groupID]++
+	_, groupID, ok = it.ReceiveMessageWithGroupID(mainQueue)
+	if ok {
+		it.Logf("possibly ok after 120_001 read? %v", ok)
+	}
+	groupIDs[groupID]++
+	it.Logf("groupIDs: %#v", groupIDs)
 }

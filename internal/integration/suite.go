@@ -21,9 +21,12 @@ import (
 )
 
 type Suite struct {
-	Local      bool
-	Region     string
-	ShowOutput bool
+	Local  bool
+	Region string
+
+	SkipShowOutput  bool
+	SkipWriteOutput bool
+
 	OutputPath string
 }
 
@@ -57,20 +60,31 @@ func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
 	} else {
 		outputPath = filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", id))
 	}
+
 	var spyHandler func(spy.Request)
 	if err := os.MkdirAll(s.OutputPathOrDefault(), 0755); err != nil {
 		return fmt.Errorf("unable to create output path dir: %w", err)
 	}
-	outputFile, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("unable to create output file for write: %w", err)
-	}
-	defer outputFile.Close()
-	if s.ShowOutput {
-		spyHandler = WriteOutput(io.MultiWriter(outputFile, os.Stdout))
+
+	if !s.SkipWriteOutput {
+		outputFile, err := os.Create(outputPath)
+		if err != nil {
+			return fmt.Errorf("unable to create output file for write: %w", err)
+		}
+		defer outputFile.Close()
+		if s.SkipShowOutput {
+			spyHandler = WriteOutput(io.MultiWriter(outputFile))
+		} else {
+			spyHandler = WriteOutput(io.MultiWriter(outputFile, os.Stdout))
+		}
 	} else {
-		spyHandler = WriteOutput(io.MultiWriter(outputFile))
+		if !s.SkipShowOutput {
+			spyHandler = WriteOutput(os.Stdout)
+		} else {
+			spyHandler = func(spy.Request) {}
+		}
 	}
+
 	sess, err = config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return err
