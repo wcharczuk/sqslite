@@ -23,8 +23,6 @@ type Run struct {
 	messageOrdinal uint64
 	queueOrdinal   uint64
 	after          []func()
-
-	crashed uint32
 }
 
 func (it *Run) Cleanup() {
@@ -149,6 +147,18 @@ func (it *Run) SendMessage(queue Queue) {
 	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
 		QueueUrl:    &queue.QueueURL,
 		MessageBody: aws.String(fmt.Sprintf(`{"message_index":%d}`, atomic.AddUint64(&it.messageOrdinal, 1))),
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (it *Run) SendMessageWithGroup(queue Queue, groupID string) {
+	it.checkIfCanceled()
+	_, err := it.sqsClient.SendMessage(it.ctx, &sqs.SendMessageInput{
+		QueueUrl:       &queue.QueueURL,
+		MessageGroupId: aws.String(groupID),
+		MessageBody:    aws.String(fmt.Sprintf(`{"message_index":%d}`, atomic.AddUint64(&it.messageOrdinal, 1))),
 	})
 	if err != nil {
 		panic(err)

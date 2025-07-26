@@ -60,12 +60,6 @@ var defaultFlags = []cli.Flag{
 	},
 }
 
-func debugf(format string, args ...any) {
-	if debugEnabled {
-		fmt.Fprintln(os.Stderr, "[DEBUG] "+fmt.Sprintf(format, args...))
-	}
-}
-
 var sendMessage = &cli.Command{
 	Name:    "send-message",
 	Aliases: []string{"send"},
@@ -366,4 +360,10 @@ func fileOrStdin(path string) ([]byte, error) {
 		return io.ReadAll(os.Stdin)
 	}
 	return os.ReadFile(path)
+}
+
+func debugf(format string, args ...any) {
+	if debugEnabled {
+		fmt.Fprintln(os.Stderr, "[DEBUG] "+fmt.Sprintf(format, args...))
+	}
 }

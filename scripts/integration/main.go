@@ -24,9 +24,8 @@ var (
 	flagLogLevel   = pflag.String("log-level", slog.LevelInfo.String(), "The logger level")
 	flagLogFormat  = pflag.String("log-format", "json", "The logger format (json|text)")
 	flagAWSRegion  = pflag.String("region", sqslite.DefaultRegion, "The AWS region")
-	flagLocal      = pflag.Bool("local", false, "If we should target a locally running instance for the upstream")
-	flagMode       = pflag.String("mode", string(integration.ModeVerify), "The integration test mode (save|verify)")
-	flagOutputPath = pflag.String("output-path", "testdata/integration", "The output path in --mode=save, and the source path in --mode=verify")
+	flagLocal      = pflag.Bool("local", false, "If we should target a locally running instance for the upstream (versus the real sqs service)")
+	flagOutputPath = pflag.String("output-path", "testdata/integration", "The output path to save the request response output")
 	flagScenarios  = pflag.StringSlice("scenario", nil, fmt.Sprintf(
 		"The integration test scenarios to run (%s)",
 		strings.Join(slices.Collect(maps.Keys(scenarios)), "|"),
@@ -67,7 +66,6 @@ func main() {
 
 	it := integration.Suite{
 		Region:     *flagAWSRegion,
-		Mode:       integration.Mode(*flagMode),
 		OutputPath: *flagOutputPath,
 		Local:      *flagLocal,
 	}
@@ -87,12 +85,12 @@ func main() {
 		if !ok {
 			continue
 		}
-		slog.Info("integration scenario starting", slog.String("scenario", scenario), slog.String("mode", *flagMode))
+		slog.Info("integration scenario starting", slog.String("scenario", scenario))
 		if err := it.Run(ctx, scenario, fn); err != nil {
-			slog.Error("integration scenario failed", slog.String("scenario", scenario), slog.Any("err", err), slog.String("mode", *flagMode))
+			slog.Error("integration scenario failed", slog.String("scenario", scenario), slog.Any("err", err))
 			os.Exit(1)
 		}
-		slog.Info("integration scenario completed successfully", slog.String("scenario", scenario), slog.String("mode", *flagMode))
+		slog.Info("integration scenario completed successfully", slog.String("scenario", scenario))
 	}
 }
 
@@ -116,6 +114,8 @@ var scenarios = map[string]func(*integration.Run){
 	"fill-dlq":                               fillDLQ,
 	"messages-move":                          messagesMove,
 	"messages-move-invalid-source":           messagesMoveInvalidSource,
+
+	"fair-queue-limits": fairQueueLimits,
 }
 
 func getQueueURL(it *integration.Run) {
@@ -445,4 +445,11 @@ func messagesMoveInvalidSource(it *integration.Run) {
 	it.ExpectFailure(func() {
 		_ = it.StartMessagesMoveTask(notDLQ, mainQueue)
 	})
+}
+
+func fairQueueLimits(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+	for range 240_000 {
+		it.SendMessage(mainQueue)
+	}
 }
