@@ -21,6 +21,7 @@ import (
 	"github.com/wcharczuk/sqslite/internal/integration"
 	"github.com/wcharczuk/sqslite/internal/slant"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
+	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 var (
@@ -455,48 +456,41 @@ func messagesMoveInvalidSource(it *integration.Run) {
 
 func fairQueueLimits(it *integration.Run) {
 	mainQueue := it.CreateQueue()
-	it.Log("writing ~210_000 messages with group(s) 'one', 'two', and 'three'")
-	g := new(errgroup.Group)
-	for range 32 {
-		g.Go(func() (err error) {
-			defer func() {
-				if r := recover(); r != nil {
-					err = fmt.Errorf("publishing messages for a shard of 'one' threw: %v", r)
-				}
-			}()
-			for range 15_000 / 32 {
-				it.SendMessagesWithGroup(mainQueue, "one", 10)
-			}
-			return
-		})
-	}
-	for range 4 {
-		g.Go(func() (err error) {
-			defer func() {
-				if r := recover(); r != nil {
-					err = fmt.Errorf("publishing messages for a shard of'two' threw: %v", r)
-				}
-			}()
-			for range 3000 / 4 {
-				it.SendMessagesWithGroup(mainQueue, "two", 10)
-			}
-			return
-		})
-	}
-	for range 4 {
-		g.Go(func() (err error) {
-			defer func() {
-				if r := recover(); r != nil {
-					err = fmt.Errorf("publishing messages for a shard of 'three' threw: %v", r)
-				}
-			}()
-			for range 3000 / 4 {
-				it.SendMessagesWithGroup(mainQueue, "three", 10)
-			}
-			return
-		})
-	}
 
+	var (
+		messageGroupIDs = []string{
+			uuid.V4().String(),
+			uuid.V4().String(),
+			uuid.V4().String(),
+			uuid.V4().String(),
+		}
+	)
+	const (
+		totalMessageCountPerGroup      = 150_000
+		publishMessagesPerBatch        = 10
+		publishMessagesPerLooop        = totalMessageCountPerGroup / publishMessagesPerBatch
+		publishMessageShards           = 32
+		publishMessagesPerShardPerLoop = publishMessagesPerLooop / publishMessageShards
+	)
+
+	it.Logf("publishing messages across %d group(s)", len(messageGroupIDs))
+
+	g := new(errgroup.Group)
+	for _, groupID := range messageGroupIDs {
+		for range publishMessageShards {
+			g.Go(func() (err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("publishing messages for a shard threw: %v", r)
+					}
+				}()
+				for range publishMessagesPerShardPerLoop {
+					it.SendMessagesWithGroup(mainQueue, groupID, publishMessagesPerBatch)
+				}
+				return
+			})
+		}
+	}
 	err := g.Wait()
 	if err != nil {
 		panic(err)
@@ -504,15 +498,21 @@ func fairQueueLimits(it *integration.Run) {
 
 	it.Log("done publishing messages, starting to read messages")
 
+	const (
+		receiveShards                = 128
+		receiveMessagesCount         = 200_000
+		receiveMessagesCountPerShard = receiveMessagesCount / receiveShards
+	)
+
 	var muGroupIDs sync.Mutex
 	groupIDs := make(map[string]int)
 
 	var muMessageIDs sync.Mutex
 	messageIDs := make(map[string]int)
 
-	var totalCount uint32
+	var totalMessagesReceived uint32
 	startedReading := time.Now()
-	for range 64 {
+	for range receiveShards {
 		g.Go(func() (err error) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -520,7 +520,7 @@ func fairQueueLimits(it *integration.Run) {
 				}
 			}()
 			var thisPass int
-			for thisPass < (150_000 / 64) {
+			for thisPass < receiveMessagesCountPerShard {
 				if time.Since(startedReading) > 30*time.Second {
 					err = fmt.Errorf("exceeded 30 seconds; likely going to start seeing the same messages again, read %d messages so far", len(messageIDs))
 					return
@@ -528,7 +528,7 @@ func fairQueueLimits(it *integration.Run) {
 				_, mids, gids := it.ReceiveMessagesWithGroupIDs(mainQueue)
 				for index := range len(gids) {
 					thisPass++
-					atomic.AddUint32(&totalCount, 1)
+					atomic.AddUint32(&totalMessagesReceived, 1)
 					muGroupIDs.Lock()
 					groupIDs[gids[index]]++
 					muGroupIDs.Unlock()
@@ -545,27 +545,9 @@ func fairQueueLimits(it *integration.Run) {
 	if err != nil {
 		panic(err)
 	}
-
-	_, groupID, ok := it.ReceiveMessageWithGroupID(mainQueue)
-	if ok {
-		it.Logf("possibly ok after 119_999 read? %v", ok)
-	}
-	groupIDs[groupID]++
-	_, groupID, ok = it.ReceiveMessageWithGroupID(mainQueue)
-	if ok {
-		it.Logf("possibly ok after 120_000 read? %v", ok)
-	}
-	groupIDs[groupID]++
-	_, groupID, ok = it.ReceiveMessageWithGroupID(mainQueue)
-	if ok {
-		it.Logf("possibly ok after 120_001 read? %v", ok)
-	}
-
 	stats := it.GetQueueStats(mainQueue)
-
-	groupIDs[groupID]++
-	it.Logf("groupIDs: %#v", groupIDs)
-	it.Logf("total messages: %d", len(messageIDs))
-	it.Logf("stats messages: %d", stats.ApproximateNumberOfMessages)
-	it.Logf("stats not visible messages: %d", stats.ApproximateNumberOfMessagesNotVisible)
+	it.Logf("counts per groupID: %#v", groupIDs)
+	it.Logf("count of message ids seen: %d", len(messageIDs))
+	it.Logf("queue stats approximate number of messages: %d", stats.ApproximateNumberOfMessages)
+	it.Logf("queue stats approximate number of not visible messages: %d", stats.ApproximateNumberOfMessagesNotVisible)
 }
