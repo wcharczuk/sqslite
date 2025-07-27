@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"golang.org/x/sync/errgroup"
 
@@ -44,70 +45,91 @@ func (s *Suite) RegionOrDefault() string {
 	return sqslite.DefaultRegion
 }
 
-func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
-	spyListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return err
-	}
-	defer spyListener.Close()
+func (s *Suite) ShouldUseSpyProxy() bool {
+	return !s.SkipShowOutput || !s.SkipWriteOutput
+}
 
+func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
+	var err error
 	var upstream string
 	var sess aws.Config
-
-	var outputPath string
 	if s.Local {
-		outputPath = filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.local.jsonl", id))
-	} else {
-		outputPath = filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", id))
-	}
-
-	var spyHandler func(spy.Request)
-	if err := os.MkdirAll(s.OutputPathOrDefault(), 0755); err != nil {
-		return fmt.Errorf("unable to create output path dir: %w", err)
-	}
-
-	if !s.SkipWriteOutput {
-		outputFile, err := os.Create(outputPath)
+		sess, err = config.LoadDefaultConfig(ctx,
+			config.WithRegion("us-west-2"),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sqslite.DefaultAccountID, "test-secret-key", "test-secret-key-token")),
+		)
 		if err != nil {
-			return fmt.Errorf("unable to create output file for write: %w", err)
-		}
-		defer outputFile.Close()
-		if s.SkipShowOutput {
-			spyHandler = WriteOutput(io.MultiWriter(outputFile))
-		} else {
-			spyHandler = WriteOutput(io.MultiWriter(outputFile, os.Stdout))
+			return err
 		}
 	} else {
-		if !s.SkipShowOutput {
-			spyHandler = WriteOutput(os.Stdout)
-		} else {
-			spyHandler = func(spy.Request) {}
+		sess, err = config.LoadDefaultConfig(ctx)
+		if err != nil {
+			return err
 		}
 	}
 
-	sess, err = config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return err
-	}
-	if s.Local {
-		upstream = "http://localhost:4566"
+	var sqsClient *sqs.Client
+	if s.ShouldUseSpyProxy() {
+		spyListener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return err
+		}
+		defer spyListener.Close()
+		var spyHandler func(spy.Request)
+		if !s.SkipWriteOutput {
+			var outputPath string
+			if s.Local {
+				outputPath = filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.local.jsonl", id))
+			} else {
+				outputPath = filepath.Join(s.OutputPathOrDefault(), fmt.Sprintf("%s.jsonl", id))
+			}
+			if err := os.MkdirAll(s.OutputPathOrDefault(), 0755); err != nil {
+				return fmt.Errorf("unable to create output path dir: %w", err)
+			}
+			outputFile, err := os.Create(outputPath)
+			if err != nil {
+				return fmt.Errorf("unable to create output file for write: %w", err)
+			}
+			defer outputFile.Close()
+			if s.SkipShowOutput {
+				spyHandler = WriteOutput(io.MultiWriter(outputFile))
+			} else {
+				spyHandler = WriteOutput(io.MultiWriter(outputFile, os.Stdout))
+			}
+		} else {
+			if !s.SkipShowOutput {
+				spyHandler = WriteOutput(os.Stdout)
+			} else {
+				spyHandler = func(spy.Request) {}
+			}
+		}
+		if s.Local {
+			upstream = "http://localhost:4566"
+		} else {
+			upstream = fmt.Sprintf("https://sqs.%s.amazonaws.com", s.RegionOrDefault())
+		}
+
+		parsedUpstream, _ := url.Parse(upstream)
+		spy := &http.Server{
+			Handler: &spy.Handler{
+				Do:   spyHandler,
+				Next: httputil.NewSingleHostReverseProxy(parsedUpstream),
+			},
+		}
+		go spy.Serve(spyListener)
+		defer spy.Shutdown(context.Background())
+		sqsClient = sqs.NewFromConfig(sess, func(o *sqs.Options) {
+			o.BaseEndpoint = aws.String(fmt.Sprintf("http://%s", spyListener.Addr().String()))
+		})
 	} else {
-		upstream = fmt.Sprintf("https://sqs.%s.amazonaws.com", s.RegionOrDefault())
+		if s.Local {
+			sqsClient = sqs.NewFromConfig(sess, func(o *sqs.Options) {
+				o.BaseEndpoint = aws.String("http://localhost:4566")
+			})
+		} else {
+			sqsClient = sqs.NewFromConfig(sess)
+		}
 	}
-
-	parsedUpstream, _ := url.Parse(upstream)
-	spy := &http.Server{
-		Handler: &spy.Handler{
-			Do:   spyHandler,
-			Next: httputil.NewSingleHostReverseProxy(parsedUpstream),
-		},
-	}
-	go spy.Serve(spyListener)
-	defer spy.Shutdown(context.Background())
-
-	sqsClient := sqs.NewFromConfig(sess, func(o *sqs.Options) {
-		o.BaseEndpoint = aws.String(fmt.Sprintf("http://%s", spyListener.Addr().String()))
-	})
 	group, groupContext := errgroup.WithContext(ctx)
 	it := &Run{
 		id:        id,
