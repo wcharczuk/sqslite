@@ -284,12 +284,14 @@ func (it *Run) ReceiveMessage(queue Queue) (receiptHandle string, ok bool) {
 	return
 }
 
+// ReceiveMessageWithGroupID receives (1) message with a visibility timeout of 30 seconds
+// and includes the MessageGroupId attribute in results.
 func (it *Run) ReceiveMessageWithGroupID(queue Queue) (receiptHandle, groupID string, ok bool) {
 	it.checkIfCanceled()
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            &queue.QueueURL,
 		MaxNumberOfMessages: 1,
-		VisibilityTimeout:   5,
+		VisibilityTimeout:   30,
 		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
 			types.MessageSystemAttributeNameMessageGroupId,
 		},
@@ -325,6 +327,8 @@ func (it *Run) ReceiveMessages(queue Queue) (receiptHandles []string) {
 	return
 }
 
+// ReceiveMessageWithGroupID receives up to (10) message with a visibility timeout of 30 seconds and includes
+// the MessageGroupId attribute in the results.
 func (it *Run) ReceiveMessagesWithGroupIDs(queue Queue) (receiptHandles, messageIDs, groupIDs []string) {
 	it.checkIfCanceled()
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
