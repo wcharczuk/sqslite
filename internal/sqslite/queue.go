@@ -30,8 +30,8 @@ func NewQueueFromCreateQueueInput(authz Authorization, input *sqs.CreateQueueInp
 		ARN:                             FormatQueueARN(authz, *input.QueueName),
 		created:                         time.Now(),
 		lastModified:                    time.Now(),
-		messagesReadyOrdered:            NewShardedLinkedList[*MessageState](DefaultQueueShardCount),
-		messagesReady:                   make(map[uuid.UUID]*ShardedLinkedListNode[*MessageState]),
+		messagesReadyOrdered:            NewShardedLinkedList[string, *MessageState](DefaultQueueShardCount),
+		messagesReady:                   make(map[uuid.UUID]*ShardedLinkedListNode[string, *MessageState]),
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
 		messagesInflight:                make(map[uuid.UUID]*MessageState),
 		messagesInflightByReceiptHandle: make(map[string]uuid.UUID),
@@ -89,8 +89,8 @@ type Queue struct {
 	dlqTarget  *Queue
 	dlqSources map[string]*Queue
 
-	messagesReadyOrdered            *ShardedLinkedList[*MessageState]
-	messagesReady                   map[uuid.UUID]*ShardedLinkedListNode[*MessageState]
+	messagesReadyOrdered            *ShardedLinkedList[string, *MessageState]
+	messagesReady                   map[uuid.UUID]*ShardedLinkedListNode[string, *MessageState]
 	messagesDelayed                 map[uuid.UUID]*MessageState
 	messagesInflight                map[uuid.UUID]*MessageState
 	messagesInflightByReceiptHandle map[string]uuid.UUID
@@ -267,7 +267,7 @@ func (q *Queue) Push(msgs ...*MessageState) {
 			continue
 		}
 		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-		node := q.messagesReadyOrdered.Push(m)
+		node := q.messagesReadyOrdered.Push(m.MessageGroupID, m)
 		q.messagesReady[m.MessageID] = node
 	}
 }
@@ -292,7 +292,7 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 
 	var messagesNoLongerReady []uuid.UUID
 	for {
-		msg, ok := q.messagesReadyOrdered.Pop()
+		_, msg, ok := q.messagesReadyOrdered.Pop()
 		if !ok {
 			break
 		}
@@ -334,7 +334,7 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 func (q *Queue) PopMessageForMove() (msg *MessageState, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	msg, ok = q.messagesReadyOrdered.Pop()
+	_, msg, ok = q.messagesReadyOrdered.Pop()
 	if !ok {
 		return
 	}
@@ -480,7 +480,7 @@ func (q *Queue) Purge() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.messagesReadyOrdered = NewShardedLinkedList[*MessageState](DefaultQueueShardCount)
+	q.messagesReadyOrdered = NewShardedLinkedList[string, *MessageState](DefaultQueueShardCount)
 	clear(q.messagesReady)
 	clear(q.messagesDelayed)
 	clear(q.messagesInflight)
@@ -525,7 +525,7 @@ func (q *Queue) PurgeExpired() {
 		atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 		delete(q.messagesInflight, msg.MessageID)
 	}
-	var toDeleteNodes []*ShardedLinkedListNode[*MessageState]
+	var toDeleteNodes []*ShardedLinkedListNode[string, *MessageState]
 	for _, msg := range q.messagesReady {
 		if msg.Value.IsExpired(now) {
 			toDeleteNodes = append(toDeleteNodes, msg)
@@ -629,7 +629,7 @@ func (q *Queue) moveMessageToDLQUnsafe(msg *MessageState) {
 
 func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
 	atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-	node := q.messagesReadyOrdered.Push(msg)
+	node := q.messagesReadyOrdered.Push(msg.MessageGroupID, msg)
 	q.messagesReady[msg.MessageID] = node
 }
 

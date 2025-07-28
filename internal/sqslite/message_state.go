@@ -24,6 +24,7 @@ func (q *Queue) NewEmptyMessageState() *MessageState {
 
 func (q *Queue) NewMessageStateFromSendMessageInput(input *sqs.SendMessageInput) *MessageState {
 	output := q.NewEmptyMessageState()
+	output.MessageGroupID = safeDeref(input.MessageGroupId)
 	output.Body = FromPtr(input.MessageBody)
 	output.MessageRetentionPeriod = q.MessageRetentionPeriod
 	output.MessageAttributes = input.MessageAttributes
@@ -36,6 +37,7 @@ func (q *Queue) NewMessageStateFromSendMessageInput(input *sqs.SendMessageInput)
 
 func (q *Queue) NewMessageStateFromSendMessageBatchEntry(input types.SendMessageBatchRequestEntry) *MessageState {
 	output := q.NewEmptyMessageState()
+	output.MessageGroupID = safeDeref(input.MessageGroupId)
 	output.UserProvidedID = FromPtr(input.Id)
 	output.Body = FromPtr(input.MessageBody)
 	output.MessageRetentionPeriod = q.MessageRetentionPeriod
@@ -49,6 +51,7 @@ func (q *Queue) NewMessageStateFromSendMessageBatchEntry(input types.SendMessage
 
 type MessageState struct {
 	MessageID               uuid.UUID
+	MessageGroupID          string
 	Body                    Optional[string]
 	MessageAttributes       map[string]types.MessageAttributeValue
 	MessageSystemAttributes map[string]types.MessageSystemAttributeValue
