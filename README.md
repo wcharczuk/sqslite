@@ -12,6 +12,7 @@ Critically it:
 - simulates SQS queue sharding; messages come back in semi-random order, and rarely come back in full batches
 - enforces all of the validations and constraints that normal queues impose; e.g. 256KiB size limits, valid utf-8 chars etc.
 - enforces lifecycle constraints like 60s cooloffs on queue deletion
+- (2025-07-27) support for "fair queues" has been added
 
 # Getting started
 
