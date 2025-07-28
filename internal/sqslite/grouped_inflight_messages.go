@@ -23,11 +23,15 @@ func (i *groupedInflightMessages) Len() int {
 	return i.len
 }
 
-func (i *groupedInflightMessages) ValidGroups(maximumLength int) (output []string) {
+func (i *groupedInflightMessages) ValidateGroups(groups []string, maximumLength int) (output []string) {
 	output = make([]string, 0, len(i.groups))
-	for group, list := range i.groups {
-		if len(list) < maximumLength {
-			output = append(output, group)
+	for _, groupID := range groups {
+		if list, ok := i.groups[groupID]; ok {
+			if len(list) < maximumLength {
+				output = append(output, groupID)
+			}
+		} else {
+			output = append(output, groupID)
 		}
 	}
 	return

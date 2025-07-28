@@ -2,6 +2,8 @@ package sqslite
 
 import "math/rand/v2"
 
+const DefaultQueueShardCount = 32
+
 func NewShardedLinkedList[T any](shardCount int) *ShardedLinkedList[T] {
 	if shardCount == 0 {
 		panic("sharded linked list cannot have 0 shards")

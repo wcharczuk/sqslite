@@ -16,8 +16,6 @@ import (
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
-const DefaultQueueShardCount = 32
-
 // NewQueueFromCreateQueueInput returns a new queue for a given [sqs.CreateQueueInput].
 func NewQueueFromCreateQueueInput(authz Authorization, input *sqs.CreateQueueInput) (*Queue, *Error) {
 	if err := validateQueueName(*input.QueueName); err != nil {
@@ -252,7 +250,7 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	validMessageGroups := q.messagesInflight.ValidGroups(q.MaximumMessagesInflightPerGroup)
+	validMessageGroups := q.messagesInflight.ValidateGroups(q.messagesReadyOrdered.GroupIDs(), q.MaximumMessagesInflightPerGroup)
 	if len(validMessageGroups) == 0 && q.messagesInflight.Len() > 0 {
 		return
 	}
@@ -298,7 +296,7 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 		if len(output) == effectiveMaxMessages {
 			break
 		}
-		validMessageGroups = q.messagesInflight.ValidGroups(q.MaximumMessagesInflightPerGroup)
+		validMessageGroups = q.messagesInflight.ValidateGroups(q.messagesReadyOrdered.GroupIDs(), q.MaximumMessagesInflightPerGroup)
 		if len(validMessageGroups) == 0 {
 			return
 		}

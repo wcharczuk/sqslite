@@ -353,6 +353,18 @@ func pushTestMessages(q *Queue, count int) []*MessageState {
 	return messages
 }
 
+func pushTestMessagesWithGroup(q *Queue, messageGroupID string, count int) []*MessageState {
+	var messages []*MessageState
+	for range count {
+		msg := createTestSendMessageInput("test message body")
+		msg.MessageGroupId = aws.String(messageGroupID)
+		msgState := q.NewMessageStateFromSendMessageInput(msg)
+		messages = append(messages, msgState)
+	}
+	q.Push(messages...)
+	return messages
+}
+
 func getQueueARN(server *Server, queueURL string) string {
 	queues := server.accounts.EnsureQueues(testAccountID)
 	queue, ok := queues.GetQueue(queueURL)

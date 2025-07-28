@@ -115,7 +115,55 @@ func Test_Queue_Receive_basic(t *testing.T) {
 	require.GreaterOrEqual(t, len(received), 1)
 	require.LessOrEqual(t, len(received), 10)
 	require.Equal(t, "1", received[0].Attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)], received[0].Attributes)
-	require.Len(t, q.messagesInflight, len(received))
+	require.EqualValues(t, q.messagesInflight.Len(), len(received))
+}
+
+func Test_Queue_Receive_multipleGroups(t *testing.T) {
+	q := createTestQueue(t)
+
+	pushTestMessagesWithGroup(q, "one", 100)
+	pushTestMessagesWithGroup(q, "two", 50)
+
+	require.Len(t, q.messagesReadyOrdered.groups, 2)
+	require.Equal(t, 100, q.messagesReadyOrdered.groups["one"].len)
+	require.Equal(t, 50, q.messagesReadyOrdered.groups["two"].len)
+
+	received := q.Receive(&sqs.ReceiveMessageInput{
+		MaxNumberOfMessages: 10,
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+			types.MessageSystemAttributeNameApproximateReceiveCount,
+		},
+	})
+	require.GreaterOrEqual(t, len(received), 1)
+	require.LessOrEqual(t, len(received), 10)
+	require.Equal(t, "1", received[0].Attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)], received[0].Attributes)
+	require.EqualValues(t, q.messagesInflight.Len(), len(received))
+}
+
+func Test_Queue_Receive_multipleGroups_respectsPerGroupLimits(t *testing.T) {
+	q := createTestQueue(t)
+	q.MaximumMessagesInflightPerGroup = 100
+
+	pushTestMessagesWithGroup(q, "one", 100)
+	pushTestMessagesWithGroup(q, "two", 75)
+	pushTestMessagesWithGroup(q, "three", 50)
+
+	require.Len(t, q.messagesReadyOrdered.groups, 3)
+	require.Equal(t, 100, q.messagesReadyOrdered.groups["one"].len)
+	require.Equal(t, 75, q.messagesReadyOrdered.groups["two"].len)
+	require.Equal(t, 50, q.messagesReadyOrdered.groups["three"].len)
+
+	var totalSeen int
+	for totalSeen < 150 {
+		received := q.Receive(&sqs.ReceiveMessageInput{
+			MaxNumberOfMessages: 10,
+			MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+				types.MessageSystemAttributeNameApproximateReceiveCount,
+			},
+		})
+		totalSeen += len(received)
+	}
+	require.True(t, totalSeen > 100)
 }
 
 func Test_Queue_Receive_single(t *testing.T) {
@@ -137,7 +185,7 @@ func Test_Queue_Receive_single(t *testing.T) {
 
 	// Assert that message attributes are added if we ask for them
 	require.Equal(t, "1", received[0].Attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)], received[0].Attributes)
-	require.Len(t, q.messagesInflight, 1)
+	require.EqualValues(t, q.messagesInflight.Len(), 1)
 
 	firstKey := slices.Collect(maps.Keys(q.messagesInflight.receiptHandles))[0]
 	msgState := q.messagesInflight.receiptHandles[firstKey]
@@ -1537,7 +1585,7 @@ func Test_Queue_Push_withQueueDelayAndMessageDelay_messageDelayTakesPrecedence(t
 	// Message should use its own delay, not queue default
 	require.Equal(t, 60*time.Second, msgState.Delay.Value)
 	require.Len(t, q.messagesDelayed, 1)
-	require.Equal(t, 0, q.messagesReadyOrdered)
+	require.Equal(t, 0, q.messagesReadyOrdered.Len())
 }
 
 func Test_Queue_Push_withOnlyQueueDelay_appliesQueueDelay(t *testing.T) {
@@ -1553,7 +1601,7 @@ func Test_Queue_Push_withOnlyQueueDelay_appliesQueueDelay(t *testing.T) {
 	// Message should use queue default delay
 	require.Equal(t, 30*time.Second, msgState.Delay.Value)
 	require.Len(t, q.messagesDelayed, 1)
-	require.Equal(t, 0, q.messagesReadyOrdered)
+	require.Equal(t, 0, q.messagesReadyOrdered.Len())
 }
 
 func Test_Queue_Receive_randomizesMessageCount_withinBounds(t *testing.T) {

@@ -1,6 +1,10 @@
 package sqslite
 
-import "iter"
+import (
+	"iter"
+	"maps"
+	"slices"
+)
 
 func NewGroupedShardedLinkedList[K comparable, V any](shardCount int) *GroupedShardedLinkedList[K, V] {
 	if shardCount == 0 {
@@ -16,6 +20,11 @@ type GroupedShardedLinkedList[K comparable, V any] struct {
 	shardCount int
 	groups     map[K]*ShardedLinkedList[V]
 	len        int
+}
+
+func (gsll *GroupedShardedLinkedList[K, V]) GroupIDs() (output []K) {
+	output = slices.Collect(maps.Keys(gsll.groups))
+	return
 }
 
 func (gsll *GroupedShardedLinkedList[K, V]) Len() int {
