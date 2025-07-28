@@ -499,7 +499,7 @@ func fairQueueLimits(it *integration.Run) {
 	it.Log("done publishing messages, starting to read messages")
 
 	const (
-		receiveShards                = 128
+		receiveShards                = 256
 		receiveMessagesCount         = 200_000
 		receiveMessagesCountPerShard = receiveMessagesCount / receiveShards
 	)

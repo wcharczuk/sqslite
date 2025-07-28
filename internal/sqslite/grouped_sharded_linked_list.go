@@ -3,6 +3,7 @@ package sqslite
 import (
 	"iter"
 	"maps"
+	"math/rand/v2"
 	"slices"
 )
 
@@ -57,31 +58,48 @@ func (gsll *GroupedShardedLinkedList[K, V]) Pop(groups ...K) (group K, out V, ok
 	if gsll.len == 0 {
 		return
 	}
-	var list *ShardedLinkedList[V]
-	if len(groups) == 0 {
-		// pick a random group with values
-		for group, list = range gsll.groups {
-			if list.len > 0 {
-				break
-			}
-		}
-	} else {
-		var hasGroup bool
-		for _, group = range groups {
-			list, hasGroup = gsll.groups[group]
-			if !hasGroup {
-				continue
-			}
-			if list.len > 0 {
-				break
-			}
-		}
-	}
-	if list == nil || list.len == 0 {
+	list, hasList := gsll.getRandomGroupWithMessages(groups...)
+	if !hasList || list == nil || list.len == 0 {
 		return
 	}
 	gsll.len--
 	out, ok = list.Pop()
+	return
+}
+
+func (gsll *GroupedShardedLinkedList[K, V]) getRandomGroupWithMessages(groups ...K) (output *ShardedLinkedList[V], ok bool) {
+	if len(groups) == 0 {
+		keys := slices.Collect(maps.Keys(gsll.groups))
+		rand.Shuffle(len(keys), func(i, j int) {
+			keys[i], keys[j] = keys[j], keys[i]
+		})
+		for _, groupID := range keys {
+			list, hasList := gsll.groups[groupID]
+			if !hasList {
+				continue
+			}
+			if list.len > 0 {
+				output = list
+				ok = true
+				return
+			}
+		}
+	} else {
+		rand.Shuffle(len(groups), func(i, j int) {
+			groups[i], groups[j] = groups[j], groups[i]
+		})
+		for _, groupID := range groups {
+			list, hasList := gsll.groups[groupID]
+			if !hasList {
+				continue
+			}
+			if list.len > 0 {
+				output = list
+				ok = true
+				return
+			}
+		}
+	}
 	return
 }
 
