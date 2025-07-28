@@ -30,13 +30,11 @@ func NewQueueFromCreateQueueInput(authz Authorization, input *sqs.CreateQueueInp
 		ARN:                             FormatQueueARN(authz, *input.QueueName),
 		created:                         time.Now(),
 		lastModified:                    time.Now(),
-		messagesReadyOrdered:            NewShardedLinkedList[string, *MessageState](DefaultQueueShardCount),
-		messagesReady:                   make(map[uuid.UUID]*ShardedLinkedListNode[string, *MessageState]),
+		messagesReadyOrdered:            NewGroupedShardedLinkedList[string, *MessageState](DefaultQueueShardCount),
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
-		messagesInflight:                make(map[uuid.UUID]*MessageState),
-		messagesInflightByReceiptHandle: make(map[string]uuid.UUID),
+		messagesInflight:                newGroupedInflightMessages(),
 		dlqSources:                      make(map[string]*Queue),
-		MaximumMessagesInflight:         120000,
+		MaximumMessagesInflightPerGroup: 120000,
 		Attributes:                      input.Attributes,
 		Tags:                            input.Tags,
 	}
@@ -66,12 +64,12 @@ type Queue struct {
 	RedrivePolicy      Optional[RedrivePolicy]
 	RedriveAllowPolicy Optional[RedriveAllowPolicy]
 
-	VisibilityTimeout       time.Duration
-	ReceiveMessageWaitTime  time.Duration
-	MaximumMessageSizeBytes int
-	MessageRetentionPeriod  time.Duration
-	Delay                   Optional[time.Duration]
-	MaximumMessagesInflight int
+	VisibilityTimeout               time.Duration
+	ReceiveMessageWaitTime          time.Duration
+	MaximumMessageSizeBytes         int
+	MessageRetentionPeriod          time.Duration
+	Delay                           Optional[time.Duration]
+	MaximumMessagesInflightPerGroup int
 
 	Policy Optional[any]
 
@@ -89,11 +87,9 @@ type Queue struct {
 	dlqTarget  *Queue
 	dlqSources map[string]*Queue
 
-	messagesReadyOrdered            *ShardedLinkedList[string, *MessageState]
-	messagesReady                   map[uuid.UUID]*ShardedLinkedListNode[string, *MessageState]
-	messagesDelayed                 map[uuid.UUID]*MessageState
-	messagesInflight                map[uuid.UUID]*MessageState
-	messagesInflightByReceiptHandle map[string]uuid.UUID
+	messagesReadyOrdered *GroupedShardedLinkedList[string, *MessageState]
+	messagesDelayed      map[uuid.UUID]*MessageState
+	messagesInflight     *groupedInflightMessages
 
 	retentionWorker        *retentionWorker
 	retentionWorkerCancel  func()
@@ -105,30 +101,11 @@ type Queue struct {
 	stats QueueStats
 }
 
-// Stats are basic statistics about the queue.
-type QueueStats struct {
-	NumMessages         int64
-	NumMessagesReady    int64
-	NumMessagesDelayed  int64
-	NumMessagesInflight int64
-
-	TotalMessagesSent              uint64
-	TotalMessagesReceived          uint64
-	TotalMessagesMoved             uint64
-	TotalMessagesDeleted           uint64
-	TotalMessagesChangedVisibility uint64
-	TotalMessagesPurged            uint64
-	TotalMessagesInflightToReady   uint64
-	TotalMessagesDelayedToReady    uint64
-	TotalMessagesInflightToDLQ     uint64
-}
-
 func (q *Queue) Stats() (output QueueStats) {
 	output.NumMessages = atomic.LoadInt64(&q.stats.NumMessages)
 	output.NumMessagesReady = atomic.LoadInt64(&q.stats.NumMessagesReady)
 	output.NumMessagesDelayed = atomic.LoadInt64(&q.stats.NumMessagesDelayed)
 	output.NumMessagesInflight = atomic.LoadInt64(&q.stats.NumMessagesInflight)
-
 	output.TotalMessagesSent = atomic.LoadUint64(&q.stats.TotalMessagesSent)
 	output.TotalMessagesReceived = atomic.LoadUint64(&q.stats.TotalMessagesReceived)
 	output.TotalMessagesMoved = atomic.LoadUint64(&q.stats.TotalMessagesMoved)
@@ -267,35 +244,38 @@ func (q *Queue) Push(msgs ...*MessageState) {
 			continue
 		}
 		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-		node := q.messagesReadyOrdered.Push(m.MessageGroupID, m)
-		q.messagesReady[m.MessageID] = node
+		_ = q.messagesReadyOrdered.Push(m.MessageGroupID, m)
 	}
 }
 
 func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.messagesInflight) >= q.MaximumMessagesInflight {
+
+	validMessageGroups := q.messagesInflight.ValidGroups(q.MaximumMessagesInflightPerGroup)
+	if len(validMessageGroups) == 0 && q.messagesInflight.Len() > 0 {
 		return
 	}
-	var effectiveVisibilityTimeout time.Duration
-	if input.VisibilityTimeout > 0 {
-		effectiveVisibilityTimeout = time.Duration(input.VisibilityTimeout) * time.Second
-	} else {
-		effectiveVisibilityTimeout = q.VisibilityTimeout
-	}
 
+	var visibilityTimeout time.Duration
+	if input.VisibilityTimeout > 0 {
+		visibilityTimeout = time.Duration(input.VisibilityTimeout) * time.Second
+	} else {
+		visibilityTimeout = q.VisibilityTimeout
+	}
 	var (
 		maxNumberOfMessages  = coalesceZero(int(input.MaxNumberOfMessages), 1)
 		effectiveMaxMessages = rand.IntN(maxNumberOfMessages) + 1 /* done on purpose! */
 	)
-
-	var messagesNoLongerReady []uuid.UUID
 	for {
-		_, msg, ok := q.messagesReadyOrdered.Pop()
+		// pop removes the message from the "readiness" state
+		// but only if it belongs to a valid group (a group that has
+		// fewer than ~120k outstanding messages)
+		_, msg, ok := q.messagesReadyOrdered.Pop(validMessageGroups...)
 		if !ok {
 			break
 		}
+
 		atomic.AddUint64(&q.stats.TotalMessagesReceived, 1)
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
 		atomic.AddInt64(&q.stats.NumMessagesInflight, 1)
@@ -303,7 +283,7 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 		now := time.Now()
 		msg.MaybeSetFirstReceived(now)
 		msg.IncrementApproximateReceiveCount()
-		msg.UpdateVisibilityTimeout(effectiveVisibilityTimeout, now)
+		msg.UpdateVisibilityTimeout(visibilityTimeout, now)
 		msg.SetLastReceived(now)
 
 		receiptHandle := ReceiptHandle{
@@ -313,20 +293,15 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 			LastReceived: now,
 		}
 		msg.ReceiptHandles.Add(receiptHandle.String())
-		q.messagesInflightByReceiptHandle[receiptHandle.String()] = msg.MessageID
-		q.messagesInflight[msg.MessageID] = msg
-
+		q.messagesInflight.Push(receiptHandle.String(), msg)
 		output = append(output, msg.ForReceiveMessageOutput(input, receiptHandle))
-		messagesNoLongerReady = append(messagesNoLongerReady, msg.MessageID)
 		if len(output) == effectiveMaxMessages {
 			break
 		}
-		if len(q.messagesInflight) >= q.MaximumMessagesInflight {
-			break
+		validMessageGroups = q.messagesInflight.ValidGroups(q.MaximumMessagesInflightPerGroup)
+		if len(validMessageGroups) == 0 {
+			return
 		}
-	}
-	for _, messageID := range messagesNoLongerReady {
-		delete(q.messagesReady, messageID)
 	}
 	return
 }
@@ -340,21 +315,15 @@ func (q *Queue) PopMessageForMove() (msg *MessageState, ok bool) {
 	}
 	atomic.AddUint64(&q.stats.TotalMessagesMoved, 1)
 	atomic.AddInt64(&q.stats.NumMessagesReady, -1)
-	delete(q.messagesReady, msg.MessageID)
 	return
 }
 
-func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibilityTimeout time.Duration) (ok bool) {
+func (q *Queue) ChangeMessageVisibility(receiptHandle string, visibilityTimeout time.Duration) (ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	var messageID uuid.UUID
-	messageID, ok = q.messagesInflightByReceiptHandle[initiatingReceiptHandle]
-	if !ok {
-		return
-	}
 	var msg *MessageState
-	msg, ok = q.messagesInflight[messageID]
+	msg, ok = q.messagesInflight.GetByReceiptHandle(receiptHandle)
 	if !ok {
 		return
 	}
@@ -370,13 +339,10 @@ func (q *Queue) ChangeMessageVisibility(initiatingReceiptHandle string, visibili
 func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibilityBatchRequestEntry) (successful []types.ChangeMessageVisibilityBatchResultEntry, failed []types.BatchResultErrorEntry) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	var messageID uuid.UUID
-	var ok bool
-
 	var readyMessages []*MessageState
 	now := time.Now()
 	for _, entry := range entries {
-		messageID, ok = q.messagesInflightByReceiptHandle[safeDeref(entry.ReceiptHandle)]
+		msg, ok := q.messagesInflight.GetByReceiptHandle(safeDeref(entry.ReceiptHandle))
 		if !ok {
 			failed = append(failed, types.BatchResultErrorEntry{
 				Code:        aws.String("ReceiptHandleIsInvalid"),
@@ -385,23 +351,13 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 			})
 			return
 		}
-		var msgNode *MessageState
-		msgNode, ok = q.messagesInflight[messageID]
-		if !ok {
-			failed = append(failed, types.BatchResultErrorEntry{
-				Code:        aws.String("InternalServerError"),
-				Id:          entry.Id,
-				SenderFault: false,
-			})
-			return
-		}
 		atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
-		msgNode.UpdateVisibilityTimeout(time.Duration(entry.VisibilityTimeout)*time.Second, now)
+		msg.UpdateVisibilityTimeout(time.Duration(entry.VisibilityTimeout)*time.Second, now)
 		successful = append(successful, types.ChangeMessageVisibilityBatchResultEntry{
 			Id: entry.Id,
 		})
 		if entry.VisibilityTimeout == 0 {
-			readyMessages = append(readyMessages, msgNode)
+			readyMessages = append(readyMessages, msg)
 		}
 	}
 	if len(readyMessages) > 0 {
@@ -412,65 +368,39 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	return
 }
 
-func (q *Queue) Delete(initiatingReceiptHandle string) (ok bool) {
+func (q *Queue) Delete(receiptHandle string) (ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	messageID, ok := q.messagesInflightByReceiptHandle[initiatingReceiptHandle]
+	ok = q.messagesInflight.RemoveByReceiptHandle(receiptHandle)
 	if !ok {
 		return
-	}
-	var msg *MessageState
-	msg, ok = q.messagesInflight[messageID]
-	if !ok {
-		return
-	}
-	for receiptHandle := range msg.ReceiptHandles.Consume() {
-		delete(q.messagesInflightByReceiptHandle, receiptHandle)
 	}
 	atomic.AddUint64(&q.stats.TotalMessagesDeleted, 1)
 	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 	atomic.AddInt64(&q.stats.NumMessages, -1)
-	delete(q.messagesInflightByReceiptHandle, initiatingReceiptHandle)
-	delete(q.messagesInflight, messageID)
 	return
 }
 
-func (q *Queue) DeleteBatch(handles []types.DeleteMessageBatchRequestEntry) (successful []types.DeleteMessageBatchResultEntry, failed []types.BatchResultErrorEntry) {
+func (q *Queue) DeleteBatch(entries []types.DeleteMessageBatchRequestEntry) (successful []types.DeleteMessageBatchResultEntry, failed []types.BatchResultErrorEntry) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	var messageID uuid.UUID
 	var ok bool
-	for _, handle := range handles {
-		messageID, ok = q.messagesInflightByReceiptHandle[safeDeref(handle.ReceiptHandle)]
+	for _, entry := range entries {
+		ok = q.messagesInflight.RemoveByReceiptHandle(safeDeref(entry.ReceiptHandle))
 		if !ok {
 			failed = append(failed, types.BatchResultErrorEntry{
 				Code:        aws.String("InvalidParameterValue"),
-				Id:          handle.Id,
+				Id:          entry.Id,
 				SenderFault: true,
 				Message:     aws.String("ReceiptHandle not found"),
 			})
 			continue
 		}
-		msg, ok := q.messagesInflight[messageID]
-		if !ok {
-			failed = append(failed, types.BatchResultErrorEntry{
-				Code:        aws.String("InconsistentState"),
-				Id:          handle.Id,
-				SenderFault: false,
-				Message:     aws.String("Message not found for receipt handle"),
-			})
-			continue
-		}
-		for receiptHandle := range msg.ReceiptHandles.Consume() {
-			delete(q.messagesInflightByReceiptHandle, receiptHandle)
-		}
 		atomic.AddUint64(&q.stats.TotalMessagesDeleted, 1)
 		atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 		atomic.AddInt64(&q.stats.NumMessages, -1)
-		delete(q.messagesInflightByReceiptHandle, safeDeref(handle.ReceiptHandle))
-		delete(q.messagesInflight, messageID)
 		successful = append(successful, types.DeleteMessageBatchResultEntry{
-			Id: handle.Id,
+			Id: entry.Id,
 		})
 	}
 	return
@@ -480,11 +410,9 @@ func (q *Queue) Purge() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.messagesReadyOrdered = NewShardedLinkedList[string, *MessageState](DefaultQueueShardCount)
-	clear(q.messagesReady)
+	q.messagesReadyOrdered = NewGroupedShardedLinkedList[string, *MessageState](DefaultQueueShardCount)
+	q.messagesInflight = newGroupedInflightMessages()
 	clear(q.messagesDelayed)
-	clear(q.messagesInflight)
-	clear(q.messagesInflightByReceiptHandle)
 
 	atomic.AddUint64(&q.stats.TotalMessagesPurged, uint64(atomic.LoadInt64(&q.stats.NumMessages)))
 	atomic.StoreInt64(&q.stats.NumMessages, 0)
@@ -498,7 +426,6 @@ func (q *Queue) PurgeExpired() {
 	defer q.mu.Unlock()
 
 	now := time.Now()
-
 	deleted := make(map[uuid.UUID]struct{})
 	var toDeleteDelayed []uuid.UUID
 	for _, msg := range q.messagesDelayed {
@@ -512,21 +439,18 @@ func (q *Queue) PurgeExpired() {
 		deleted[id] = struct{}{}
 	}
 	var toDeleteOustanding []*MessageState
-	for _, msg := range q.messagesInflight {
+	for msg := range q.messagesInflight.Each() {
 		if msg.IsExpired(now) {
 			toDeleteOustanding = append(toDeleteOustanding, msg)
 		}
 	}
 	for _, msg := range toDeleteOustanding {
-		for receiptHandle := range msg.ReceiptHandles.Consume() {
-			delete(q.messagesInflightByReceiptHandle, receiptHandle)
-		}
+		q.messagesInflight.Remove(msg)
 		deleted[msg.MessageID] = struct{}{}
 		atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
-		delete(q.messagesInflight, msg.MessageID)
 	}
-	var toDeleteNodes []*ShardedLinkedListNode[string, *MessageState]
-	for _, msg := range q.messagesReady {
+	var toDeleteNodes []*GroupedShardedLinkedListNode[string, *MessageState]
+	for msg := range q.messagesReadyOrdered.Each() {
 		if msg.Value.IsExpired(now) {
 			toDeleteNodes = append(toDeleteNodes, msg)
 		}
@@ -535,7 +459,6 @@ func (q *Queue) PurgeExpired() {
 		q.messagesReadyOrdered.Remove(node)
 		deleted[node.Value.MessageID] = struct{}{}
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
-		delete(q.messagesReady, node.Value.MessageID)
 	}
 	atomic.AddUint64(&q.stats.TotalMessagesPurged, uint64(len(deleted)))
 	atomic.AddInt64(&q.stats.NumMessages, -int64(len(deleted)))
@@ -548,9 +471,8 @@ func (q *Queue) UpdateInflightVisibility() {
 	defer q.mu.Unlock()
 
 	now := time.Now()
-
 	var ready []*MessageState
-	for _, msg := range q.messagesInflight {
+	for msg := range q.messagesInflight.Each() {
 		if msg.IsVisible(now) {
 			ready = append(ready, msg)
 		}
@@ -564,9 +486,7 @@ func (q *Queue) UpdateInflightVisibility() {
 func (q *Queue) UpdateDelayedToReady() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-
 	now := time.Now()
-
 	var ready []*MessageState
 	for _, msg := range q.messagesDelayed {
 		if !msg.IsDelayed(now) {
@@ -600,17 +520,14 @@ func (q *Queue) moveMessageFromInflightUnsafe(msg *MessageState) {
 }
 
 func (q *Queue) moveMessageFromInflightToDLQUnsafe(msg *MessageState) {
-	delete(q.messagesInflight, msg.MessageID)
+	q.messagesInflight.Remove(msg)
 	atomic.AddUint64(&q.stats.TotalMessagesInflightToDLQ, 1)
 	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 	q.moveMessageToDLQUnsafe(msg)
 }
 
 func (q *Queue) moveMessageFromInflightToReadyUnsafe(msg *MessageState) {
-	for receiptHandle := range msg.ReceiptHandles.Consume() {
-		delete(q.messagesInflightByReceiptHandle, receiptHandle)
-	}
-	delete(q.messagesInflight, msg.MessageID)
+	q.messagesInflight.Remove(msg)
 	atomic.AddUint64(&q.stats.TotalMessagesInflightToReady, 1)
 	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 	q.moveMessageToReadyUnsafe(msg)
@@ -629,8 +546,7 @@ func (q *Queue) moveMessageToDLQUnsafe(msg *MessageState) {
 
 func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
 	atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-	node := q.messagesReadyOrdered.Push(msg.MessageGroupID, msg)
-	q.messagesReady[msg.MessageID] = node
+	_ = q.messagesReadyOrdered.Push(msg.MessageGroupID, msg)
 }
 
 func (q *Queue) getQueueAttributesUnsafe(attributes ...types.QueueAttributeName) map[string]string {

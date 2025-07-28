@@ -31,17 +31,16 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	require.Equal(t, "http://sqslite.local/test-account/test-queue", q.URL)
 	require.Equal(t, "arn:aws:sqs:us-west-2:test-account:test-queue", q.ARN)
 	require.NotNil(t, q.messagesReadyOrdered)
-	require.NotNil(t, q.messagesReady)
+	// require.NotNil(t, q.messagesReady)
 	require.NotNil(t, q.messagesDelayed)
 	require.NotNil(t, q.messagesInflight)
-	require.NotNil(t, q.messagesInflightByReceiptHandle)
 
 	require.Equal(t, false, q.Delay.IsSet)
 	require.Equal(t, 256*1024, q.MaximumMessageSizeBytes)
 	require.Equal(t, 4*24*time.Hour, q.MessageRetentionPeriod)
 	require.Equal(t, 20*time.Second, q.ReceiveMessageWaitTime)
 	require.Equal(t, 30*time.Second, q.VisibilityTimeout)
-	require.Equal(t, 120000, q.MaximumMessagesInflight)
+	require.Equal(t, 120000, q.MaximumMessagesInflightPerGroup)
 }
 
 func Test_RedriveAllowPolicy_AllowSource_RedrivePermissionAllowAll(t *testing.T) {
@@ -139,8 +138,9 @@ func Test_Queue_Receive_single(t *testing.T) {
 	// Assert that message attributes are added if we ask for them
 	require.Equal(t, "1", received[0].Attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)], received[0].Attributes)
 	require.Len(t, q.messagesInflight, 1)
-	firstKey := slices.Collect(maps.Keys(q.messagesInflight))[0]
-	msgState := q.messagesInflight[firstKey]
+
+	firstKey := slices.Collect(maps.Keys(q.messagesInflight.receiptHandles))[0]
+	msgState := q.messagesInflight.receiptHandles[firstKey]
 	require.EqualValues(t, msgState.MessageID.String(), safeDeref(received[0].MessageId))
 	require.EqualValues(t, 1, msgState.ReceiveCount)
 	require.EqualValues(t, 1, msgState.ReceiptHandles.Len())
@@ -173,7 +173,7 @@ func Test_Queue_Receive_returnsMessagesInMultiplePasses(t *testing.T) {
 
 func Test_Queue_Receive_respectsMaximumMessagesInFlight(t *testing.T) {
 	q := createTestQueue(t)
-	q.MaximumMessagesInflight = 10
+	q.MaximumMessagesInflightPerGroup = 10
 
 	pushTestMessages(q, 20)
 
@@ -186,7 +186,7 @@ func Test_Queue_Receive_respectsMaximumMessagesInFlight(t *testing.T) {
 		remaining = remaining - len(received)
 	}
 	require.EqualValues(t, 0, remaining)
-	require.EqualValues(t, 10, len(q.messagesInflight))
+	require.EqualValues(t, 10, q.messagesInflight.Len())
 }
 
 func Test_Queue_Receive_usesProvidedVisibilityTimeout(t *testing.T) {
@@ -204,8 +204,8 @@ func Test_Queue_Receive_usesProvidedVisibilityTimeout(t *testing.T) {
 	require.Len(t, received, 1)
 
 	// Check that the message in inflight state has the custom timeout
-	firstKey := slices.Collect(maps.Keys(q.messagesInflight))[0]
-	msgState := q.messagesInflight[firstKey]
+	firstKey := slices.Collect(maps.Keys(q.messagesInflight.receiptHandles))[0]
+	msgState := q.messagesInflight.receiptHandles[firstKey]
 	require.Equal(t, customTimeout, msgState.VisibilityTimeout)
 	require.Equal(t, true, msgState.FirstReceived.IsSet)
 	require.Equal(t, testAccountID, msgState.SenderID.Value)
@@ -224,8 +224,8 @@ func Test_Queue_Receive_usesDefaultVisibilityTimeoutWhenZero(t *testing.T) {
 	})
 	require.Len(t, received, 1)
 
-	firstKey := slices.Collect(maps.Keys(q.messagesInflight))[0]
-	msgState := q.messagesInflight[firstKey]
+	firstKey := slices.Collect(maps.Keys(q.messagesInflight.receiptHandles))[0]
+	msgState := q.messagesInflight.receiptHandles[firstKey]
 	require.Equal(t, 30*time.Second, msgState.VisibilityTimeout)
 }
 
@@ -241,10 +241,8 @@ func Test_Queue_Push_singleMessageWithoutDelay_addsToReadyQueue(t *testing.T) {
 
 	q.Push(msgState)
 	updatedStats := q.Stats()
-	require.Len(t, q.messagesReady, 1)
 
-	_, exists := q.messagesReady[msgState.MessageID]
-	require.True(t, exists)
+	require.Equal(t, 1, q.messagesReadyOrdered.Len())
 
 	require.Equal(t, initialStats.TotalMessagesSent+1, updatedStats.TotalMessagesSent)
 	require.Equal(t, initialStats.NumMessages+1, updatedStats.NumMessages)
@@ -262,7 +260,7 @@ func Test_Queue_Push_singleMessageWithDelay_addsToDelayedQueue(t *testing.T) {
 	q.Push(msgState)
 
 	updatedStats := q.Stats()
-	require.Len(t, q.messagesReady, 0)
+	require.Equal(t, 0, q.messagesReadyOrdered.Len())
 	require.Len(t, q.messagesDelayed, 1)
 	require.Equal(t, initialStats.NumMessagesDelayed+1, updatedStats.NumMessagesDelayed)
 }
@@ -276,7 +274,7 @@ func Test_Queue_Push_multipleMessages_handlesAllMessages(t *testing.T) {
 	msgState2 := q.NewMessageStateFromSendMessageInput(msg2)
 	q.Push(msgState1, msgState2)
 
-	require.Len(t, q.messagesReady, 2)
+	require.Equal(t, 2, q.messagesReadyOrdered.Len())
 }
 
 func Test_Queue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *testing.T) {
@@ -288,7 +286,7 @@ func Test_Queue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *tes
 
 	q.Push(msgState)
 
-	require.Len(t, q.messagesReady, 0)
+	require.Equal(t, 0, q.messagesReadyOrdered.Len())
 	require.Len(t, q.messagesDelayed, 1)
 }
 
@@ -326,7 +324,7 @@ func Test_Queue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T)
 
 	q.Push(readyMsgState, delayedMsgState)
 
-	require.Len(t, q.messagesReady, 1)
+	require.Equal(t, 1, q.messagesReadyOrdered.Len())
 	require.Len(t, q.messagesDelayed, 1)
 }
 
@@ -726,10 +724,6 @@ func Test_Queue_PopMessageForMove_returnsMessageFromReady(t *testing.T) {
 	updatedStats := q.Stats()
 	require.Equal(t, initialStats.NumMessagesReady-1, updatedStats.NumMessagesReady)
 	require.Equal(t, initialStats.TotalMessagesMoved+1, updatedStats.TotalMessagesMoved)
-
-	// Message should be removed from ready queue
-	_, exists := q.messagesReady[msg.MessageID]
-	require.False(t, exists)
 }
 
 func Test_Queue_PopMessageForMove_returnsFalseWhenEmpty(t *testing.T) {
@@ -772,16 +766,13 @@ func Test_Queue_ChangeMessageVisibility_updatesVisibilityTimeout(t *testing.T) {
 	require.True(t, ok)
 
 	// Verify message is still inflight with updated timeout
-	messageID := q.messagesInflightByReceiptHandle[receiptHandle]
-	msg := q.messagesInflight[messageID]
+	msg := q.messagesInflight.receiptHandles[receiptHandle]
 	require.Equal(t, newTimeout, msg.VisibilityTimeout)
 }
 
 func Test_Queue_ChangeMessageVisibility_returnsFalseForInvalidHandle(t *testing.T) {
 	q := createTestQueue(t)
-
 	ok := q.ChangeMessageVisibility("invalid-handle", 60*time.Second)
-
 	require.False(t, ok)
 }
 
@@ -919,7 +910,7 @@ func Test_Queue_Delete_removesInflightMessage(t *testing.T) {
 	require.Equal(t, initialStats.TotalMessagesDeleted+1, updatedStats.TotalMessagesDeleted)
 
 	// Message should be completely removed
-	_, exists := q.messagesInflightByReceiptHandle[receiptHandle]
+	_, exists := q.messagesInflight.receiptHandles[receiptHandle]
 	require.False(t, exists)
 }
 
@@ -950,8 +941,8 @@ func Test_Queue_Delete_removesAllReceiptHandles(t *testing.T) {
 	ok := q.Delete(receiptHandle2)
 
 	require.True(t, ok)
-	_, exists1 := q.messagesInflightByReceiptHandle[receiptHandle1]
-	_, exists2 := q.messagesInflightByReceiptHandle[receiptHandle2]
+	_, exists1 := q.messagesInflight.receiptHandles[receiptHandle1]
+	_, exists2 := q.messagesInflight.receiptHandles[receiptHandle2]
 	require.False(t, exists1)
 	require.False(t, exists2)
 }
@@ -1080,10 +1071,9 @@ func Test_Queue_Purge_removesAllMessages(t *testing.T) {
 	require.Equal(t, initialStats.TotalMessagesPurged+uint64(initialStats.NumMessages), updatedStats.TotalMessagesPurged)
 
 	// All internal maps should be cleared
-	require.Len(t, q.messagesReady, 0)
+	require.Equal(t, 0, q.messagesReadyOrdered.Len())
 	require.Len(t, q.messagesDelayed, 0)
-	require.Len(t, q.messagesInflight, 0)
-	require.Len(t, q.messagesInflightByReceiptHandle, 0)
+	require.Equal(t, 0, q.messagesInflight.Len())
 }
 
 func Test_Queue_Purge_emptyQueueIsNoOp(t *testing.T) {
@@ -1514,7 +1504,7 @@ func Test_Queue_ConcurrentDeleteAndVisibilityChange_maintainsConsistency(t *test
 // Tests for edge cases and regression prevention
 func Test_Queue_Receive_withMaximumMessagesInflightReached_returnsEmpty(t *testing.T) {
 	q := createTestQueue(t)
-	q.MaximumMessagesInflight = 2
+	q.MaximumMessagesInflightPerGroup = 2
 	pushTestMessages(q, 5)
 
 	// Keep receiving until we hit the inflight limit
@@ -1529,7 +1519,7 @@ func Test_Queue_Receive_withMaximumMessagesInflightReached_returnsEmpty(t *testi
 
 	// Should have some messages inflight, but be limited by MaximumMessagesInflight
 	stats := q.Stats()
-	require.LessOrEqual(t, stats.NumMessagesInflight, int64(q.MaximumMessagesInflight))
+	require.LessOrEqual(t, stats.NumMessagesInflight, int64(q.MaximumMessagesInflightPerGroup))
 	require.Greater(t, stats.NumMessagesInflight, int64(0))
 }
 
@@ -1547,7 +1537,7 @@ func Test_Queue_Push_withQueueDelayAndMessageDelay_messageDelayTakesPrecedence(t
 	// Message should use its own delay, not queue default
 	require.Equal(t, 60*time.Second, msgState.Delay.Value)
 	require.Len(t, q.messagesDelayed, 1)
-	require.Len(t, q.messagesReady, 0)
+	require.Equal(t, 0, q.messagesReadyOrdered)
 }
 
 func Test_Queue_Push_withOnlyQueueDelay_appliesQueueDelay(t *testing.T) {
@@ -1563,7 +1553,7 @@ func Test_Queue_Push_withOnlyQueueDelay_appliesQueueDelay(t *testing.T) {
 	// Message should use queue default delay
 	require.Equal(t, 30*time.Second, msgState.Delay.Value)
 	require.Len(t, q.messagesDelayed, 1)
-	require.Len(t, q.messagesReady, 0)
+	require.Equal(t, 0, q.messagesReadyOrdered)
 }
 
 func Test_Queue_Receive_randomizesMessageCount_withinBounds(t *testing.T) {
@@ -1620,65 +1610,6 @@ func Test_Queue_ChangeMessageVisibility_withDLQMovement_respectsMaxReceiveCount(
 			require.GreaterOrEqual(t, finalDLQStats.NumMessages, initialDLQStats.NumMessages)
 		}
 	})
-}
-
-func Test_Queue_DeleteBatch_withInconsistentState_handlesGracefully(t *testing.T) {
-	q := createTestQueue(t)
-	pushTestMessages(q, 1)
-
-	// Receive message
-	received := q.Receive(&sqs.ReceiveMessageInput{MaxNumberOfMessages: 1})
-	require.Len(t, received, 1)
-	receiptHandle := *received[0].ReceiptHandle
-
-	// Manually corrupt internal state to test error handling
-	messageID := q.messagesInflightByReceiptHandle[receiptHandle]
-	delete(q.messagesInflight, messageID) // Remove from inflight map but keep receipt handle mapping
-
-	handlers := []types.DeleteMessageBatchRequestEntry{
-		{
-			Id:            aws.String("corrupted"),
-			ReceiptHandle: aws.String(receiptHandle),
-		},
-	}
-
-	successful, failed := q.DeleteBatch(handlers)
-
-	require.Len(t, successful, 0)
-	require.Len(t, failed, 1)
-	require.Equal(t, "corrupted", *failed[0].Id)
-	require.Equal(t, "InconsistentState", *failed[0].Code)
-	require.False(t, failed[0].SenderFault)
-}
-
-func Test_Queue_ChangeMessageVisibilityBatch_withInconsistentState_handlesGracefully(t *testing.T) {
-	q := createTestQueue(t)
-	pushTestMessages(q, 1)
-
-	// Receive message
-	received := q.Receive(&sqs.ReceiveMessageInput{MaxNumberOfMessages: 1})
-	require.Len(t, received, 1)
-	receiptHandle := *received[0].ReceiptHandle
-
-	// Manually corrupt internal state
-	messageID := q.messagesInflightByReceiptHandle[receiptHandle]
-	delete(q.messagesInflight, messageID)
-
-	entries := []types.ChangeMessageVisibilityBatchRequestEntry{
-		{
-			Id:                aws.String("corrupted"),
-			ReceiptHandle:     aws.String(receiptHandle),
-			VisibilityTimeout: 120,
-		},
-	}
-
-	successful, failed := q.ChangeMessageVisibilityBatch(entries)
-
-	require.Len(t, successful, 0)
-	require.Len(t, failed, 1)
-	require.Equal(t, "corrupted", *failed[0].Id)
-	require.Equal(t, "InternalServerError", *failed[0].Code)
-	require.False(t, failed[0].SenderFault)
 }
 
 func Test_Queue_Stats_atomicOperations_maintainConsistency(t *testing.T) {
