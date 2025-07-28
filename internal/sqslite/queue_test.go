@@ -158,10 +158,13 @@ func Test_Queue_Receive_multipleGroups_respectsPerGroupLimits(t *testing.T) {
 		received := q.Receive(&sqs.ReceiveMessageInput{
 			MaxNumberOfMessages: 10,
 			MessageSystemAttributeNames: []types.MessageSystemAttributeName{
-				types.MessageSystemAttributeNameApproximateReceiveCount,
+				types.MessageSystemAttributeNameMessageGroupId,
 			},
 		})
 		totalSeen += len(received)
+		for _, msg := range received {
+			require.NotEmpty(t, msg.Attributes["MessageGroupId"])
+		}
 	}
 	require.True(t, totalSeen > 100)
 }

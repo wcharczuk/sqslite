@@ -156,6 +156,8 @@ func (s *MessageState) GetAttribute(attributeName types.MessageSystemAttributeNa
 		return
 	case types.MessageSystemAttributeNameSenderId:
 		return s.SenderID.Value, true
+	case types.MessageSystemAttributeNameMessageGroupId:
+		return s.MessageGroupID, true
 	case types.MessageSystemAttributeNameSentTimestamp:
 		return fmt.Sprint(s.Sent.UnixMilli()), true
 	default:
