@@ -28,7 +28,7 @@ func NewQueueFromCreateQueueInput(authz Authorization, input *sqs.CreateQueueInp
 		ARN:                             FormatQueueARN(authz, *input.QueueName),
 		created:                         time.Now(),
 		lastModified:                    time.Now(),
-		messagesReadyOrdered:            NewGroupedShardedLinkedList[string, *MessageState](DefaultQueueShardCount),
+		messagesReadyOrdered:            newGroupedShardedLinkedList[string, *MessageState](DefaultQueueShardCount),
 		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
 		messagesInflight:                newGroupedInflightMessages(),
 		dlqSources:                      make(map[string]*Queue),
@@ -85,7 +85,7 @@ type Queue struct {
 	dlqTarget  *Queue
 	dlqSources map[string]*Queue
 
-	messagesReadyOrdered *GroupedShardedLinkedList[string, *MessageState]
+	messagesReadyOrdered *groupedShardedLinkedList[string, *MessageState]
 	messagesDelayed      map[uuid.UUID]*MessageState
 	messagesInflight     *groupedInflightMessages
 
@@ -408,7 +408,7 @@ func (q *Queue) Purge() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.messagesReadyOrdered = NewGroupedShardedLinkedList[string, *MessageState](DefaultQueueShardCount)
+	q.messagesReadyOrdered = newGroupedShardedLinkedList[string, *MessageState](DefaultQueueShardCount)
 	q.messagesInflight = newGroupedInflightMessages()
 	clear(q.messagesDelayed)
 

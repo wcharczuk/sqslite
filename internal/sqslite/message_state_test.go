@@ -169,7 +169,7 @@ func Test_MessageState_GetAttributes_all(t *testing.T) {
 	}
 
 	attributes := m.GetAttributes(types.MessageSystemAttributeNameAll)
-	require.Len(t, attributes, 5)
+	require.Len(t, attributes, 6)
 
 	require.Equal(t, fmt.Sprint(time.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
 	require.Equal(t, testQueue.ARN, attributes[string(types.MessageSystemAttributeNameDeadLetterQueueSourceArn)])
@@ -190,7 +190,7 @@ func Test_MessageState_GetAttributes_deadLetterQueueSourceArn_unset(t *testing.T
 		}
 
 		attributes := m.GetAttributes(types.MessageSystemAttributeNameAll)
-		require.Len(t, attributes, 4)
+		require.Len(t, attributes, 5)
 
 		require.Equal(t, fmt.Sprint(time.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
 		require.Equal(t, "5", attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
@@ -232,7 +232,7 @@ func Test_MessageState_GetAttributes_mixesAllAndSubset(t *testing.T) {
 		}
 
 		attributes := m.GetAttributes(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp, types.MessageSystemAttributeNameApproximateReceiveCount, types.MessageSystemAttributeNameAll)
-		require.Len(t, attributes, 5)
+		require.Len(t, attributes, 6)
 
 		require.Equal(t, fmt.Sprint(time.Now().Add(-time.Minute).UnixMilli()), attributes[string(types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp)])
 		require.Equal(t, testQueue.ARN, attributes[string(types.MessageSystemAttributeNameDeadLetterQueueSourceArn)])

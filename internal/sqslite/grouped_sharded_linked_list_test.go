@@ -8,7 +8,7 @@ import (
 )
 
 func Test_GroupedShardedLinkedList_Push_Pop(t *testing.T) {
-	q := NewGroupedShardedLinkedList[string, string](32)
+	q := newGroupedShardedLinkedList[string, string](32)
 	for x := range 100 {
 		q.Push("one", fmt.Sprint(x))
 	}
@@ -50,7 +50,7 @@ func Test_GroupedShardedLinkedList_Push_Pop(t *testing.T) {
 }
 
 func Test_GroupedShardedLinkedList_RemoveNode(t *testing.T) {
-	q := NewGroupedShardedLinkedList[string, string](32)
+	q := newGroupedShardedLinkedList[string, string](32)
 	var nodes []*GroupedShardedLinkedListNode[string, string]
 	for x := range 100 {
 		node := q.Push("", fmt.Sprint(x))
