@@ -1,44 +1,47 @@
 package sqslite
 
-import "math/rand/v2"
+import (
+	"iter"
+	"math/rand/v2"
+)
 
 const DefaultQueueShardCount = 32
 
-func NewShardedLinkedList[T any](shardCount int) *ShardedLinkedList[T] {
+func newShardedLinkedList[T any](shardCount int) *shardedLinkedList[T] {
 	if shardCount == 0 {
 		panic("sharded linked list cannot have 0 shards")
 	}
-	return &ShardedLinkedList[T]{
+	return &shardedLinkedList[T]{
 		shards: make([]List[T], shardCount),
 	}
 }
 
-type ShardedLinkedList[T any] struct {
+type shardedLinkedList[T any] struct {
 	shards []List[T]
 	len    int
 }
 
-// ShardedLinkedListNode is a linked list node with a shard index.
-type ShardedLinkedListNode[T any] struct {
+// shardedLinkedListNode is a linked list node with a shard index.
+type shardedLinkedListNode[T any] struct {
 	ListNode[T]
 	ShardIndex uint32
 }
 
-func (sll *ShardedLinkedList[T]) Len() int {
+func (sll *shardedLinkedList[T]) Len() int {
 	return sll.len
 }
 
-func (sll *ShardedLinkedList[T]) Push(value T) *ShardedLinkedListNode[T] {
+func (sll *shardedLinkedList[T]) Push(value T) *shardedLinkedListNode[T] {
 	randomShardIndex := rand.IntN(len(sll.shards))
 	node := sll.shards[randomShardIndex].Push(value)
 	sll.len++
-	return &ShardedLinkedListNode[T]{
+	return &shardedLinkedListNode[T]{
 		ListNode:   *node,
 		ShardIndex: uint32(randomShardIndex),
 	}
 }
 
-func (sll *ShardedLinkedList[T]) Pop() (out T, ok bool) {
+func (sll *shardedLinkedList[T]) Pop() (out T, ok bool) {
 	if sll.len == 0 {
 		return
 	}
@@ -54,15 +57,42 @@ func (sll *ShardedLinkedList[T]) Pop() (out T, ok bool) {
 	return
 }
 
-func (sll *ShardedLinkedList[T]) Remove(node *ShardedLinkedListNode[T]) {
+func (sll *shardedLinkedList[T]) Remove(node *shardedLinkedListNode[T]) {
 	sll.len--
 	sll.shards[node.ShardIndex].Remove(&node.ListNode)
 }
 
 // Clear clears the linked list.
-func (sll *ShardedLinkedList[T]) Clear() {
+func (sll *shardedLinkedList[T]) Clear() {
 	for _, shard := range sll.shards {
 		shard.Clear()
 	}
 	sll.len = 0
+}
+
+func (sll *shardedLinkedList[T]) Each() iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for _, s := range sll.shards {
+			for n := range s.Each() {
+				if !yield(n) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (sll *shardedLinkedList[T]) EachNode() iter.Seq[*shardedLinkedListNode[T]] {
+	return func(yield func(*shardedLinkedListNode[T]) bool) {
+		for shardIndex, s := range sll.shards {
+			for n := range s.EachNode() {
+				if !yield(&shardedLinkedListNode[T]{
+					ListNode:   *n,
+					ShardIndex: uint32(shardIndex),
+				}) {
+					return
+				}
+			}
+		}
+	}
 }

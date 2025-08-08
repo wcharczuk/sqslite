@@ -30,7 +30,8 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	require.Equal(t, "test-queue", q.Name)
 	require.Equal(t, "http://sqslite.local/test-account/test-queue", q.URL)
 	require.Equal(t, "arn:aws:sqs:us-west-2:test-account:test-queue", q.ARN)
-	require.NotNil(t, q.messagesReadyOrdered)
+	require.NotNil(t, q.messagesReadyHotKeyed)
+	require.NotNil(t, q.messagesReadyColdKeyed)
 	// require.NotNil(t, q.messagesReady)
 	require.NotNil(t, q.messagesDelayed)
 	require.NotNil(t, q.messagesInflight)
@@ -40,7 +41,7 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	require.Equal(t, 4*24*time.Hour, q.MessageRetentionPeriod)
 	require.Equal(t, 20*time.Second, q.ReceiveMessageWaitTime)
 	require.Equal(t, 30*time.Second, q.VisibilityTimeout)
-	require.Equal(t, 120000, q.MaximumMessagesInflightPerGroup)
+	require.Equal(t, 120000, q.MaximumMessagesInflight)
 }
 
 func Test_RedriveAllowPolicy_AllowSource_RedrivePermissionAllowAll(t *testing.T) {
@@ -118,57 +119,6 @@ func Test_Queue_Receive_basic(t *testing.T) {
 	require.EqualValues(t, q.messagesInflight.Len(), len(received))
 }
 
-func Test_Queue_Receive_multipleGroups(t *testing.T) {
-	q := createTestQueue(t)
-
-	pushTestMessagesWithGroup(q, "one", 100)
-	pushTestMessagesWithGroup(q, "two", 50)
-
-	require.Len(t, q.messagesReadyOrdered.groups, 2)
-	require.Equal(t, 100, q.messagesReadyOrdered.groups["one"].len)
-	require.Equal(t, 50, q.messagesReadyOrdered.groups["two"].len)
-
-	received := q.Receive(&sqs.ReceiveMessageInput{
-		MaxNumberOfMessages: 10,
-		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
-			types.MessageSystemAttributeNameApproximateReceiveCount,
-		},
-	})
-	require.GreaterOrEqual(t, len(received), 1)
-	require.LessOrEqual(t, len(received), 10)
-	require.Equal(t, "1", received[0].Attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)], received[0].Attributes)
-	require.EqualValues(t, q.messagesInflight.Len(), len(received))
-}
-
-func Test_Queue_Receive_multipleGroups_respectsPerGroupLimits(t *testing.T) {
-	q := createTestQueue(t)
-	q.MaximumMessagesInflightPerGroup = 100
-
-	pushTestMessagesWithGroup(q, "one", 100)
-	pushTestMessagesWithGroup(q, "two", 75)
-	pushTestMessagesWithGroup(q, "three", 50)
-
-	require.Len(t, q.messagesReadyOrdered.groups, 3)
-	require.Equal(t, 100, q.messagesReadyOrdered.groups["one"].len)
-	require.Equal(t, 75, q.messagesReadyOrdered.groups["two"].len)
-	require.Equal(t, 50, q.messagesReadyOrdered.groups["three"].len)
-
-	var totalSeen int
-	for totalSeen < 150 {
-		received := q.Receive(&sqs.ReceiveMessageInput{
-			MaxNumberOfMessages: 10,
-			MessageSystemAttributeNames: []types.MessageSystemAttributeName{
-				types.MessageSystemAttributeNameMessageGroupId,
-			},
-		})
-		totalSeen += len(received)
-		for _, msg := range received {
-			require.NotEmpty(t, msg.Attributes["MessageGroupId"])
-		}
-	}
-	require.True(t, totalSeen > 100)
-}
-
 func Test_Queue_Receive_single(t *testing.T) {
 	q := createTestQueue(t)
 
@@ -224,7 +174,7 @@ func Test_Queue_Receive_returnsMessagesInMultiplePasses(t *testing.T) {
 
 func Test_Queue_Receive_respectsMaximumMessagesInFlight(t *testing.T) {
 	q := createTestQueue(t)
-	q.MaximumMessagesInflightPerGroup = 10
+	q.MaximumMessagesInflight = 10
 
 	pushTestMessages(q, 20)
 
@@ -293,7 +243,7 @@ func Test_Queue_Push_singleMessageWithoutDelay_addsToReadyQueue(t *testing.T) {
 	q.Push(msgState)
 	updatedStats := q.Stats()
 
-	require.Equal(t, 1, q.messagesReadyOrdered.Len())
+	require.Equal(t, 1, q.messagesReadyColdKeyed.Len())
 
 	require.Equal(t, initialStats.TotalMessagesSent+1, updatedStats.TotalMessagesSent)
 	require.Equal(t, initialStats.NumMessages+1, updatedStats.NumMessages)
@@ -311,7 +261,7 @@ func Test_Queue_Push_singleMessageWithDelay_addsToDelayedQueue(t *testing.T) {
 	q.Push(msgState)
 
 	updatedStats := q.Stats()
-	require.Equal(t, 0, q.messagesReadyOrdered.Len())
+	require.Equal(t, 0, q.messagesReadyColdKeyed.Len())
 	require.Len(t, q.messagesDelayed, 1)
 	require.Equal(t, initialStats.NumMessagesDelayed+1, updatedStats.NumMessagesDelayed)
 }
@@ -325,7 +275,7 @@ func Test_Queue_Push_multipleMessages_handlesAllMessages(t *testing.T) {
 	msgState2 := q.NewMessageStateFromSendMessageInput(msg2)
 	q.Push(msgState1, msgState2)
 
-	require.Equal(t, 2, q.messagesReadyOrdered.Len())
+	require.Equal(t, 2, q.messagesReadyColdKeyed.Len())
 }
 
 func Test_Queue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *testing.T) {
@@ -337,7 +287,7 @@ func Test_Queue_Push_queueHasDefaultDelayMessageHasNone_appliesQueueDelay(t *tes
 
 	q.Push(msgState)
 
-	require.Equal(t, 0, q.messagesReadyOrdered.Len())
+	require.Equal(t, 0, q.messagesReadyColdKeyed.Len())
 	require.Len(t, q.messagesDelayed, 1)
 }
 
@@ -375,7 +325,7 @@ func Test_Queue_Push_mixedDelayedAndReadyMessages_handlesCorrectly(t *testing.T)
 
 	q.Push(readyMsgState, delayedMsgState)
 
-	require.Equal(t, 1, q.messagesReadyOrdered.Len())
+	require.Equal(t, 1, q.messagesReadyColdKeyed.Len())
 	require.Len(t, q.messagesDelayed, 1)
 }
 
@@ -1122,7 +1072,8 @@ func Test_Queue_Purge_removesAllMessages(t *testing.T) {
 	require.Equal(t, initialStats.TotalMessagesPurged+uint64(initialStats.NumMessages), updatedStats.TotalMessagesPurged)
 
 	// All internal maps should be cleared
-	require.Equal(t, 0, q.messagesReadyOrdered.Len())
+	require.Equal(t, 0, q.messagesReadyColdKeyed.Len())
+	require.Equal(t, 0, q.messagesReadyHotKeyed.Len())
 	require.Len(t, q.messagesDelayed, 0)
 	require.Equal(t, 0, q.messagesInflight.Len())
 }
@@ -1555,7 +1506,7 @@ func Test_Queue_ConcurrentDeleteAndVisibilityChange_maintainsConsistency(t *test
 // Tests for edge cases and regression prevention
 func Test_Queue_Receive_withMaximumMessagesInflightReached_returnsEmpty(t *testing.T) {
 	q := createTestQueue(t)
-	q.MaximumMessagesInflightPerGroup = 2
+	q.MaximumMessagesInflight = 2
 	pushTestMessages(q, 5)
 
 	// Keep receiving until we hit the inflight limit
@@ -1570,7 +1521,7 @@ func Test_Queue_Receive_withMaximumMessagesInflightReached_returnsEmpty(t *testi
 
 	// Should have some messages inflight, but be limited by MaximumMessagesInflight
 	stats := q.Stats()
-	require.LessOrEqual(t, stats.NumMessagesInflight, int64(q.MaximumMessagesInflightPerGroup))
+	require.LessOrEqual(t, stats.NumMessagesInflight, int64(q.MaximumMessagesInflight))
 	require.Greater(t, stats.NumMessagesInflight, int64(0))
 }
 
@@ -1588,7 +1539,8 @@ func Test_Queue_Push_withQueueDelayAndMessageDelay_messageDelayTakesPrecedence(t
 	// Message should use its own delay, not queue default
 	require.Equal(t, 60*time.Second, msgState.Delay.Value)
 	require.Len(t, q.messagesDelayed, 1)
-	require.Equal(t, 0, q.messagesReadyOrdered.Len())
+	require.Equal(t, 0, q.messagesReadyColdKeyed.Len())
+	require.Equal(t, 0, q.messagesReadyHotKeyed.Len())
 }
 
 func Test_Queue_Push_withOnlyQueueDelay_appliesQueueDelay(t *testing.T) {
@@ -1604,7 +1556,8 @@ func Test_Queue_Push_withOnlyQueueDelay_appliesQueueDelay(t *testing.T) {
 	// Message should use queue default delay
 	require.Equal(t, 30*time.Second, msgState.Delay.Value)
 	require.Len(t, q.messagesDelayed, 1)
-	require.Equal(t, 0, q.messagesReadyOrdered.Len())
+	require.Equal(t, 0, q.messagesReadyColdKeyed.Len())
+	require.Equal(t, 0, q.messagesReadyHotKeyed.Len())
 }
 
 func Test_Queue_Receive_randomizesMessageCount_withinBounds(t *testing.T) {

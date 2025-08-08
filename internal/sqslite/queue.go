@@ -22,19 +22,20 @@ func NewQueueFromCreateQueueInput(authz Authorization, input *sqs.CreateQueueInp
 		return nil, err
 	}
 	queue := &Queue{
-		Name:                            safeDeref(input.QueueName),
-		AccountID:                       authz.AccountID,
-		URL:                             FormatQueueURL(authz, *input.QueueName),
-		ARN:                             FormatQueueARN(authz, *input.QueueName),
-		created:                         time.Now(),
-		lastModified:                    time.Now(),
-		messagesReadyOrdered:            newGroupedShardedLinkedList[string, *MessageState](DefaultQueueShardCount),
-		messagesDelayed:                 make(map[uuid.UUID]*MessageState),
-		messagesInflight:                newGroupedInflightMessages(),
-		dlqSources:                      make(map[string]*Queue),
-		MaximumMessagesInflightPerGroup: 120000,
-		Attributes:                      input.Attributes,
-		Tags:                            input.Tags,
+		Name:                    safeDeref(input.QueueName),
+		AccountID:               authz.AccountID,
+		URL:                     FormatQueueURL(authz, *input.QueueName),
+		ARN:                     FormatQueueARN(authz, *input.QueueName),
+		created:                 time.Now(),
+		lastModified:            time.Now(),
+		messagesReadyHotKeyed:   newShardedLinkedList[*MessageState](DefaultQueueShardCount),
+		messagesReadyColdKeyed:  newShardedLinkedList[*MessageState](DefaultQueueShardCount),
+		messagesDelayed:         make(map[uuid.UUID]*MessageState),
+		messagesInflight:        newInflightMessages(),
+		dlqSources:              make(map[string]*Queue),
+		MaximumMessagesInflight: 120000,
+		Attributes:              input.Attributes,
+		Tags:                    input.Tags,
 	}
 	if err := queue.applyQueueAttributesUnsafe(input.Attributes, true /*applyDefaults*/); err != nil {
 		return nil, err
@@ -62,12 +63,12 @@ type Queue struct {
 	RedrivePolicy      Optional[RedrivePolicy]
 	RedriveAllowPolicy Optional[RedriveAllowPolicy]
 
-	VisibilityTimeout               time.Duration
-	ReceiveMessageWaitTime          time.Duration
-	MaximumMessageSizeBytes         int
-	MessageRetentionPeriod          time.Duration
-	Delay                           Optional[time.Duration]
-	MaximumMessagesInflightPerGroup int
+	VisibilityTimeout       time.Duration
+	ReceiveMessageWaitTime  time.Duration
+	MaximumMessageSizeBytes int
+	MessageRetentionPeriod  time.Duration
+	Delay                   Optional[time.Duration]
+	MaximumMessagesInflight int
 
 	Policy Optional[any]
 
@@ -85,9 +86,10 @@ type Queue struct {
 	dlqTarget  *Queue
 	dlqSources map[string]*Queue
 
-	messagesReadyOrdered *groupedShardedLinkedList[string, *MessageState]
-	messagesDelayed      map[uuid.UUID]*MessageState
-	messagesInflight     *groupedInflightMessages
+	messagesReadyHotKeyed  *shardedLinkedList[*MessageState]
+	messagesReadyColdKeyed *shardedLinkedList[*MessageState]
+	messagesDelayed        map[uuid.UUID]*MessageState
+	messagesInflight       *inflightMessages
 
 	retentionWorker        *retentionWorker
 	retentionWorkerCancel  func()
@@ -227,6 +229,7 @@ func (q *Queue) Push(msgs ...*MessageState) {
 	defer q.mu.Unlock()
 
 	now := time.Now()
+	hotKeys := q.messagesInflight.HotKeys()
 	for _, m := range msgs {
 		// only apply the queue level default if
 		// - it's set
@@ -242,18 +245,17 @@ func (q *Queue) Push(msgs ...*MessageState) {
 			continue
 		}
 		atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-		_ = q.messagesReadyOrdered.Push(m.MessageGroupID, m)
+		if hotKeys.Has(m.MessageGroupID) {
+			_ = q.messagesReadyHotKeyed.Push(m)
+		} else {
+			_ = q.messagesReadyColdKeyed.Push(m)
+		}
 	}
 }
 
 func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-
-	validMessageGroups := q.messagesInflight.ValidateGroups(q.messagesReadyOrdered.GroupIDs(), q.MaximumMessagesInflightPerGroup)
-	if len(validMessageGroups) == 0 && q.messagesInflight.Len() > 0 {
-		return
-	}
 
 	var visibilityTimeout time.Duration
 	if input.VisibilityTimeout > 0 {
@@ -266,12 +268,15 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 		effectiveMaxMessages = rand.IntN(maxNumberOfMessages) + 1 /* done on purpose! */
 	)
 	for {
-		// pop removes the message from the "readiness" state
-		// but only if it belongs to a valid group (a group that has
-		// fewer than ~120k outstanding messages)
-		_, msg, ok := q.messagesReadyOrdered.Pop(validMessageGroups...)
+		if q.messagesInflight.Len() >= q.MaximumMessagesInflight {
+			return
+		}
+		msg, ok := q.messagesReadyColdKeyed.Pop()
 		if !ok {
-			break
+			msg, ok = q.messagesReadyHotKeyed.Pop()
+		}
+		if !ok {
+			return
 		}
 
 		atomic.AddUint64(&q.stats.TotalMessagesReceived, 1)
@@ -296,10 +301,6 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 		if len(output) == effectiveMaxMessages {
 			break
 		}
-		validMessageGroups = q.messagesInflight.ValidateGroups(q.messagesReadyOrdered.GroupIDs(), q.MaximumMessagesInflightPerGroup)
-		if len(validMessageGroups) == 0 {
-			return
-		}
 	}
 	return
 }
@@ -307,7 +308,10 @@ func (q *Queue) Receive(input *sqs.ReceiveMessageInput) (output []types.Message)
 func (q *Queue) PopMessageForMove() (msg *MessageState, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	_, msg, ok = q.messagesReadyOrdered.Pop()
+	msg, ok = q.messagesReadyColdKeyed.Pop()
+	if !ok {
+		msg, ok = q.messagesReadyHotKeyed.Pop()
+	}
 	if !ok {
 		return
 	}
@@ -325,11 +329,12 @@ func (q *Queue) ChangeMessageVisibility(receiptHandle string, visibilityTimeout 
 	if !ok {
 		return
 	}
+	hotKeys := q.messagesInflight.HotKeys()
 	now := time.Now()
 	atomic.AddUint64(&q.stats.TotalMessagesChangedVisibility, 1)
 	msg.UpdateVisibilityTimeout(visibilityTimeout, now)
 	if visibilityTimeout == 0 {
-		q.moveMessageFromInflightUnsafe(msg)
+		q.moveMessageFromInflightUnsafe(hotKeys, msg)
 	}
 	return
 }
@@ -339,6 +344,8 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	defer q.mu.Unlock()
 	var readyMessages []*MessageState
 	now := time.Now()
+
+	hotKeys := q.messagesInflight.HotKeys()
 	for _, entry := range entries {
 		msg, ok := q.messagesInflight.GetByReceiptHandle(safeDeref(entry.ReceiptHandle))
 		if !ok {
@@ -360,7 +367,7 @@ func (q *Queue) ChangeMessageVisibilityBatch(entries []types.ChangeMessageVisibi
 	}
 	if len(readyMessages) > 0 {
 		for _, msg := range readyMessages {
-			q.moveMessageFromInflightUnsafe(msg)
+			q.moveMessageFromInflightUnsafe(hotKeys, msg)
 		}
 	}
 	return
@@ -408,8 +415,9 @@ func (q *Queue) Purge() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.messagesReadyOrdered = newGroupedShardedLinkedList[string, *MessageState](DefaultQueueShardCount)
-	q.messagesInflight = newGroupedInflightMessages()
+	q.messagesReadyHotKeyed = newShardedLinkedList[*MessageState](DefaultQueueShardCount)
+	q.messagesReadyColdKeyed = newShardedLinkedList[*MessageState](DefaultQueueShardCount)
+	q.messagesInflight = newInflightMessages()
 	clear(q.messagesDelayed)
 
 	atomic.AddUint64(&q.stats.TotalMessagesPurged, uint64(atomic.LoadInt64(&q.stats.NumMessages)))
@@ -447,14 +455,24 @@ func (q *Queue) PurgeExpired() {
 		deleted[msg.MessageID] = struct{}{}
 		atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
 	}
-	var toDeleteNodes []*GroupedShardedLinkedListNode[string, *MessageState]
-	for msg := range q.messagesReadyOrdered.Each() {
+	var toDeleteHotKeyedNodes, toDeleteColdKeyedNodes []*shardedLinkedListNode[*MessageState]
+	for msg := range q.messagesReadyHotKeyed.EachNode() {
 		if msg.Value.IsExpired(now) {
-			toDeleteNodes = append(toDeleteNodes, msg)
+			toDeleteHotKeyedNodes = append(toDeleteHotKeyedNodes, msg)
 		}
 	}
-	for _, node := range toDeleteNodes {
-		q.messagesReadyOrdered.Remove(node)
+	for msg := range q.messagesReadyColdKeyed.EachNode() {
+		if msg.Value.IsExpired(now) {
+			toDeleteColdKeyedNodes = append(toDeleteColdKeyedNodes, msg)
+		}
+	}
+	for _, node := range toDeleteHotKeyedNodes {
+		q.messagesReadyHotKeyed.Remove(node)
+		deleted[node.Value.MessageID] = struct{}{}
+		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
+	}
+	for _, node := range toDeleteColdKeyedNodes {
+		q.messagesReadyHotKeyed.Remove(node)
 		deleted[node.Value.MessageID] = struct{}{}
 		atomic.AddInt64(&q.stats.NumMessagesReady, -1)
 	}
@@ -468,6 +486,7 @@ func (q *Queue) UpdateInflightVisibility() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	hotKeys := q.messagesInflight.HotKeys()
 	now := time.Now()
 	var ready []*MessageState
 	for msg := range q.messagesInflight.Each() {
@@ -476,7 +495,7 @@ func (q *Queue) UpdateInflightVisibility() {
 		}
 	}
 	for _, msg := range ready {
-		q.moveMessageFromInflightUnsafe(msg)
+		q.moveMessageFromInflightUnsafe(hotKeys, msg)
 	}
 }
 
@@ -485,6 +504,7 @@ func (q *Queue) UpdateDelayedToReady() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	now := time.Now()
+	hotKeys := q.messagesInflight.HotKeys()
 	var ready []*MessageState
 	for _, msg := range q.messagesDelayed {
 		if !msg.IsDelayed(now) {
@@ -492,7 +512,7 @@ func (q *Queue) UpdateDelayedToReady() {
 		}
 	}
 	for _, msg := range ready {
-		q.moveMessageFromDelayedToReadyUnsafe(msg)
+		q.moveMessageFromDelayedToReadyUnsafe(hotKeys, msg)
 	}
 }
 
@@ -507,14 +527,14 @@ func (q *Queue) GetQueueAttributes(attributeNames ...types.QueueAttributeName) m
 // internal methods
 //
 
-func (q *Queue) moveMessageFromInflightUnsafe(msg *MessageState) {
+func (q *Queue) moveMessageFromInflightUnsafe(hotKeys Set[string], msg *MessageState) {
 	if q.RedrivePolicy.IsSet {
 		if msg.ReceiveCount >= uint32(q.RedrivePolicy.Value.MaxReceiveCount) {
 			q.moveMessageFromInflightToDLQUnsafe(msg)
 			return
 		}
 	}
-	q.moveMessageFromInflightToReadyUnsafe(msg)
+	q.moveMessageFromInflightToReadyUnsafe(hotKeys, msg)
 }
 
 func (q *Queue) moveMessageFromInflightToDLQUnsafe(msg *MessageState) {
@@ -524,27 +544,31 @@ func (q *Queue) moveMessageFromInflightToDLQUnsafe(msg *MessageState) {
 	q.moveMessageToDLQUnsafe(msg)
 }
 
-func (q *Queue) moveMessageFromInflightToReadyUnsafe(msg *MessageState) {
+func (q *Queue) moveMessageFromInflightToReadyUnsafe(hotKeys Set[string], msg *MessageState) {
 	q.messagesInflight.Remove(msg)
 	atomic.AddUint64(&q.stats.TotalMessagesInflightToReady, 1)
 	atomic.AddInt64(&q.stats.NumMessagesInflight, -1)
-	q.moveMessageToReadyUnsafe(msg)
+	q.moveMessageToReadyUnsafe(hotKeys, msg)
 }
 
-func (q *Queue) moveMessageFromDelayedToReadyUnsafe(msg *MessageState) {
+func (q *Queue) moveMessageFromDelayedToReadyUnsafe(hotKeys Set[string], msg *MessageState) {
 	delete(q.messagesDelayed, msg.MessageID)
 	atomic.AddUint64(&q.stats.TotalMessagesDelayedToReady, 1)
 	atomic.AddInt64(&q.stats.NumMessagesDelayed, -1)
-	q.moveMessageToReadyUnsafe(msg)
+	q.moveMessageToReadyUnsafe(hotKeys, msg)
 }
 
 func (q *Queue) moveMessageToDLQUnsafe(msg *MessageState) {
 	q.dlqTarget.Push(msg)
 }
 
-func (q *Queue) moveMessageToReadyUnsafe(msg *MessageState) {
+func (q *Queue) moveMessageToReadyUnsafe(hotKeys Set[string], msg *MessageState) {
 	atomic.AddInt64(&q.stats.NumMessagesReady, 1)
-	_ = q.messagesReadyOrdered.Push(msg.MessageGroupID, msg)
+	if hotKeys.Has(msg.MessageGroupID) {
+		_ = q.messagesReadyHotKeyed.Push(msg)
+	} else {
+		_ = q.messagesReadyColdKeyed.Push(msg)
+	}
 }
 
 func (q *Queue) getQueueAttributesUnsafe(attributes ...types.QueueAttributeName) map[string]string {

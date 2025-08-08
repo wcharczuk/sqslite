@@ -8,7 +8,7 @@ import (
 )
 
 func Test_ShardedLinkedList_Push_Pop(t *testing.T) {
-	q := NewShardedLinkedList[string](32)
+	q := newShardedLinkedList[string](32)
 	for x := range 100 {
 		q.Push(fmt.Sprint(x))
 	}
@@ -38,8 +38,8 @@ func Test_ShardedLinkedList_Push_Pop(t *testing.T) {
 }
 
 func Test_ShardedLinkedList_RemoveNode(t *testing.T) {
-	q := NewShardedLinkedList[string](32)
-	var nodes []*ShardedLinkedListNode[string]
+	q := newShardedLinkedList[string](32)
+	var nodes []*shardedLinkedListNode[string]
 	for x := range 100 {
 		node := q.Push(fmt.Sprint(x))
 		require.NotNil(t, node)
