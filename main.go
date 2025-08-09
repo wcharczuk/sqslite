@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -220,7 +221,9 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 	newStats := make(map[string]sqslite.QueueStats)
 	for q := range server.Accounts().EachQueue() {
 		prevStats := prev[q.Name]
+
 		stats := q.Stats()
+
 		changeMessagesSent := float64(stats.TotalMessagesSent - prevStats.TotalMessagesSent)
 		changeMessagesReceived := float64(stats.TotalMessagesReceived - prevStats.TotalMessagesReceived)
 		changeMessagesChangedVisiblity := float64(stats.TotalMessagesChangedVisibility - prevStats.TotalMessagesChangedVisibility)
@@ -230,19 +233,19 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 		changeMessagesInflightToReady := float64(stats.TotalMessagesInflightToReady - prevStats.TotalMessagesInflightToReady)
 		changeMessagesInflightToDLQ := float64(stats.TotalMessagesInflightToDLQ - prevStats.TotalMessagesInflightToDLQ)
 
-		var deleted time.Duration
+		var deletedAgo time.Duration
 		if !q.Deleted().IsZero() {
-			deleted = time.Since(q.Deleted())
+			deletedAgo = time.Since(q.Deleted())
 		}
 
 		slog.Info(
-			"queue statistics",
+			"stats",
 			slog.String("queue_name", q.Name),
 			slog.String("queue_url", q.URL),
 			slog.Bool("is_dlq", q.IsDLQ()),
 			slog.Duration("created", time.Since(q.Created())),
 			slog.Duration("last_modified", time.Since(q.LastModified())),
-			slog.Duration("deleted", deleted),
+			slog.Duration("deleted_ago", deletedAgo),
 			slog.Int64("num_messages", stats.NumMessages),
 			slog.Int64("num_messages_ready", stats.NumMessagesReady),
 			slog.Int64("num_messages_inflight", stats.NumMessagesInflight),
@@ -255,6 +258,7 @@ func printStatistics(server *sqslite.Server, elapsed time.Duration, prev map[str
 			slog.String("delayed_to_ready_rate", fmt.Sprintf("%0.2f/sec", changeMessagesDelayedToReady/elapsedSeconds)),
 			slog.String("inflight_to_ready_rate", fmt.Sprintf("%0.2f/sec", changeMessagesInflightToReady/elapsedSeconds)),
 			slog.String("inflight_to_dlq_rate", fmt.Sprintf("%0.2f/sec", changeMessagesInflightToDLQ/elapsedSeconds)),
+			slog.String("hot_keys", strings.Join(stats.HotKeys, ",")),
 		)
 		newStats[q.Name] = stats
 	}

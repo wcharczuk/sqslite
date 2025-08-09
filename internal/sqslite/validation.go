@@ -41,8 +41,8 @@ func validateMaximumMessageSizeBytes(maximumMessageSizeBytes int) *Error {
 	if maximumMessageSizeBytes < 1024 {
 		return ErrorInvalidParameterValueException().WithMessagef("MaximumMessageSizeBytes must be greater than or equal to 1024, you put: %v", maximumMessageSizeBytes)
 	}
-	if maximumMessageSizeBytes > 256*1024 {
-		return ErrorInvalidParameterValueException().WithMessagef("MaximumMessageSizeBytes must be less than or equal to 256KiB, you put: %v", maximumMessageSizeBytes)
+	if maximumMessageSizeBytes > 1024*1024 {
+		return ErrorInvalidParameterValueException().WithMessagef("MaximumMessageSizeBytes must be less than or equal to 1MiB, you put: %v", maximumMessageSizeBytes)
 	}
 	return nil
 }

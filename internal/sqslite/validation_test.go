@@ -52,7 +52,7 @@ func Test_validateMaximumMessageSizeBytes(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, err.StatusCode)
 	require.Equal(t, "com.amazonaws.sqs#InvalidParameterValueException", err.Type)
 
-	err = validateMaximumMessageSizeBytes(512 * 1024)
+	err = validateMaximumMessageSizeBytes(2048 * 1024)
 	require.NotNil(t, err)
 	require.Equal(t, http.StatusBadRequest, err.StatusCode)
 	require.Equal(t, "com.amazonaws.sqs#InvalidParameterValueException", err.Type)

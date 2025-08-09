@@ -56,16 +56,21 @@ func (i *inflightMessages) HotKeys() (hotKeys Set[string]) {
 	caclulateCountStdDev := func() float64 {
 		var variance float64
 		for _, kc := range keyCounts {
-			variance += (float64(kc.count) - mean) * (float64(kc.count) - mean)
+			variance += ((float64(kc.count) - mean) * (float64(kc.count) - mean))
 		}
 		variance = variance / float64(len(keyCounts))
 		return math.Sqrt(variance)
 	}
 	stdDev := caclulateCountStdDev()
 
-	// the threshold here will be > 2 stddevs above the mean count with a maximum hot keys of 10
+	// don't bother if we don't have a significant stddev
+	if stdDev < 1.0 {
+		return
+	}
+
+	// the threshold here will be > stddev above the mean count with a maximum hot keys of 10
 	for _, kc := range keyCounts {
-		if float64(kc.count) > 2*stdDev {
+		if float64(kc.count) > (mean + stdDev) {
 			hotKeys.Add(kc.key)
 			if len(hotKeys) == 10 {
 				return

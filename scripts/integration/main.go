@@ -122,6 +122,7 @@ var scenarios = map[string]func(*integration.Run){
 	"fill-dlq":                               fillDLQ,
 	"messages-move":                          messagesMove,
 	"messages-move-invalid-source":           messagesMoveInvalidSource,
+	"fair-queue":                             fairQueue,
 	"fair-queue-limits":                      fairQueueLimits,
 }
 
@@ -452,6 +453,115 @@ func messagesMoveInvalidSource(it *integration.Run) {
 	it.ExpectFailure(func() {
 		_ = it.StartMessagesMoveTask(notDLQ, mainQueue)
 	})
+}
+
+func fairQueue(it *integration.Run) {
+	mainQueue := it.CreateQueue()
+
+	var (
+		messageGroupIDs = []string{
+			"load-test-00",
+			"load-test-00",
+			"load-test-00",
+			"load-test-00",
+			"load-test-00",
+			"load-test-00",
+			"load-test-00",
+			"load-test-00",
+			"load-test-01",
+			"load-test-02",
+			"load-test-03",
+		}
+	)
+	const (
+		totalMessageCountPerGroup      = 150_000
+		publishMessagesPerBatch        = 10
+		publishMessagesPerLooop        = totalMessageCountPerGroup / publishMessagesPerBatch
+		publishMessageShards           = 32
+		publishMessagesPerShardPerLoop = publishMessagesPerLooop / publishMessageShards
+	)
+
+	it.Logf("publishing messages across %d group(s)", len(messageGroupIDs))
+
+	var totalMessagesSent uint64
+
+	g := new(errgroup.Group)
+	for _, groupID := range messageGroupIDs {
+		for range publishMessageShards {
+			g.Go(func() (err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("publishing messages for a shard threw: %v", r)
+					}
+				}()
+				for range publishMessagesPerShardPerLoop {
+					it.SendMessagesWithGroup(mainQueue, groupID, publishMessagesPerBatch)
+					atomic.AddUint64(&totalMessagesSent, uint64(publishMessagesPerBatch))
+				}
+				return
+			})
+		}
+	}
+	err := g.Wait()
+	if err != nil {
+		panic(err)
+	}
+
+	it.Logf("done publishing %d messages, starting to read messages", totalMessagesSent)
+
+	const (
+		receiveShards = 256
+	)
+	var (
+		receiveMessagesCountPerShard = totalMessagesSent / uint64(receiveShards)
+	)
+
+	var muGroupIDs sync.Mutex
+	groupIDs := make(map[string]int)
+
+	var muMessageIDs sync.Mutex
+	messageIDs := make(map[string]int)
+
+	var totalMessagesReceived uint64
+	startedReading := time.Now()
+	for range receiveShards {
+		g.Go(func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("reading messages: %v", r)
+				}
+			}()
+			var thisShard int
+			for uint64(thisShard) < receiveMessagesCountPerShard {
+				if time.Since(startedReading) > 30*time.Second {
+					err = fmt.Errorf("exceeded 30 seconds; likely going to start seeing the same messages again, read %d messages so far", len(messageIDs))
+					return
+				}
+				_, mids, gids := it.ReceiveMessagesWithGroupIDs(mainQueue)
+				for index := range len(gids) {
+					thisShard++
+					atomic.AddUint64(&totalMessagesReceived, 1)
+					muGroupIDs.Lock()
+					groupIDs[gids[index]]++
+					muGroupIDs.Unlock()
+					muMessageIDs.Lock()
+					messageIDs[mids[index]]++
+					muMessageIDs.Unlock()
+				}
+			}
+			return
+		})
+	}
+
+	err = g.Wait()
+	if err != nil {
+		panic(err)
+	}
+	stats := it.GetQueueStats(mainQueue)
+	it.Logf("counts per groupID: %#v", groupIDs)
+	it.Logf("count of message ids seen: %d", len(messageIDs))
+	it.Logf("queue stats approximate number of messages: %d", stats.ApproximateNumberOfMessages)
+	it.Logf("queue stats approximate number of not visible messages: %d", stats.ApproximateNumberOfMessagesNotVisible)
 }
 
 func fairQueueLimits(it *integration.Run) {

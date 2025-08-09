@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -115,6 +116,7 @@ func (q *Queue) Stats() (output QueueStats) {
 	output.TotalMessagesInflightToReady = atomic.LoadUint64(&q.stats.TotalMessagesInflightToReady)
 	output.TotalMessagesDelayedToReady = atomic.LoadUint64(&q.stats.TotalMessagesDelayedToReady)
 	output.TotalMessagesInflightToDLQ = atomic.LoadUint64(&q.stats.TotalMessagesInflightToDLQ)
+	output.HotKeys = slices.Collect(maps.Keys(q.HotKeys()))
 	return
 }
 
@@ -136,6 +138,14 @@ func (q *Queue) Deleted() time.Time {
 // IsDeleted returns if the queue has been deleted and is waiting to be purged.
 func (q *Queue) IsDeleted() bool {
 	return !q.deleted.IsZero()
+}
+
+// HotKeys returns the hot keys for the queue.
+func (q *Queue) HotKeys() (output Set[string]) {
+	q.mu.Lock()
+	output = q.messagesInflight.HotKeys()
+	q.mu.Unlock()
+	return
 }
 
 func (q *Queue) Start(ctx context.Context) {

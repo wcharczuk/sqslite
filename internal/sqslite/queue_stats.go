@@ -15,4 +15,5 @@ type QueueStats struct {
 	TotalMessagesInflightToReady   uint64
 	TotalMessagesDelayedToReady    uint64
 	TotalMessagesInflightToDLQ     uint64
+	HotKeys                        []string
 }
