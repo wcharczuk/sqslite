@@ -41,7 +41,7 @@ func Test_Queue_NewQueueFromCreateQueueInput_minimalDefaults(t *testing.T) {
 	require.Equal(t, 4*24*time.Hour, q.MessageRetentionPeriod)
 	require.Equal(t, 20*time.Second, q.ReceiveMessageWaitTime)
 	require.Equal(t, 30*time.Second, q.VisibilityTimeout)
-	require.Equal(t, 120000, q.MaximumMessagesInflight)
+	require.Equal(t, 400000, q.MaximumMessagesInflight)
 }
 
 func Test_RedriveAllowPolicy_AllowSource_RedrivePermissionAllowAll(t *testing.T) {
