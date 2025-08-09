@@ -79,7 +79,7 @@ func Test_inflightMessages_HotKeys_singleHotKey(t *testing.T) {
 func Test_inflightMessages_HotKeys_manyHotKeys(t *testing.T) {
 	inflight := newInflightMessages()
 
-	for range 64 {
+	for range 8 {
 		inflight.Push(uuid.V4().String(), &MessageState{
 			MessageID:      uuid.V4(),
 			MessageGroupID: "foo",

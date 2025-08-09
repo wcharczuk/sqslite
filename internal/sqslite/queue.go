@@ -34,7 +34,7 @@ func NewQueueFromCreateQueueInput(authz Authorization, input *sqs.CreateQueueInp
 		messagesDelayed:         make(map[uuid.UUID]*MessageState),
 		messagesInflight:        newInflightMessages(),
 		dlqSources:              make(map[string]*Queue),
-		MaximumMessagesInflight: 120000,
+		MaximumMessagesInflight: 400_000,
 		Attributes:              input.Attributes,
 		Tags:                    input.Tags,
 	}

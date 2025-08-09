@@ -13,18 +13,20 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/aws/smithy-go/logging"
 	"github.com/wcharczuk/sqslite/internal/sqslite"
 	"github.com/wcharczuk/sqslite/internal/uuid"
 )
 
 type Run struct {
-	id             string
-	ctx            context.Context
-	outputPath     string
-	sqsClient      *sqs.Client
-	messageOrdinal uint64
-	queueOrdinal   uint64
-	after          []func()
+	id              string
+	ctx             context.Context
+	outputPath      string
+	sqsClient       *sqs.Client
+	sqsClientLogger logging.Logger
+	messageOrdinal  uint64
+	queueOrdinal    uint64
+	after           []func()
 }
 
 func (it *Run) Context() context.Context {
@@ -221,7 +223,10 @@ func (it *Run) SendMessagesWithGroup(queue Queue, groupID string, count int) {
 				MessageBody:    aws.String(fmt.Sprintf(`{"message_index":%d}`, id)),
 			})
 	}
-	res, err := it.sqsClient.SendMessageBatch(it.ctx, input)
+	res, err := it.sqsClient.SendMessageBatch(it.ctx, input, func(opts *sqs.Options) {
+		// opts.Logger = it.sqsClientLogger
+		// opts.ClientLogMode = aws.LogRequest
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -329,12 +334,38 @@ func (it *Run) ReceiveMessages(queue Queue) (receiptHandles []string) {
 
 // ReceiveMessageWithGroupID receives up to (10) message with a visibility timeout of 30 seconds and includes
 // the MessageGroupId attribute in the results.
-func (it *Run) ReceiveMessagesWithGroupIDs(queue Queue) (receiptHandles, messageIDs, groupIDs []string) {
+func (it *Run) ReceiveMessagesReturningGroupIDs(queue Queue) (receiptHandles, messageIDs, groupIDs []string) {
 	it.checkIfCanceled()
 	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            &queue.QueueURL,
 		MaxNumberOfMessages: 10,
 		VisibilityTimeout:   30,
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+			types.MessageSystemAttributeNameMessageGroupId,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	if len(res.Messages) == 0 {
+		return
+	}
+	for _, msg := range res.Messages {
+		receiptHandles = append(receiptHandles, safeDeref(msg.ReceiptHandle))
+		messageIDs = append(messageIDs, safeDeref(msg.MessageId))
+		groupIDs = append(groupIDs, msg.Attributes["MessageGroupId"])
+	}
+	return
+}
+
+// ReceiveMessageWithGroupID receives up to (10) message with a given visibility timeout and includes
+// the MessageGroupId attribute in the results.
+func (it *Run) ReceiveMessagesWithVisibilityTimeoutReturningGroupIDs(queue Queue, visibilityTimeout time.Duration) (receiptHandles, messageIDs, groupIDs []string) {
+	it.checkIfCanceled()
+	res, err := it.sqsClient.ReceiveMessage(it.ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            &queue.QueueURL,
+		MaxNumberOfMessages: 10,
+		VisibilityTimeout:   int32(visibilityTimeout / time.Second),
 		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
 			types.MessageSystemAttributeNameMessageGroupId,
 		},
@@ -446,6 +477,26 @@ func (it *Run) DeleteMessage(queue Queue, receiptHandle string) {
 	_, err := it.sqsClient.DeleteMessage(it.ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      &queue.QueueURL,
 		ReceiptHandle: &receiptHandle,
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (it *Run) DeleteMessageBatch(queue Queue, receiptHandles []string) {
+	it.checkIfCanceled()
+
+	var entries []types.DeleteMessageBatchRequestEntry
+	for _, handle := range receiptHandles {
+		entries = append(entries, types.DeleteMessageBatchRequestEntry{
+			Id:            aws.String(uuid.V4().String()),
+			ReceiptHandle: aws.String(handle),
+		})
+	}
+
+	_, err := it.sqsClient.DeleteMessageBatch(it.ctx, &sqs.DeleteMessageBatchInput{
+		QueueUrl: &queue.QueueURL,
+		Entries:  entries,
 	})
 	if err != nil {
 		panic(err)

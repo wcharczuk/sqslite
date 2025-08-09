@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/smithy-go/logging"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/wcharczuk/sqslite/internal/spy"
@@ -132,9 +133,10 @@ func (s *Suite) Run(ctx context.Context, id string, fn func(*Run)) error {
 	}
 	group, groupContext := errgroup.WithContext(ctx)
 	it := &Run{
-		id:        id,
-		ctx:       groupContext,
-		sqsClient: sqsClient,
+		id:              id,
+		ctx:             groupContext,
+		sqsClient:       sqsClient,
+		sqsClientLogger: logging.NewStandardLogger(os.Stderr),
 	}
 	suiteExited := make(chan struct{})
 	group.Go(func() (err error) {

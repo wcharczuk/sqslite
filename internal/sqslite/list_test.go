@@ -7,7 +7,7 @@ import (
 )
 
 func Test_LinkedList_Push_Pop(t *testing.T) {
-	q := new(List[string])
+	q := new(list[string])
 
 	n0 := "0"
 	n1 := "1"
@@ -166,7 +166,7 @@ func Test_LinkedList_Push_Pop(t *testing.T) {
 	require.Equal(t, 3, q.len)
 }
 func Test_LinkedList_Remove_tail(t *testing.T) {
-	q := new(List[string])
+	q := new(list[string])
 
 	n0 := "0"
 	n1 := "1"
@@ -184,7 +184,7 @@ func Test_LinkedList_Remove_tail(t *testing.T) {
 }
 
 func Test_LinkedList_Each(t *testing.T) {
-	l := new(List[int])
+	l := new(list[int])
 	for x := 0; x < 10; x++ {
 		l.Push(x)
 	}
@@ -197,7 +197,7 @@ func Test_LinkedList_Each(t *testing.T) {
 }
 
 func Test_LinkedList_EachNode(t *testing.T) {
-	l := new(List[int])
+	l := new(list[int])
 	for x := 0; x < 10; x++ {
 		l.Push(x)
 	}
@@ -214,7 +214,7 @@ func Test_LinkedList_Consume(t *testing.T) {
 	n1 := "1"
 	n2 := "2"
 
-	rhl := new(List[string])
+	rhl := new(list[string])
 	rhl.Push(n0)
 	rhl.Push(n1)
 	rhl.Push(n2)
@@ -239,7 +239,7 @@ func Test_LinkedList_ConsumeNode(t *testing.T) {
 	n1 := "1"
 	n2 := "2"
 
-	rhl := new(List[string])
+	rhl := new(list[string])
 	rhl.Push(n0)
 	rhl.Push(n1)
 	rhl.Push(n2)

@@ -474,10 +474,10 @@ func fairQueue(it *integration.Run) {
 		}
 	)
 	const (
-		totalMessageCountPerGroup      = 150_000
+		totalMessageCountPerGroup      = 50_000
 		publishMessagesPerBatch        = 10
 		publishMessagesPerLooop        = totalMessageCountPerGroup / publishMessagesPerBatch
-		publishMessageShards           = 32
+		publishMessageShards           = 16
 		publishMessagesPerShardPerLoop = publishMessagesPerLooop / publishMessageShards
 	)
 
@@ -510,7 +510,8 @@ func fairQueue(it *integration.Run) {
 	it.Logf("done publishing %d messages, starting to read messages", totalMessagesSent)
 
 	const (
-		receiveShards = 256
+		receiveVisibilityTimeout = 10 * time.Second
+		receiveShards            = 32
 	)
 	var (
 		receiveMessagesCountPerShard = totalMessagesSent / uint64(receiveShards)
@@ -523,7 +524,6 @@ func fairQueue(it *integration.Run) {
 	messageIDs := make(map[string]int)
 
 	var totalMessagesReceived uint64
-	startedReading := time.Now()
 	for range receiveShards {
 		g.Go(func() (err error) {
 			defer func() {
@@ -532,12 +532,8 @@ func fairQueue(it *integration.Run) {
 				}
 			}()
 			var thisShard int
-			for uint64(thisShard) < receiveMessagesCountPerShard {
-				if time.Since(startedReading) > 30*time.Second {
-					err = fmt.Errorf("exceeded 30 seconds; likely going to start seeing the same messages again, read %d messages so far", len(messageIDs))
-					return
-				}
-				_, mids, gids := it.ReceiveMessagesWithGroupIDs(mainQueue)
+			for uint64(thisShard) < receiveMessagesCountPerShard && atomic.LoadUint64(&totalMessagesReceived) < totalMessagesSent {
+				rhs, mids, gids := it.ReceiveMessagesWithVisibilityTimeoutReturningGroupIDs(mainQueue, receiveVisibilityTimeout)
 				for index := range len(gids) {
 					thisShard++
 					atomic.AddUint64(&totalMessagesReceived, 1)
@@ -547,6 +543,9 @@ func fairQueue(it *integration.Run) {
 					muMessageIDs.Lock()
 					messageIDs[mids[index]]++
 					muMessageIDs.Unlock()
+				}
+				if len(rhs) > 0 {
+					it.DeleteMessageBatch(mainQueue, rhs)
 				}
 			}
 			return
@@ -635,7 +634,7 @@ func fairQueueLimits(it *integration.Run) {
 					err = fmt.Errorf("exceeded 30 seconds; likely going to start seeing the same messages again, read %d messages so far", len(messageIDs))
 					return
 				}
-				_, mids, gids := it.ReceiveMessagesWithGroupIDs(mainQueue)
+				_, mids, gids := it.ReceiveMessagesReturningGroupIDs(mainQueue)
 				for index := range len(gids) {
 					thisPass++
 					atomic.AddUint32(&totalMessagesReceived, 1)

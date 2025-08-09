@@ -28,40 +28,11 @@ func (i *inflightMessages) Len() int {
 }
 
 func (i *inflightMessages) HotKeys() (hotKeys Set[string]) {
-	hotKeys = make(Set[string])
-	type keyCount struct {
-		key   string
-		count int
-	}
-	keyCounts := make([]keyCount, 0, len(i.keyCounts))
-	for key, count := range i.keyCounts {
-		keyCounts = append(keyCounts, keyCount{key, count})
-	}
-	slices.SortFunc(keyCounts, func(i, j keyCount) int {
-		if i.count > j.count {
-			return -1
-		} else if i.count < j.count {
-			return 1
-		}
-		return 0
-	})
-	calculateCountMean := func() float64 {
-		accum := uint64(0)
-		for _, kc := range keyCounts {
-			accum += uint64(kc.count)
-		}
-		return float64(accum) / float64(len(keyCounts))
-	}
-	mean := calculateCountMean()
-	caclulateCountStdDev := func() float64 {
-		var variance float64
-		for _, kc := range keyCounts {
-			variance += ((float64(kc.count) - mean) * (float64(kc.count) - mean))
-		}
-		variance = variance / float64(len(keyCounts))
-		return math.Sqrt(variance)
-	}
-	stdDev := caclulateCountStdDev()
+	hotKeys = make(Set[string], 10) // we can have at most 10 keys
+	keyCounts := i.sortedKeyCounts()
+
+	mean := i.keyCountsMean(keyCounts)
+	stdDev := i.keyCountsStdDev(keyCounts, mean)
 
 	// don't bother if we don't have a significant stddev
 	if stdDev < 1.0 {
@@ -78,6 +49,44 @@ func (i *inflightMessages) HotKeys() (hotKeys Set[string]) {
 		}
 	}
 	return
+}
+
+type keyCount struct {
+	key   string
+	count int
+}
+
+func (i *inflightMessages) sortedKeyCounts() []keyCount {
+	keyCounts := make([]keyCount, 0, len(i.keyCounts))
+	for key, count := range i.keyCounts {
+		keyCounts = append(keyCounts, keyCount{key, count})
+	}
+	slices.SortFunc(keyCounts, func(i, j keyCount) int {
+		if i.count > j.count {
+			return -1
+		} else if i.count < j.count {
+			return 1
+		}
+		return 0
+	})
+	return keyCounts
+}
+
+func (i *inflightMessages) keyCountsMean(keyCounts []keyCount) float64 {
+	accum := float64(0)
+	for _, kc := range keyCounts {
+		accum += float64(kc.count)
+	}
+	return accum / float64(len(keyCounts))
+}
+
+func (i *inflightMessages) keyCountsStdDev(keyCounts []keyCount, mean float64) float64 {
+	var variance float64
+	for _, kc := range keyCounts {
+		variance += ((float64(kc.count) - mean) * (float64(kc.count) - mean))
+	}
+	variance = variance / float64(len(keyCounts))
+	return math.Sqrt(variance)
 }
 
 func (i *inflightMessages) Push(receiptHandle string, msg *MessageState) {

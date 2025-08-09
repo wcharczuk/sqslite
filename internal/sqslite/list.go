@@ -2,30 +2,30 @@ package sqslite
 
 import "iter"
 
-type List[V any] struct {
-	head *ListNode[V]
-	tail *ListNode[V]
+type list[V any] struct {
+	head *listNode[V]
+	tail *listNode[V]
 	len  int
 }
 
-// ListNode is a linked list node.
-type ListNode[T any] struct {
+// listNode is a linked list node.
+type listNode[T any] struct {
 	// Value holds the value of the node.
 	Value T
 	// Next points towards the tail.
-	Next *ListNode[T]
+	Next *listNode[T]
 	// Previous points towards the head.
-	Previous *ListNode[T]
+	Previous *listNode[T]
 }
 
 // Len returns the length of the list in constant time.
-func (l *List[T]) Len() int {
+func (l *list[T]) Len() int {
 	return l.len
 }
 
 // Push appends a node to the end, or tail, of the list.
-func (l *List[T]) Push(value T) *ListNode[T] {
-	item := &ListNode[T]{
+func (l *list[T]) Push(value T) *listNode[T] {
+	item := &listNode[T]{
 		Value: value,
 	}
 	l.len++
@@ -43,7 +43,7 @@ func (l *List[T]) Push(value T) *ListNode[T] {
 }
 
 // Pop removes the head element from the list.
-func (l *List[T]) Pop() (out T, ok bool) {
+func (l *list[T]) Pop() (out T, ok bool) {
 	if l.head == nil {
 		return
 	}
@@ -65,7 +65,7 @@ func (l *List[T]) Pop() (out T, ok bool) {
 }
 
 // PopNode removes the head node from the list (which contains the element).
-func (l *List[T]) PopNode() (out *ListNode[T], ok bool) {
+func (l *list[T]) PopNode() (out *listNode[T], ok bool) {
 	if l.head == nil {
 		return
 	}
@@ -87,14 +87,14 @@ func (l *List[T]) PopNode() (out *ListNode[T], ok bool) {
 }
 
 // Clear clears the linked list.
-func (l *List[T]) Clear() {
+func (l *list[T]) Clear() {
 	l.tail = nil
 	l.head = nil
 	l.len = 0
 }
 
 // Each returns an iterator that walks the list from head to tail.
-func (q *List[T]) Each() iter.Seq[T] {
+func (q *list[T]) Each() iter.Seq[T] {
 	return func(yield func(T) bool) {
 		nodePtr := q.head
 		for nodePtr != nil {
@@ -107,8 +107,8 @@ func (q *List[T]) Each() iter.Seq[T] {
 }
 
 // EachNode returns an iterator that walks the list from head to tail.
-func (q *List[T]) EachNode() iter.Seq[*ListNode[T]] {
-	return func(yield func(*ListNode[T]) bool) {
+func (q *list[T]) EachNode() iter.Seq[*listNode[T]] {
+	return func(yield func(*listNode[T]) bool) {
 		nodePtr := q.head
 		for nodePtr != nil {
 			if !yield(nodePtr) {
@@ -120,7 +120,7 @@ func (q *List[T]) EachNode() iter.Seq[*ListNode[T]] {
 }
 
 // Consume returns an iterator that pops and yields elements in the list from head to tail.
-func (q *List[T]) Consume() iter.Seq[T] {
+func (q *list[T]) Consume() iter.Seq[T] {
 	return func(yield func(T) bool) {
 		v, ok := q.Pop()
 		if !ok {
@@ -143,8 +143,8 @@ func (q *List[T]) Consume() iter.Seq[T] {
 }
 
 // ConsumeNode returns an iterator that pops and yields nodes in the list from head to tail.
-func (q *List[T]) ConsumeNode() iter.Seq[*ListNode[T]] {
-	return func(yield func(*ListNode[T]) bool) {
+func (q *list[T]) ConsumeNode() iter.Seq[*listNode[T]] {
+	return func(yield func(*listNode[T]) bool) {
 		v, ok := q.PopNode()
 		if !ok {
 			return
@@ -165,7 +165,7 @@ func (q *List[T]) ConsumeNode() iter.Seq[*ListNode[T]] {
 	}
 }
 
-func (l *List[T]) Remove(i *ListNode[T]) {
+func (l *list[T]) Remove(i *listNode[T]) {
 	l.len--
 
 	// three possibilities
