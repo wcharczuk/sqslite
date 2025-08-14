@@ -224,7 +224,7 @@ func Test_Queues_DeleteQueue_marksQueueAsDeleted(t *testing.T) {
 }
 
 func Test_Queues_PurgeDeletedQueues_removesQueuesDeletedOver60Seconds(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		queues := NewQueues(testAccountID)
 		defer queues.Close()
 		queue := createTestQueueWithName(t, "test-queue")
@@ -241,7 +241,7 @@ func Test_Queues_PurgeDeletedQueues_removesQueuesDeletedOver60Seconds(t *testing
 }
 
 func Test_Queues_PurgeDeletedQueues_keepsQueuesDeletedUnder60Seconds(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		queues := NewQueues(testAccountID)
 		defer queues.Close()
 		queue := createTestQueueWithName(t, "test-queue")

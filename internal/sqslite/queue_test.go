@@ -395,21 +395,21 @@ func Test_Queue_Stats_reflectsDelayedMessages(t *testing.T) {
 
 // Tests for Queue.Created(), LastModified(), Deleted(), IsDeleted()
 func Test_Queue_Created_returnsCreationTime(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		require.Equal(t, time.Now(), q.Created())
 	})
 }
 
 func Test_Queue_LastModified_initiallyEqualsCreated(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		require.Equal(t, q.Created(), q.LastModified())
 	})
 }
 
 func Test_Queue_LastModified_updatesOnAttributeChange(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		initialModified := q.LastModified()
 
@@ -430,7 +430,7 @@ func Test_Queue_IsDeleted_falseForNewQueue(t *testing.T) {
 }
 
 func Test_Queue_IsDeleted_trueAfterDeletion(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 
 		// Simulate deletion by setting deleted timestamp
@@ -698,7 +698,7 @@ func Test_Queue_SetQueueAttributes_returnsErrorForInvalidValues(t *testing.T) {
 }
 
 func Test_Queue_SetQueueAttributes_updatesLastModifiedTime(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		initialModified := q.LastModified()
 
@@ -1090,7 +1090,7 @@ func Test_Queue_Purge_emptyQueueIsNoOp(t *testing.T) {
 
 // Tests for Queue.PurgeExpired()
 func Test_Queue_PurgeExpired_removesExpiredMessages(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		q.MessageRetentionPeriod = 1 * time.Hour
 
@@ -1125,7 +1125,7 @@ func Test_Queue_PurgeExpired_removesExpiredMessages(t *testing.T) {
 }
 
 func Test_Queue_PurgeExpired_keepsNonExpiredMessages(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		q.MessageRetentionPeriod = 1 * time.Hour
 
@@ -1144,7 +1144,7 @@ func Test_Queue_PurgeExpired_keepsNonExpiredMessages(t *testing.T) {
 }
 
 func Test_Queue_PurgeExpired_emptyQueueIsNoOp(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		initialStats := q.Stats()
 
@@ -1158,7 +1158,7 @@ func Test_Queue_PurgeExpired_emptyQueueIsNoOp(t *testing.T) {
 
 // Tests for Queue.UpdateInflightVisibility()
 func Test_Queue_UpdateInflightVisibility_movesVisibleMessagesToReady(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		pushTestMessages(q, 10)
 
@@ -1192,7 +1192,7 @@ func Test_Queue_UpdateInflightVisibility_movesVisibleMessagesToReady(t *testing.
 }
 
 func Test_Queue_UpdateInflightVisibility_keepsNonVisibleMessages(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		pushTestMessages(q, 10)
 
@@ -1235,7 +1235,7 @@ func Test_Queue_UpdateInflightVisibility_emptyInflightIsNoOp(t *testing.T) {
 
 // Tests for Queue.UpdateDelayedToReady()
 func Test_Queue_UpdateDelayedToReady_movesReadyDelayedMessages(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 
 		// Add delayed messages
@@ -1263,7 +1263,7 @@ func Test_Queue_UpdateDelayedToReady_movesReadyDelayedMessages(t *testing.T) {
 }
 
 func Test_Queue_UpdateDelayedToReady_keepsStillDelayedMessages(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 
 		// Add delayed message
@@ -1374,7 +1374,7 @@ func Test_Queue_GetQueueAttributes_emptyForNonExistentAttributes(t *testing.T) {
 }
 
 func Test_Queue_GetQueueAttributes_includesTimestamps(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 
 		attributes := q.GetQueueAttributes(
@@ -1583,7 +1583,7 @@ func Test_Queue_Receive_randomizesMessageCount_withinBounds(t *testing.T) {
 }
 
 func Test_Queue_ChangeMessageVisibility_withDLQMovement_respectsMaxReceiveCount(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		dlq := createTestQueueWithName(t, "test-dlq")
 		q := createTestQueueWithNameWithDLQ(t, "test-queue", dlq)
 
@@ -1679,7 +1679,7 @@ func Test_Queue_GetQueueAttributes_withRedrivePolicy_returnsJSONString(t *testin
 }
 
 func Test_Queue_PurgeExpired_withMixedExpiryTimes_onlyRemovesExpired(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 		q.MessageRetentionPeriod = 1 * time.Hour
 
@@ -1702,7 +1702,7 @@ func Test_Queue_PurgeExpired_withMixedExpiryTimes_onlyRemovesExpired(t *testing.
 }
 
 func Test_Queue_UpdateDelayedToReady_withVariousDelays_onlyMovesReady(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		q := createTestQueue(t)
 
 		// Add messages with different delays

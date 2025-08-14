@@ -179,7 +179,7 @@ func Test_MessageState_GetAttributes_all(t *testing.T) {
 }
 
 func Test_MessageState_GetAttributes_deadLetterQueueSourceArn_unset(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		m := &MessageState{
 			MessageID:     uuid.V4(),
 			SenderID:      Some(testAccountID),
@@ -200,7 +200,7 @@ func Test_MessageState_GetAttributes_deadLetterQueueSourceArn_unset(t *testing.T
 }
 
 func Test_MessageState_GetAttributes_subset(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		m := &MessageState{
 			MessageID:     uuid.V4(),
 			SenderID:      Some(testAccountID),
@@ -219,7 +219,7 @@ func Test_MessageState_GetAttributes_subset(t *testing.T) {
 }
 
 func Test_MessageState_GetAttributes_mixesAllAndSubset(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		testQueue := createTestQueue(t)
 		m := &MessageState{
 			MessageID:           uuid.V4(),

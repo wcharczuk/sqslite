@@ -14,7 +14,6 @@ env:
   GOARCH: "amd64"
   GO111MODULE: "on"
   CGO_ENABLED: "1"
-  GOEXPERIMENT: "synctest"
 
 jobs:
   tests:
